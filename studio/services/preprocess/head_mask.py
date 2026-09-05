@@ -31,6 +31,7 @@ from . import masks as train_masks
 
 logger = logging.getLogger(__name__)
 
+AUTO_HEAD_MASK_FEATURE_LEVEL = 1
 INPUT_SIZE = 640
 DEFAULT_CONFIDENCE = 0.413
 DEFAULT_IOU_THRESHOLD = 0.7

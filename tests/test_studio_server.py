@@ -872,6 +872,11 @@ def test_system_update_force_bypasses_dirty(
     monkeypatch.setattr(updater, "UPDATE_PENDING", pending)
     monkeypatch.setattr(updater, "UPDATE_FORCE", force_flag)
     monkeypatch.setattr(updater, "RESTART_FLAG", restart_flag)
+    monkeypatch.setattr(
+        updater,
+        "assert_distribution_update_compatible",
+        lambda _target: updater.DistributionCompatibility(True, "compatible"),
+    )
     monkeypatch.setattr("studio.api.routers.system._raise_sigint_after_response", lambda: None)
 
     resp = client.post("/api/system/update", json={"target": "origin/master", "force": True})
@@ -901,6 +906,11 @@ def test_system_update_writes_pending_and_restart_flag(
     restart_flag = tmp_path / "tmp" / "restart"
     monkeypatch.setattr(updater, "UPDATE_PENDING", pending)
     monkeypatch.setattr(updater, "RESTART_FLAG", restart_flag)
+    monkeypatch.setattr(
+        updater,
+        "assert_distribution_update_compatible",
+        lambda _target: updater.DistributionCompatibility(True, "compatible"),
+    )
 
     # 拦截 SIGINT
     monkeypatch.setattr("studio.api.routers.system._raise_sigint_after_response", lambda: None)
@@ -1100,6 +1110,11 @@ def test_preflight_clean_no_running_no_diff(
     monkeypatch.setattr(updater, "resolve_ref", lambda _ref: "deadbeef" * 5)
     monkeypatch.setattr(updater, "requirements_diff", lambda _ref: updater.RequirementsDiff())
     monkeypatch.setattr(updater, "target_has_self_update", lambda _ref: True)
+    monkeypatch.setattr(
+        updater,
+        "check_distribution_compatibility",
+        lambda _ref: updater.DistributionCompatibility(True, "compatible"),
+    )
 
     resp = client.get("/api/system/preflight?target=origin/master")
     assert resp.status_code == 200
@@ -1109,7 +1124,10 @@ def test_preflight_clean_no_running_no_diff(
     levels = [c["level"] for c in body["checks"]]
     assert "err" not in levels
     keys = [c["key"] for c in body["checks"]]
-    assert keys == ["dirty", "running_tasks", "requirements_diff", "last_version"]
+    assert keys == [
+        "dirty", "running_tasks", "requirements_diff", "last_version",
+        "distribution_compat",
+    ]
 
 
 def test_preflight_dirty_warns_overridable(
@@ -1128,6 +1146,11 @@ def test_preflight_dirty_warns_overridable(
     monkeypatch.setattr(updater, "resolve_ref", lambda _ref: "x")
     monkeypatch.setattr(updater, "requirements_diff", lambda _ref: updater.RequirementsDiff())
     monkeypatch.setattr(updater, "target_has_self_update", lambda _ref: True)
+    monkeypatch.setattr(
+        updater,
+        "check_distribution_compatibility",
+        lambda _ref: updater.DistributionCompatibility(True, "compatible"),
+    )
 
     body = client.get("/api/system/preflight?target=origin/master").json()
     assert body["blocking"] is False
@@ -1151,6 +1174,11 @@ def test_preflight_running_tasks_block(
     monkeypatch.setattr(updater, "resolve_ref", lambda _ref: "x")
     monkeypatch.setattr(updater, "requirements_diff", lambda _ref: updater.RequirementsDiff())
     monkeypatch.setattr(updater, "target_has_self_update", lambda _ref: True)
+    monkeypatch.setattr(
+        updater,
+        "check_distribution_compatibility",
+        lambda _ref: updater.DistributionCompatibility(True, "compatible"),
+    )
 
     # 写一条 running task（含所有 NOT NULL 字段）
     import time as _time
@@ -1187,6 +1215,11 @@ def test_preflight_requirements_diff_warn(
                            changed=[{"name": "torch", "from": "torch==2.0", "to": "torch==2.4"}],
                        ))
     monkeypatch.setattr(updater, "target_has_self_update", lambda _ref: True)
+    monkeypatch.setattr(
+        updater,
+        "check_distribution_compatibility",
+        lambda _ref: updater.DistributionCompatibility(True, "compatible"),
+    )
 
     body = client.get("/api/system/preflight?target=origin/master").json()
     assert body["blocking"] is False
@@ -1210,6 +1243,11 @@ def test_preflight_unresolved_target(
         branch="master", tag=None, is_dirty=False,
     ))
     monkeypatch.setattr(updater, "resolve_ref", lambda _ref: None)
+    monkeypatch.setattr(
+        updater,
+        "check_distribution_compatibility",
+        lambda _ref: updater.DistributionCompatibility(False, "target cannot be resolved"),
+    )
 
     body = client.get("/api/system/preflight?target=invalid").json()
     assert body["blocking"] is True
@@ -1234,6 +1272,11 @@ def test_preflight_target_missing_self_update_blocks(
     monkeypatch.setattr(updater, "resolve_ref", lambda _ref: "deadbeef" * 5)
     monkeypatch.setattr(updater, "requirements_diff", lambda _ref: updater.RequirementsDiff())
     monkeypatch.setattr(updater, "target_has_self_update", lambda _ref: False)
+    monkeypatch.setattr(
+        updater,
+        "check_distribution_compatibility",
+        lambda _ref: updater.DistributionCompatibility(True, "compatible"),
+    )
 
     body = client.get("/api/system/preflight?target=ancient-commit").json()
     assert body["blocking"] is True
@@ -1256,6 +1299,11 @@ def test_preflight_target_with_self_update_passes(
     monkeypatch.setattr(updater, "resolve_ref", lambda _ref: "deadbeef" * 5)
     monkeypatch.setattr(updater, "requirements_diff", lambda _ref: updater.RequirementsDiff())
     monkeypatch.setattr(updater, "target_has_self_update", lambda _ref: True)
+    monkeypatch.setattr(
+        updater,
+        "check_distribution_compatibility",
+        lambda _ref: updater.DistributionCompatibility(True, "compatible"),
+    )
 
     body = client.get("/api/system/preflight?target=origin/master").json()
     assert body["blocking"] is False

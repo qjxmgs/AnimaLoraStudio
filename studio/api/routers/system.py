@@ -8,7 +8,7 @@
     POST /api/system/rollback       回滚到 .last_version（同 update 路径）
     GET  /api/system/update_status  最近一次 update 结构化结果 + rollback_target
     GET  /api/system/update_log     完整 .update_log 文本
-    GET  /api/system/preflight      4 项前置检查 + requirements diff 摘要
+    GET  /api/system/preflight      前置检查（含分发兼容）+ requirements diff 摘要
     GET  /api/system/dev_commits    `git log origin/dev -N` 摘要
     POST /api/system/init_git       zip 用户初始化 git 仓库（幂等）
 
@@ -95,6 +95,18 @@ def _check_no_running_tasks() -> None:
         )
 
 
+def _require_distribution_compatible(target: str) -> updater.DistributionCompatibility:
+    try:
+        return updater.assert_distribution_update_compatible(target)
+    except updater.IncompatibleDistributionUpdate as exc:
+        raise ValidationError(
+            f"Update target is incompatible with this distribution: {exc.result.reason}",
+            code="system.incompatible_distribution_update",
+            details={"compatibility": asdict(exc.result)},
+            http_status=422,
+        ) from exc
+
+
 @router.post("/api/system/restart")
 def system_restart(background: BackgroundTasks) -> dict[str, Any]:
     """重启 server（不 pull 代码）。
@@ -149,6 +161,7 @@ def system_update(body: UpdateRequest, background: BackgroundTasks) -> dict[str,
             code="system.working_tree_dirty", http_status=422,
         )
 
+    _require_distribution_compatible(body.target)
     updater.request_update(body.target, force=body.force)
     background.add_task(_raise_sigint_after_response)
     return {"ok": True, "message": f"update scheduled → {body.target}"}
@@ -172,7 +185,15 @@ def system_rollback(background: BackgroundTasks) -> dict[str, Any]:
             code="system.working_tree_dirty", http_status=422,
         )
 
-    target = updater.request_rollback()
+    try:
+        target = updater.request_rollback()
+    except updater.IncompatibleDistributionUpdate as exc:
+        raise ValidationError(
+            f"Rollback target is incompatible with this distribution: {exc.result.reason}",
+            code="system.incompatible_distribution_update",
+            details={"compatibility": asdict(exc.result)},
+            http_status=422,
+        ) from exc
     if target is None:
         raise ConflictError(
             "No previous version is available to roll back to",
@@ -223,7 +244,7 @@ def system_update_log() -> dict[str, Any]:
 def system_preflight(target: str = "origin/master") -> dict[str, Any]:
     """更新前置检查（chunk 4）— VersionSection preview 状态展开时拉取。
 
-    返回 4 项结构化检查 + target_resolved sha + requirements.txt diff 摘要。
+    返回结构化检查 + target_resolved sha + requirements.txt diff 摘要。
     每项含 level (ok / warn / err)；任一 err → blocking=true，前端禁用
     确认按钮。target 接受任意 git ref（tag / branch / commit sha）。
     """
@@ -274,6 +295,28 @@ def system_preflight(target: str = "origin/master") -> dict[str, Any]:
 
     checks.append({"key": "last_version", "level": "ok",
                    "label": f"更新后 .last_version = {cur.commit_short}（可一键切回）"})
+
+    # Fork distribution safety：与 POST 和 apply_pending 使用同一判定。force
+    # 不能绕过；维护者显式设置应急环境变量时降为 warn，并在 UI 留下证据。
+    distribution = updater.check_distribution_compatibility(target)
+    if distribution.bypassed:
+        checks.append({
+            "key": "distribution_compat",
+            "level": "warn",
+            "label": f"定制功能保护已由环境变量主动绕过：{distribution.reason}",
+        })
+    elif distribution.compatible:
+        checks.append({
+            "key": "distribution_compat",
+            "level": "ok",
+            "label": "目标保留 qjxmgs 分发标记、自动头部遮罩和更新保护",
+        })
+    else:
+        checks.append({
+            "key": "distribution_compat",
+            "level": "err",
+            "label": f"目标会丢失定制功能，已阻止更新：{distribution.reason}",
+        })
 
     # Safety net：目标 ref 早于 self-update feature 引入 → 切过去就丢失 webui
     # 升级能力（只能 CLI git pull 救援）。err 级别阻断，前端 confirm 自动 disable。
