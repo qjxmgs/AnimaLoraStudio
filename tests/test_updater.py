@@ -56,6 +56,26 @@ def _isolate_flags(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 # current_version
 # ---------------------------------------------------------------------------
 
+def test_git_decodes_blob_output_as_utf8(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Windows defaults subprocess text mode to GBK, but git-show blobs are UTF-8.
+
+    An undecodable byte used to kill subprocess' reader thread, leave stdout as
+    None, and turn the update preflight into a 500 response.
+    """
+    captured: dict[str, object] = {}
+
+    def fake_run(*args, **kwargs):
+        captured.update(kwargs)
+        return subprocess.CompletedProcess(args[0], 0, "自动头部遮罩\n", "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    rc, stdout, stderr = updater._git("show", "HEAD:requirements.txt")
+    assert (rc, stdout, stderr) == (0, "自动头部遮罩", "")
+    assert captured["encoding"] == "utf-8"
+    assert captured["errors"] == "replace"
+
 def test_current_version_smoke() -> None:
     """跑真 git，返回字段都是字符串 / bool。仓库目录里这个一定能跑。"""
     v = updater.current_version()
