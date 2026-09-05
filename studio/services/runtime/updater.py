@@ -233,6 +233,8 @@ def _git(*args: str, timeout: float = 15.0) -> tuple[int, str, str]:
             cwd=str(REPO_ROOT),
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=timeout,
         )
         return proc.returncode, proc.stdout.strip(), proc.stderr.strip()
