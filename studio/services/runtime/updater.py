@@ -89,10 +89,29 @@ UPDATE_CACHE_TTL_SECONDS = 24 * 3600
 GIT_FETCH_TIMEOUT = 30.0
 GIT_PULL_TIMEOUT = 120.0
 
+# qjxmgs distribution update guard.  Target revisions must retain this marker;
+# merely copying the manifest is not enough to bypass the startup-time check.
+DISTRIBUTION_UPDATE_GUARD_MARKER = "ANIMA_DISTRIBUTION_UPDATE_GUARD_V1"
+DISTRIBUTION_MANIFEST_NAME = ".anima-distribution.json"
+DISTRIBUTION_MANIFEST_PATH = REPO_ROOT / DISTRIBUTION_MANIFEST_NAME
+ALLOW_INCOMPATIBLE_UPDATE_ENV = "ANIMA_STUDIO_ALLOW_INCOMPATIBLE_UPDATE"
+
+
+def _manifest_origin_url() -> str:
+    try:
+        data = json.loads(DISTRIBUTION_MANIFEST_PATH.read_text(encoding="utf-8-sig"))
+        value = data.get("origin_url") if isinstance(data, dict) else None
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    except (OSError, json.JSONDecodeError):
+        pass
+    return "https://github.com/WalkingMeatAxolotl/AnimaLoraStudio.git"
+
+
 # zip 解压用户没有 .git/，自更新功能完全失效。bootstrap_git_repo() 一次性
 # 在本地 init + remote add origin + fetch master，之后走正常 self-update 路径。
-# fork 维护者通过 env var ANIMA_STUDIO_ORIGIN_URL 覆盖默认上游 URL。
-DEFAULT_ORIGIN_URL = "https://github.com/WalkingMeatAxolotl/AnimaLoraStudio.git"
+# fork 的 manifest 决定默认 origin；env var 仍可显式覆盖镜像地址。
+DEFAULT_ORIGIN_URL = _manifest_origin_url()
 ORIGIN_URL = os.environ.get("ANIMA_STUDIO_ORIGIN_URL", "").strip() or DEFAULT_ORIGIN_URL
 
 
@@ -175,6 +194,34 @@ class UpdateStatus:
     finished_at: float
     deps_changed: bool         # 走了 pip install 或 npm install
     log_excerpt: str           # 末尾几行 .update_log 内容
+
+
+@dataclass(frozen=True)
+class DistributionManifest:
+    distribution_id: str
+    origin_url: str
+    stable_ref: str
+    dev_ref: str
+    required_features: dict[str, int]
+
+
+@dataclass(frozen=True)
+class DistributionCompatibility:
+    compatible: bool
+    reason: str
+    current_distribution_id: Optional[str] = None
+    target_distribution_id: Optional[str] = None
+    required_features: dict[str, int] = field(default_factory=dict)
+    target_features: dict[str, int] = field(default_factory=dict)
+    bypassed: bool = False
+
+
+class IncompatibleDistributionUpdate(RuntimeError):
+    """Raised before an update can replace required distribution features."""
+
+    def __init__(self, result: DistributionCompatibility) -> None:
+        super().__init__(result.reason)
+        self.result = result
 
 
 # ----- Git 调用 helper ----------------------------------------------------
@@ -648,6 +695,186 @@ def target_has_self_update(target_ref: str) -> bool:
     return False
 
 
+_DISTRIBUTION_FEATURE_MARKERS: dict[str, tuple[str, str]] = {
+    "auto_head_mask": (
+        "studio/services/preprocess/head_mask.py",
+        "AUTO_HEAD_MASK_FEATURE_LEVEL",
+    ),
+}
+
+
+def _parse_distribution_manifest(raw: str, source: str) -> DistributionManifest:
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{source} is not valid JSON: {exc.msg}") from exc
+    if not isinstance(data, dict):
+        raise ValueError(f"{source} must contain a JSON object")
+
+    strings: dict[str, str] = {}
+    for key in ("distribution_id", "origin_url", "stable_ref", "dev_ref"):
+        value = data.get(key)
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"{source} has an invalid {key}")
+        strings[key] = value.strip()
+
+    raw_features = data.get("required_features")
+    if not isinstance(raw_features, dict):
+        raise ValueError(f"{source} has an invalid required_features map")
+    features: dict[str, int] = {}
+    for name, level in raw_features.items():
+        if (
+            not isinstance(name, str)
+            or not name
+            or isinstance(level, bool)
+            or not isinstance(level, int)
+            or level < 1
+        ):
+            raise ValueError(f"{source} has an invalid required feature entry")
+        features[name] = level
+
+    return DistributionManifest(
+        distribution_id=strings["distribution_id"],
+        origin_url=strings["origin_url"],
+        stable_ref=strings["stable_ref"],
+        dev_ref=strings["dev_ref"],
+        required_features=features,
+    )
+
+
+def current_distribution_manifest() -> DistributionManifest:
+    """Read the installed distribution contract from the working tree.
+
+    This updater module is fork-only, so a missing or malformed current manifest
+    is itself unsafe: ``force=true`` must not turn accidental manifest deletion
+    into a route back to an incompatible upstream revision.
+    """
+    try:
+        raw = DISTRIBUTION_MANIFEST_PATH.read_text(encoding="utf-8-sig")
+    except OSError as exc:
+        raise ValueError(
+            f"installed {DISTRIBUTION_MANIFEST_NAME} is missing or unreadable"
+        ) from exc
+    return _parse_distribution_manifest(raw, f"installed {DISTRIBUTION_MANIFEST_NAME}")
+
+
+def _target_blob(target_ref: str, path: str) -> Optional[str]:
+    rc, out, _ = _git("show", f"{target_ref}:{path}")
+    return out if rc == 0 else None
+
+
+def _compatibility_failure(
+    reason: str,
+    *,
+    current: Optional[DistributionManifest] = None,
+    target: Optional[DistributionManifest] = None,
+) -> DistributionCompatibility:
+    bypassed = os.environ.get(ALLOW_INCOMPATIBLE_UPDATE_ENV, "").strip() == "1"
+    return DistributionCompatibility(
+        compatible=bypassed,
+        reason=(
+            f"{reason}; explicitly bypassed by {ALLOW_INCOMPATIBLE_UPDATE_ENV}=1"
+            if bypassed else reason
+        ),
+        current_distribution_id=current.distribution_id if current else None,
+        target_distribution_id=target.distribution_id if target else None,
+        required_features=dict(current.required_features) if current else {},
+        target_features=dict(target.required_features) if target else {},
+        bypassed=bypassed,
+    )
+
+
+def check_distribution_compatibility(target_ref: str) -> DistributionCompatibility:
+    """Verify that an update target preserves this fork's distribution contract."""
+    try:
+        current = current_distribution_manifest()
+    except ValueError as exc:
+        return _compatibility_failure(str(exc))
+
+    resolved = resolve_ref(target_ref)
+    if not resolved:
+        return _compatibility_failure(
+            f"target ref cannot be resolved: {target_ref}", current=current,
+        )
+
+    target_raw = _target_blob(resolved, DISTRIBUTION_MANIFEST_NAME)
+    if target_raw is None:
+        return _compatibility_failure(
+            f"target is missing {DISTRIBUTION_MANIFEST_NAME}", current=current,
+        )
+    try:
+        target = _parse_distribution_manifest(
+            target_raw, f"target {DISTRIBUTION_MANIFEST_NAME}",
+        )
+    except ValueError as exc:
+        return _compatibility_failure(str(exc), current=current)
+
+    if target.distribution_id != current.distribution_id:
+        return _compatibility_failure(
+            "target distribution_id does not match the installed distribution",
+            current=current,
+            target=target,
+        )
+
+    missing = {
+        name: level
+        for name, level in current.required_features.items()
+        if target.required_features.get(name, 0) < level
+    }
+    if missing:
+        detail = ", ".join(f"{name}>={level}" for name, level in sorted(missing.items()))
+        return _compatibility_failure(
+            f"target required_features is not a superset ({detail})",
+            current=current,
+            target=target,
+        )
+
+    for feature in current.required_features:
+        marker = _DISTRIBUTION_FEATURE_MARKERS.get(feature)
+        if marker is None:
+            continue
+        path, variable = marker
+        content = _target_blob(resolved, path)
+        match = (
+            re.search(rf"^{re.escape(variable)}\s*=\s*(\d+)\s*$", content, re.MULTILINE)
+            if content is not None else None
+        )
+        declared_level = target.required_features[feature]
+        if match is None or int(match.group(1)) < declared_level:
+            return _compatibility_failure(
+                f"target is missing or understates the {feature} implementation marker",
+                current=current,
+                target=target,
+            )
+
+    updater_content = _target_blob(resolved, "studio/services/runtime/updater.py")
+    if (
+        updater_content is None
+        or DISTRIBUTION_UPDATE_GUARD_MARKER not in updater_content
+    ):
+        return _compatibility_failure(
+            "target is missing the distribution-aware self-update guard",
+            current=current,
+            target=target,
+        )
+
+    return DistributionCompatibility(
+        compatible=True,
+        reason="distribution manifest and required feature markers are compatible",
+        current_distribution_id=current.distribution_id,
+        target_distribution_id=target.distribution_id,
+        required_features=dict(current.required_features),
+        target_features=dict(target.required_features),
+    )
+
+
+def assert_distribution_update_compatible(target_ref: str) -> DistributionCompatibility:
+    result = check_distribution_compatibility(target_ref)
+    if not result.compatible:
+        raise IncompatibleDistributionUpdate(result)
+    return result
+
+
 _REQ_NAME_RE = re.compile(r"^([A-Za-z0-9_\-\.\[\]]+)")
 
 
@@ -857,11 +1084,12 @@ def apply_pending(emit: TaskLogLike = _DEFAULT_LOG) -> bool:
     1. 读 .update_pending 拿 target ref
     2. 写 .last_version（rollback 用）
     3. precondition：working tree 必须干净（理论上 server 已查过，这里再保一层）
-    4. `git fetch origin` + `git reset --hard {target}`（避免 merge 冲突）
-    5. requirements.txt sha256 marker 比对 → 改了就 `pip install -r`
-    6. studio/web/package.json mtime > node_modules/.package-lock.json → `npm install`
-    7. 清 cache（让下次 check_update 重 fetch）+ 清 .update_pending
-    8. 写结构化 .update_status（PR-C，UI 展示"上次更新结果"用）
+    4. `git fetch origin`，重新验证目标分发清单与必需功能
+    5. `git reset --hard {target}`（避免 merge 冲突）
+    6. requirements.txt sha256 marker 比对 → 改了就 `pip install -r`
+    7. studio/web/package.json mtime > node_modules/.package-lock.json → `npm install`
+    8. 清 cache（让下次 check_update 重 fetch）+ 清 .update_pending
+    9. 写结构化 .update_status（PR-C，UI 展示"上次更新结果"用）
 
     失败的每一步都写 .update_log 和 .update_status，但不抛异常 — 让 cli.py
     继续走后面的 bootstrap，server 至少能起来（UI 端会看到失败 banner）。
@@ -945,6 +1173,23 @@ def apply_pending(emit: TaskLogLike = _DEFAULT_LOG) -> bool:
             "current version keeps running", stderr[:200],
         )
         return _done("failed", f"git fetch: {stderr[:120]}", cur.commit, False)
+
+    # 2.25 distribution guard：fetch 后重新解析 target，防止 server 预检与
+    # 启动期 reset 之间远端 ref 发生变化。force 仅影响 dirty tree，不能越过
+    # 此闸；只有维护者显式设置应急环境变量才能主动退出定制发行版。
+    try:
+        compatibility = assert_distribution_update_compatible(target)
+    except IncompatibleDistributionUpdate as exc:
+        reason = exc.result.reason
+        log_lines.append(f"[abort] incompatible distribution update: {reason}")
+        emit.error(
+            "[updater] incompatible distribution update blocked: %s; the current "
+            "version was left unchanged", reason,
+        )
+        return _done("aborted", f"incompatible distribution: {reason}", cur.commit, False)
+    if compatibility.bypassed:
+        log_lines.append(f"[warning] {compatibility.reason}")
+        emit.warning("[updater] %s", compatibility.reason)
 
     # 2.5 备份「早期误入库、后转 gitignore」的模型数据文件（hardcode 清单）：
     #     reset --hard 会把这些已追踪文件删掉 → 备份，reset 成功后还原，老用户零感知。
@@ -1084,6 +1329,7 @@ def request_rollback() -> Optional[str]:
     sha = rollback_target()
     if sha is None:
         return None
+    assert_distribution_update_compatible(sha)
     request_update(sha)
     return sha
 

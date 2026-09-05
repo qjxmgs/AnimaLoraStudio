@@ -1,0 +1,9 @@
+{
+  "distribution_id": "qjxmgs",
+  "origin_url": "https://github.com/qjxmgs/AnimaLoraStudio.git",
+  "stable_ref": "origin/master",
+  "dev_ref": "origin/dev",
+  "required_features": {
+    "auto_head_mask": 1
+  }
+}

@@ -38,6 +38,17 @@ def _isolate_flags(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setattr(updater, "UPDATE_LOG", tmp_path / ".update_log")
     monkeypatch.setattr(updater, "UPDATE_STATUS", tmp_path / ".update_status")
     monkeypatch.setattr(updater, "PRESERVE_HOLDING", tmp_path / ".update_preserve")
+    # These tests cover the generic updater state machine.  The fork-specific
+    # distribution contract has dedicated real-git coverage in
+    # test_distribution_update_guard.py.
+    monkeypatch.setattr(
+        updater,
+        "assert_distribution_update_compatible",
+        lambda _target: updater.DistributionCompatibility(
+            compatible=True,
+            reason="test target is compatible",
+        ),
+    )
     return tmp_path
 
 
