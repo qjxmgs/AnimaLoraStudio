@@ -10,7 +10,18 @@
 - `origin`: `https://github.com/qjxmgs/AnimaLoraStudio.git`
 - `upstream`: `https://github.com/WalkingMeatAxolotl/AnimaLoraStudio.git`
 - `origin/master` 和 `origin/dev` 都必须通过 Distribution Guard，并包含
-  `required_features.auto_head_mask >= 1`。
+  当前本地轮廓版要求 `required_features.auto_head_mask >= 2`；只有未来发布
+  包含等级 2 的 Fork 分支，才可作为本地轮廓版的更新目标。
+
+## 本地轮廓版（尚未发布）
+
+`feature/face-contour-mask` 的功能标记与清单均升级为等级 2。等级 1 只有旧
+矩形功能，不能覆盖轮廓版。预检、更新请求和启动期应用均检查等级，包含
+`force=true`；回滚同样不能降回等级 1。未来先在本地合并官方更新、解决冲突、
+运行完整测试并保留等级 2，再决定是否发布。等级数字不是发布授权。
+
+本次交付仅有两个本地提交：功能及测试文档、Fork 更新保护升级。不执行下方
+手册中的 push / PR / release 步骤，也不调整远端分支保护。
 
 ## 同步正式版
 

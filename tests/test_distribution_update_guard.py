@@ -298,6 +298,74 @@ def test_valid_fork_update_and_rollback_are_schedulable(
     assert updater.UPDATE_PENDING.read_text(encoding="utf-8") == use_distribution_repo["base"]
 
 
+@pytest.mark.parametrize('target_key', [
+    'base', 'missing_manifest', 'missing_feature', 'missing_guard', 'wrong_distribution', 'understated_marker',
+])
+def test_contour_level_two_is_enforced_at_all_three_layers(
+    client, use_distribution_repo, monkeypatch, tmp_path, target_key,
+):
+    repo = use_distribution_repo['repo']
+    current = use_distribution_repo['valid_upgrade']
+    _git(repo, 'switch', '--detach', current)
+    if target_key == 'understated_marker':
+        marker = repo / 'studio/services/preprocess/head_mask.py'
+        marker.write_text('AUTO_HEAD_MASK_FEATURE_LEVEL = 1\n', encoding='utf-8')
+        target = _commit(repo, 'claims level two without its implementation')
+        _git(repo, 'switch', '--detach', current)
+    else:
+        target = use_distribution_repo[target_key]
+    _patch_update_flags(monkeypatch, tmp_path / 'contour-flags')
+    monkeypatch.setattr(updater, 'current_version', lambda: _clean_version(current, dirty=True))
+    monkeypatch.setattr(updater, 'requirements_diff', lambda _ref: updater.RequirementsDiff())
+    monkeypatch.setattr(updater, 'target_has_self_update', lambda _ref: True)
+    body = client.get('/api/system/preflight', params={'target': target}).json()
+    assert body['blocking']
+    assert next(c for c in body['checks'] if c['key'] == 'distribution_compat')['level'] == 'err'
+    response = client.post('/api/system/update', json={'target': target, 'force': True})
+    assert response.status_code == 422
+    assert not updater.UPDATE_PENDING.exists()
+    assert not updater.RESTART_FLAG.exists()
+
+    updater.UPDATE_PENDING.parent.mkdir(parents=True, exist_ok=True)
+    updater.UPDATE_PENDING.write_text(target, encoding='utf-8')
+    updater.UPDATE_FORCE.touch()
+    real_git = updater._git
+    calls = []
+    def offline_git(*args, **kwargs):
+        calls.append(args)
+        if args[:2] == ('fetch', 'origin'):
+            return 0, '', ''
+        return real_git(*args, **kwargs)
+    monkeypatch.setattr(updater, '_git', offline_git)
+    assert updater.apply_pending(emit=lambda _message: None)
+    assert updater.last_status().status == 'aborted'
+    assert not any(call and call[0] == 'reset' for call in calls)
+    assert _git(repo, 'rev-parse', 'HEAD').stdout.strip() == current
+
+
+def test_contour_level_two_allows_only_level_two_or_higher_rollback(
+    client, use_distribution_repo, monkeypatch, tmp_path,
+):
+    repo = use_distribution_repo['repo']
+    level_two = use_distribution_repo['valid_upgrade']
+    _git(repo, 'switch', '--detach', level_two)
+    (repo / 'compatible-update.txt').write_text('retains face contours', encoding='utf-8')
+    next_level_two = _commit(repo, 'compatible local update')
+    _git(repo, 'switch', '--detach', level_two)
+    _patch_update_flags(monkeypatch, tmp_path / 'contour-flags')
+    monkeypatch.setattr(updater, 'current_version', lambda: _clean_version(level_two))
+    monkeypatch.setattr('studio.api.routers.system._raise_sigint_after_response', lambda: None)
+    assert client.post('/api/system/update', json={'target': next_level_two}).status_code == 200
+    updater.UPDATE_PENDING.unlink()
+    updater.LAST_VERSION.write_text(level_two, encoding='utf-8')
+    assert updater.request_rollback() == level_two
+    updater.UPDATE_PENDING.unlink()
+    updater.LAST_VERSION.write_text(use_distribution_repo['base'], encoding='utf-8')
+    with pytest.raises(updater.IncompatibleDistributionUpdate):
+        updater.request_rollback()
+    assert not updater.UPDATE_PENDING.exists()
+
+
 def _init_sync_repo(tmp_path: Path) -> Path:
     repo = tmp_path / "sync-repo"
     repo.mkdir()

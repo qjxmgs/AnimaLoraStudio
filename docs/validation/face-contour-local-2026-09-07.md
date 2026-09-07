@@ -63,6 +63,15 @@ implementation or caption processing was changed. Automated tests cover fault
 rollback, crash recovery, shared locking, bitmap integrity, ownership and missing
 model/fallback behavior; visual review cannot replace those tests.
 
+After integrating the level-2 distribution guard, the final full run passed
+**3,715 backend tests (4 skipped)** and **686 frontend tests**; the production
+build and guard lint passed again. Nineteen distribution tests include the three
+guard layers, underreported implementation markers, safe rollback and temporary
+Git upstream merge/conflict simulations. The running service also rejected a
+level-1 target at preflight and returned HTTP 422 to `force=true`, without creating
+pending-update or restart flags. Older proposals remain clearly identified:
+selecting face mode does not itself convert their rectangles.
+
 ## Local startup
 
 Use the clean `feature/face-contour-mask` worktree, not the original dirty checkout.

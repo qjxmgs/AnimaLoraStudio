@@ -4,6 +4,6 @@
   "stable_ref": "origin/master",
   "dev_ref": "origin/dev",
   "required_features": {
-    "auto_head_mask": 1
+    "auto_head_mask": 2
   }
 }
