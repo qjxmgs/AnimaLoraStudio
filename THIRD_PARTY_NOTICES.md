@@ -17,6 +17,18 @@
 
 ## 模型与权重
 
+### Anzhc / Anzhcs_YOLOs face segmentation (AGPL-3.0，用户本地转换)
+
+- 来源：[作者模型卡](https://huggingface.co/Anzhc/Anzhcs_YOLOs#face-segmentation)。
+  使用 `Anzhc Face seg 640 v4 y11n.pt`，revision
+  `f5a2306d7fed4f3cfc26c25ff1ab2e3f3cfce855`；大小及 SHA-256 固定于代码和 ADR 0018。
+- 模型卡标注 AGPL-3.0。权重和派生 ONNX 不随本仓库或程序包分发，由用户按需
+  下载，在独立本地环境使用 Ultralytics 8.3.216 转换。
+- Ultralytics 另有许可条款，见
+  [上游 LICENSE](https://github.com/ultralytics/ultralytics/blob/v8.3.216/LICENSE)。
+  本项目不复制其推理实现；日常运行使用既有 ONNX Runtime / NumPy / Pillow。
+- 按需下载、独立转换或不打包权重均不免除许可义务；本说明不作商业许可保证。
+
 ### deepghs / anime_head_detection (MIT，按需下载)
 
 - **来源**：[`deepghs/anime_head_detection`](https://huggingface.co/deepghs/anime_head_detection)

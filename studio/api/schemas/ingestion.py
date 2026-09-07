@@ -1,7 +1,7 @@
 """download / upload / preprocess BaseModel（PR-6.5 commit 3 从 server.py 抽出）。"""
 from __future__ import annotations
 
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -63,6 +63,10 @@ class PreprocessCropRequest(BaseModel):
 
 
 class HeadMaskDetectRequest(BaseModel):
+    mask_mode: Literal["head_box", "face_contour"] = "head_box"
+    face_confidence: float = Field(0.25, ge=0.01, le=0.99)
+    mask_threshold: float = Field(0.5, ge=0.01, le=0.99)
+    feather_px: int = Field(0, ge=0, le=3)
     scope: str = "all"  # all | selected
     filenames: Optional[list[str]] = None
     confidence: float = Field(preprocess_svc.DEFAULT_HEAD_MASK_CONFIDENCE, ge=0.01, le=0.99)
@@ -71,9 +75,15 @@ class HeadMaskDetectRequest(BaseModel):
     feather_ratio: float = Field(preprocess_svc.DEFAULT_HEAD_MASK_FEATHER, ge=0.0, le=0.5)
 
 
+class HeadMaskReplacement(BaseModel):
+    job_id: int = Field(gt=0)
+    apply_id: str = Field(min_length=1, max_length=64)
+
+
 class HeadMaskApplyRequest(BaseModel):
     job_id: int = Field(gt=0)
     selections: dict[str, list[str]]
+    replace_from: Optional[HeadMaskReplacement] = None
 
 
 class HeadMaskUndoRequest(BaseModel):

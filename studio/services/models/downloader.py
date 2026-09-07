@@ -1053,6 +1053,11 @@ def trigger(model_id: str, variant: Optional[str] = None) -> str:
             key, lambda log: download_head_detector(root, on_log=log)
         )
         return key
+    if model_id == "face_segmenter":
+        from .face_segmenter import prepare
+        key = "face_segmenter"
+        start_download_async(key, lambda log: prepare(root, on_log=log))
+        return key
     if model_id == "cltagger_custom":
         # fork repo 候选（镜像覆盖退役后的替代，D4）：variant=repo，双文件
         # 相对路径从候选 extra 取，下载到该 fork 专属根目录。

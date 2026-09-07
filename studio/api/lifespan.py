@@ -133,6 +133,10 @@ async def lifespan(app_: FastAPI) -> AsyncIterator[None]:
     ensure_dirs()
     db.init_db()
 
+    # Recover interrupted mask batches before the supervisor can start training.
+    from ..services.preprocess.mask_transaction import recover_all
+    recover_all()
+
     # 测试出图 tempdir 遗留清扫（防 supervisor crash 泄漏 anima_gen_* 目录）
     from ..services.inference.core import cleanup_stale_generate_tempdirs
     from ..services.inference import disk_cache as generate_cache

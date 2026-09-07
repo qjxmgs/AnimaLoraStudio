@@ -94,6 +94,7 @@ export default function PreprocessInpaintPage() {
   const [filter, setFilter] = useState<Filter>('all')
   const [busy, setBusy] = useState(false)
   const [headMaskState, setHeadMaskState] = useState<AutoHeadMaskState | null>(null)
+  const [previewState, setPreviewState] = useState<'loading' | 'ready' | 'error'>('ready')
 
   const [brush, setBrush] = useLocalStorageState<BrushState>(
     'studio:inpaint:brush', DEFAULT_BRUSH,
@@ -144,7 +145,7 @@ export default function PreprocessInpaintPage() {
   const counts = useMemo(() => {
     const edited = images.filter((im) => (historyByImage[im.name] ?? []).length > 0).length
     const detected = new Set(
-      headMaskState?.images.filter((im) => im.regions.length > 0).map((im) => im.name) ?? [],
+      headMaskState?.images.filter((im) => im.regions.length > 0 && im.review_status !== 'needs_review').map((im) => im.name) ?? [],
     )
     const proposalNames = new Set(headMaskState?.images.map((im) => im.name) ?? [])
     const undetected = images.filter((im) => proposalNames.has(im.name) && !detected.has(im.name)).length
@@ -157,7 +158,7 @@ export default function PreprocessInpaintPage() {
     if (filter === 'edited') return n > 0
     if (filter === 'undetected') {
       const proposal = headMaskState?.images.find((item) => item.name === im.name)
-      return proposal?.regions.length === 0
+      return proposal?.regions.length === 0 || proposal?.review_status === 'needs_review'
     }
     return true
   }), [images, filter, historyByImage, headMaskState])
@@ -172,6 +173,7 @@ export default function PreprocessInpaintPage() {
       score: region.score,
       selected: selected.has(region.id),
       mask_region: region.mask_region,
+      bitmap: region.bitmap,
     }))
   }, [activeName, headMaskState])
 
@@ -539,6 +541,7 @@ export default function PreprocessInpaintPage() {
                     onMaskStrokeEnd={onMaskStrokeEnd}
                     onPickColor={onPickColor}
                     proposalRegions={activeProposalRegions}
+                    onProposalPreviewState={setPreviewState}
                   />
                 </div>
 
@@ -556,6 +559,7 @@ export default function PreprocessInpaintPage() {
                     versionId={vid}
                     activeName={activeName}
                     unsavedCount={editedNames.length}
+                    previewState={previewState}
                     onStateChange={onHeadMaskStateChange}
                     onShowUndetected={showUndetected}
                     onWorkspaceChanged={refreshAfterAutoMask}

@@ -2194,13 +2194,13 @@
       "all": "All",
       "pending": "Untouched",
       "edited": "Painted",
-      "undetected": "No head detected"
+      "undetected": "No result / review"
     },
     "filmstripEmpty": {
       "all": "Workspace is empty.",
       "pending": "Every image already has strokes.",
       "edited": "No image has been painted yet.",
-      "undetected": "Every detected image has at least one head."
+      "undetected": "Every detected image has candidates; still review contour quality on each image."
     },
     "loading": "Loading workspace...",
     "emptyWorkspace": "Workspace is empty,",
@@ -2224,7 +2224,7 @@
       "boundary": "Creates spatial masks only. It never changes source images or removes character names, hair, or eye tags from captions.",
       "modelReady": "Model ready",
       "modelMissing": "Model missing",
-      "modelRequired": "Download and verify the head detector first.",
+      "modelRequired": "Download and prepare the models required by this mode first.",
       "downloadModel": "Download head detector (about 42.5 MB)",
       "downloadStarted": "Head detector download started",
       "downloading": "Downloading model…",
@@ -2238,7 +2238,7 @@
       "detectStarted": "Head detection job #{{id}} started",
       "detectFailed": "Head detection failed. Check the task log.",
       "detectCanceled": "Head detection canceled; the incomplete proposal was not saved.",
-      "saveFirst": "{{n}} image(s) have unsaved strokes. Save them before batch detection.",
+      "saveFirst": "Save unsaved strokes on {{n}} images before any automatic mask operation.",
       "progress": "Detecting {{done}} / {{total}} · {{heads}} head(s) found",
       "summary": "{{images}} image(s) · {{heads}} head(s) · {{selected}} selected",
       "showUndetected": "No detection ({{n}})",
@@ -2250,7 +2250,32 @@
       "applySelected": "Apply selected ({{n}})",
       "undoApply": "Undo this auto mask",
       "applied": "Merged automatic masks into {{n}} image(s)",
-      "undone": "Restored masks for {{n}} image(s)"
+      "undone": "Restored masks for {{n}} image(s)",
+      "mode": "Mask mode",
+      "faceMode": "Face only · precise contour",
+      "boxMode": "Head rectangle (legacy)",
+      "prepareFaceModel": "Download and prepare face segmenter",
+      "prepareLog": "Model preparation log",
+      "face_confidence": "Face confidence",
+      "mask_threshold": "Segmentation threshold",
+      "feather_px": "Inward feather (pixels)",
+      "needsReview": "Manual review needed: no face detected or some segments failed. No box fallback is used.",
+      "previewFailed": "Contour preview failed to load; application is blocked. Reopen the image or detect again.",
+      "previewLoading": "Loading the actual contour preview. Please wait.",
+      "faceSummary": "{{images}} image(s) · {{heads}} face proposal(s) · {{selected}} selected",
+      "faceRegion": "Face {{n}} · {{score}}%",
+      "faceUndetected": "No face / review ({{n}})",
+      "proposalModeMismatch": "These proposals still belong to the previous task. Changing mode does not convert old results; detect again before applying.",
+      "replaceTitle": "Replace previous automatic masks",
+      "replaceSource": "Select previous application",
+      "replaceEligible": "Safe to replace",
+      "replacePreview": "Preview replacement differences",
+      "replaceConfirm": "Confirm replacement of selected images",
+      "replaceWarning": "Black means ignored; white means learned. Only selected images are replaced. Images with no selected face stay unchanged.",
+      "replaceDiff": "Restore learning: {{restored}} pixels · Newly ignored: {{ignored}} pixels",
+      "before": "Before replacement",
+      "after": "After replacement",
+      "faceHelp": "Pixel masks of visible faces without automatic expansion into hair, neck or shoulders. First preparation installs conversion tools in a separate environment and may download hundreds of MB; normal inference does not depend on Ultralytics. Model is marked AGPL-3.0. Review stylized and occluded faces manually."
     }
   },
   "steps": {

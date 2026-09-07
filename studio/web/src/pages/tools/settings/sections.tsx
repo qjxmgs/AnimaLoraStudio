@@ -450,6 +450,8 @@ export function HeadDetectorSection({
   const { startDownload, deleteAsset, downloadBusy } = useSettingsData()
   const model = catalog?.head_detector
   const download = catalog?.downloads.head_detector
+  const face = catalog?.face_segmenter
+  const faceDownload = catalog?.downloads.face_segmenter
   return (
     <SettingsSection id="head-detector" title={t('settings.headDetectorTitle')}>
       {!model ? (
@@ -488,6 +490,25 @@ export function HeadDetectorSection({
           {download?.message && <p className="text-xs text-err m-0">{download.message}</p>}
         </ModelGroupCard>
       )}
+      {face && <ModelGroupCard title={t('preprocessInpaint.headMask.faceMode')}
+        helpTooltip={<p>{t('preprocessInpaint.headMask.faceHelp')}</p>}>
+        <div className="flex items-center gap-2 text-xs">
+          <div className="flex-1 min-w-0">
+            <code className="block truncate">{face.repo}</code>
+            <span className="text-fg-tertiary">{face.revision.slice(0, 12)} · {face.license}</span>
+          </div>
+          <ModelStatusBadge exists={face.valid} size={face.size} status={faceDownload?.status} />
+          <button type="button" className="btn btn-secondary btn-sm"
+            disabled={face.valid || downloadBusy.has('face_segmenter') || faceDownload?.status === 'running'}
+            onClick={() => void startDownload('face_segmenter')}>
+            {t('preprocessInpaint.headMask.prepareFaceModel')}
+          </button>
+        </div>
+        {faceDownload?.message && <p className="text-xs text-err">{faceDownload.message}</p>}
+        {faceDownload?.log_tail && <details className="text-xs"><summary>{t('preprocessInpaint.headMask.prepareLog')}</summary>
+          <pre className="max-h-48 overflow-auto whitespace-pre-wrap">{faceDownload.log_tail.join('\n')}</pre>
+        </details>}
+      </ModelGroupCard>}
     </SettingsSection>
   )
 }

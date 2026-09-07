@@ -25,6 +25,7 @@ export interface InpaintStroke {
 export type InpaintMode = 'paint' | 'mask'
 
 export interface HeadMaskOverlayRegion {
+  bitmap?: { url: string; origin: [number, number]; size: [number, number] }
   id: string
   score: number
   selected: boolean
@@ -291,12 +292,14 @@ const InpaintCanvas = forwardRef<
     onPickColor: (hex: string) => void
     /** Proposal-only overlay. It is never included in image or mask exports. */
     proposalRegions?: HeadMaskOverlayRegion[]
+    onProposalPreviewState?: (state: 'loading' | 'ready' | 'error') => void
   }
 >(function InpaintCanvas(
   {
     imageUrl, imageW, imageH, mode, strokes, maskStrokes, maskBaseUrl,
     brush, erase, onStrokeEnd, onMaskStrokeEnd, onPickColor,
     proposalRegions = [],
+    onProposalPreviewState,
   },
   ref,
 ) {
@@ -332,6 +335,7 @@ const InpaintCanvas = forwardRef<
   const eraseRef = useRef(erase)
   eraseRef.current = erase
   const proposalRegionsRef = useRef(proposalRegions)
+  const proposalBitmaps = useRef(new Map<string, HTMLCanvasElement>())
   proposalRegionsRef.current = proposalRegions
 
   const ensureLayer = useCallback((
@@ -368,6 +372,16 @@ const InpaintCanvas = forwardRef<
       ctx.restore()
     }
     for (const proposal of proposalRegionsRef.current) {
+      if (proposal.bitmap) {
+        const bitmap = proposalBitmaps.current.get(proposal.bitmap.url)
+        if (bitmap) {
+          ctx.save()
+          ctx.globalAlpha = proposal.selected ? 0.55 : 0.12
+          ctx.drawImage(bitmap, ...proposal.bitmap.origin, ...proposal.bitmap.size)
+          ctx.restore()
+        }
+        continue // Never display a rectangular fallback for a bitmap proposal.
+      }
       const r = proposal.mask_region
       const width = Math.max(0, r.x2 - r.x1)
       const height = Math.max(0, r.y2 - r.y1)
@@ -450,6 +464,50 @@ const InpaintCanvas = forwardRef<
   useEffect(() => {
     redraw()
   }, [proposalRegions, redraw])
+
+  useEffect(() => {
+    let active = true
+    const urls = new Set(proposalRegions.flatMap((r) => r.bitmap ? [r.bitmap.url] : []))
+    for (const key of proposalBitmaps.current.keys()) {
+      if (!urls.has(key)) proposalBitmaps.current.delete(key)
+    }
+    let remaining = [...urls].filter((url) => !proposalBitmaps.current.has(url)).length
+    let failed = false
+    onProposalPreviewState?.(remaining ? 'loading' : 'ready')
+    const settled = (error: boolean) => {
+      if (!active) return
+      failed ||= error
+      remaining -= 1
+      onProposalPreviewState?.(failed ? 'error' : remaining ? 'loading' : 'ready')
+    }
+    for (const url of urls) {
+      if (proposalBitmaps.current.has(url)) continue
+      const image = new Image()
+      image.onload = () => {
+        if (!active) return
+        const layer = document.createElement('canvas')
+        layer.width = image.naturalWidth
+        layer.height = image.naturalHeight
+        const context = layer.getContext('2d')
+        if (!context) { settled(true); return }
+        context.drawImage(image, 0, 0)
+        const pixels = context.getImageData(0, 0, layer.width, layer.height)
+        for (let i = 0; i < pixels.data.length; i += 4) {
+          pixels.data[i + 3] = 255 - pixels.data[i]
+          pixels.data[i] = 255
+          pixels.data[i + 1] = 168
+          pixels.data[i + 2] = 0
+        }
+        context.putImageData(pixels, 0, 0)
+        proposalBitmaps.current.set(url, layer)
+        redraw()
+        settled(false)
+      }
+      image.onerror = () => settled(true)
+      image.src = url
+    }
+    return () => { active = false }
+  }, [proposalRegions, redraw, onProposalPreviewState])
 
   useImperativeHandle(ref, () => ({
     exportBlob: async () => {

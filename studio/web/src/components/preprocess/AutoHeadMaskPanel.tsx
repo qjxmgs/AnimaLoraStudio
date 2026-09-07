@@ -20,6 +20,7 @@ interface Props {
   versionId: number
   activeName: string | null
   unsavedCount: number
+  previewState?: 'loading' | 'ready' | 'error'
   onStateChange: (state: AutoHeadMaskState | null) => void
   onShowUndetected: (names: string[]) => void
   onWorkspaceChanged: () => Promise<void>
@@ -39,6 +40,7 @@ export default function AutoHeadMaskPanel({
   versionId,
   activeName,
   unsavedCount,
+  previewState = 'ready',
   onStateChange,
   onShowUndetected,
   onWorkspaceChanged,
@@ -50,6 +52,11 @@ export default function AutoHeadMaskPanel({
   const [proposal, setProposal] = useState<Awaited<ReturnType<typeof api.getHeadMaskProposals>> | null>(null)
   const [selections, setSelections] = useState<Record<string, string[]>>({})
   const [busy, setBusy] = useState(false)
+  const [mode, setMode] = useState<'face_contour' | 'head_box'>('face_contour')
+  const [applications, setApplications] = useState<Awaited<ReturnType<typeof api.getHeadMaskApplications>>['applications']>([])
+  const [replacementId, setReplacementId] = useState('')
+  const [replacementPreview, setReplacementPreview] = useState<Awaited<ReturnType<typeof api.previewHeadMaskReplacement>> | null>(null)
+  const [faceParams, setFaceParams] = useState({ face_confidence: 0.25, mask_threshold: 0.5, feather_px: 0 })
   const [downloadRequested, setDownloadRequested] = useState(false)
   const [progress, setProgress] = useState({ done: 0, total: 0, heads: 0 })
   const [params, setParams] = useState({
@@ -59,6 +66,7 @@ export default function AutoHeadMaskPanel({
     feather_ratio: 0.03,
   })
   const jobIdRef = useRef<number | null>(null)
+  const proposalJobRef = useRef<number | null>(null)
   jobIdRef.current = job?.id ?? null
 
   const reloadCatalog = useCallback(() => {
@@ -68,15 +76,15 @@ export default function AutoHeadMaskPanel({
   const loadProposal = useCallback(async (jobId: number) => {
     const result = await api.getHeadMaskProposals(projectId, versionId, jobId)
     setProposal(result)
+    const sameJob = proposalJobRef.current === jobId
+    proposalJobRef.current = jobId
     setSelections((previous) => {
-      const hasMatchingState = Object.keys(previous).some((name) =>
-        result.images.some((image) => image.name === name),
-      )
-      if (hasMatchingState) return previous
+      if (sameJob) return previous
       return Object.fromEntries(
         result.images.map((image) => [image.name, image.regions.map((region) => region.id)]),
       )
     })
+    void api.getHeadMaskApplications(projectId, versionId).then((r) => setApplications(r.applications)).catch(() => setApplications([]))
   }, [projectId, versionId])
 
   useEffect(() => {
@@ -89,10 +97,12 @@ export default function AutoHeadMaskPanel({
   }, [projectId, versionId, reloadCatalog, loadProposal])
 
   useEffect(() => {
-    if (!downloadRequested || catalog?.head_detector?.valid) return
+    if (!downloadRequested || (catalog?.head_detector?.valid && catalog?.face_segmenter?.valid)) return
     const timer = window.setInterval(reloadCatalog, 1000)
     return () => window.clearInterval(timer)
-  }, [downloadRequested, catalog?.head_detector?.valid, reloadCatalog])
+  }, [downloadRequested, catalog?.head_detector?.valid, catalog?.face_segmenter?.valid, reloadCatalog])
+
+  useEffect(() => { setReplacementPreview(null) }, [selections, replacementId, proposal?.job_id])
 
   // SSE is the fast path. Polling is the recovery path for a sleeping browser,
   // a proxy that buffered events, or a reconnect that missed the terminal event.
@@ -123,7 +133,7 @@ export default function AutoHeadMaskPanel({
   }, [proposal, selections, onStateChange])
 
   useEventStream((event) => {
-    if (event.type === 'model_download_changed' && event.key === 'head_detector') {
+    if (event.type === 'model_download_changed' && ['head_detector', 'face_segmenter'].includes(String(event.key))) {
       reloadCatalog()
     }
     const currentJobId = jobIdRef.current
@@ -152,7 +162,7 @@ export default function AutoHeadMaskPanel({
       toast(t('preprocessInpaint.headMask.saveFirst', { n: unsavedCount }), 'error')
       return
     }
-    if (!catalog?.head_detector?.valid) {
+    if (!catalog?.head_detector?.valid || (mode === 'face_contour' && !catalog?.face_segmenter?.valid)) {
       toast(t('preprocessInpaint.headMask.modelRequired'), 'error')
       return
     }
@@ -166,6 +176,8 @@ export default function AutoHeadMaskPanel({
         scope,
         ...(scope === 'selected' && activeName ? { filenames: [activeName] } : {}),
         ...params,
+        mask_mode: mode,
+        ...(mode === 'face_contour' ? faceParams : {}),
       })
       setJob(next)
       toast(t('preprocessInpaint.headMask.detectStarted', { id: next.id }), 'success')
@@ -179,7 +191,7 @@ export default function AutoHeadMaskPanel({
   const downloadModel = async () => {
     setDownloadRequested(true)
     try {
-      await api.startModelDownload({ model_id: 'head_detector' })
+      await api.startModelDownload({ model_id: catalog?.head_detector?.valid ? 'face_segmenter' : 'head_detector' })
       toast(t('preprocessInpaint.headMask.downloadStarted'), 'success')
       reloadCatalog()
     } catch (error) {
@@ -190,8 +202,9 @@ export default function AutoHeadMaskPanel({
   const activeProposal = proposal?.images.find((image) => image.name === activeName) ?? null
   const selectedCount = Object.values(selections).reduce((total, ids) => total + ids.length, 0)
   const totalHeads = proposal?.images.reduce((total, image) => total + image.regions.length, 0) ?? 0
+  const faceProposal = proposal?.parameters.mask_mode === 'face_contour'
   const undetected = useMemo(
-    () => proposal?.images.filter((image) => image.regions.length === 0).map((image) => image.name) ?? [],
+    () => proposal?.images.filter((image) => image.regions.length === 0 || image.review_status === 'needs_review').map((image) => image.name) ?? [],
     [proposal],
   )
 
@@ -217,6 +230,8 @@ export default function AutoHeadMaskPanel({
   }
 
   const apply = async () => {
+    if (!ensureSaved()) return
+    if (previewState !== 'ready') return
     if (!proposal || selectedCount === 0) return
     setBusy(true)
     try {
@@ -234,6 +249,7 @@ export default function AutoHeadMaskPanel({
   }
 
   const undoApply = async () => {
+    if (!ensureSaved()) return
     if (!proposal) return
     setBusy(true)
     try {
@@ -249,7 +265,35 @@ export default function AutoHeadMaskPanel({
   }
 
   const running = job?.status === 'pending' || job?.status === 'running'
-  const modelReady = catalog?.head_detector?.valid === true
+  const modelReady = catalog?.head_detector?.valid === true && (mode === 'head_box' || catalog?.face_segmenter?.valid === true)
+  const modelKey = catalog?.head_detector?.valid ? 'face_segmenter' : 'head_detector'
+  const download = catalog?.downloads[modelKey]
+  const replacement = applications.find((a) => `${a.job_id}:${a.apply_id}` === replacementId)
+  const ensureSaved = () => {
+    if (unsavedCount === 0) return true
+    toast(t('preprocessInpaint.headMask.saveFirst', { n: unsavedCount }), 'error')
+    return false
+  }
+  const previewReplacement = async () => {
+    if (!ensureSaved() || previewState !== 'ready' || !proposal || !replacement) return
+    setBusy(true)
+    try {
+      setReplacementPreview(await api.previewHeadMaskReplacement(projectId, versionId, proposal.job_id, selections,
+        { job_id: replacement.job_id, apply_id: replacement.apply_id }))
+    } catch (error) { toast(String(error), 'error') } finally { setBusy(false) }
+  }
+  const confirmReplacement = async () => {
+    if (!ensureSaved() || previewState !== 'ready' || !proposal || !replacement || !replacementPreview) return
+    setBusy(true)
+    try {
+      const result = await api.applyHeadMaskProposals(projectId, versionId, proposal.job_id, selections,
+        { job_id: replacement.job_id, apply_id: replacement.apply_id })
+      toast(t('preprocessInpaint.headMask.applied', { n: result.applied }), 'success')
+      setReplacementPreview(null)
+      await onWorkspaceChanged()
+      await loadProposal(proposal.job_id)
+    } catch (error) { toast(String(error), 'error') } finally { setBusy(false) }
+  }
 
   return (
     <div className="flex flex-col gap-2 border-t border-subtle pt-2 mt-1" data-testid="auto-head-mask-panel">
@@ -264,26 +308,39 @@ export default function AutoHeadMaskPanel({
       <p className="text-[11px] text-fg-tertiary leading-relaxed m-0">
         {t('preprocessInpaint.headMask.boundary')}
       </p>
+      <label className="text-xs flex flex-col gap-1">
+        {t('preprocessInpaint.headMask.mode')}
+        <select className="input text-xs" value={mode} disabled={busy || running}
+          onChange={(event) => setMode(event.target.value as typeof mode)}>
+          <option value="face_contour">{t('preprocessInpaint.headMask.faceMode')}</option>
+          <option value="head_box">{t('preprocessInpaint.headMask.boxMode')}</option>
+        </select>
+      </label>
 
       {!modelReady && (
         <button
           type="button"
           className="btn btn-secondary btn-sm justify-center"
-          disabled={downloadRequested && catalog?.downloads.head_detector?.status === 'running'}
+          disabled={download?.status === 'running'}
           onClick={() => void downloadModel()}
         >
-          {catalog?.downloads.head_detector?.status === 'running'
+          {download?.status === 'running'
             ? t('preprocessInpaint.headMask.downloading')
-            : t('preprocessInpaint.headMask.downloadModel')}
+            : t(`preprocessInpaint.headMask.${modelKey === 'face_segmenter' ? 'prepareFaceModel' : 'downloadModel'}`)}
         </button>
       )}
+      {download?.message && <p role="alert" className="text-xs text-err m-0">{download.message}</p>}
+      {download?.log_tail && <details className="text-xs"><summary>{t('preprocessInpaint.headMask.prepareLog')}</summary>
+        <pre className="max-h-32 overflow-auto whitespace-pre-wrap">{download.log_tail.join('\n')}</pre>
+      </details>}
 
       <details className="text-[11px]">
         <summary className="cursor-pointer text-fg-secondary">
           {t('preprocessInpaint.headMask.parameters')}
         </summary>
         <div className="grid grid-cols-2 gap-1.5 mt-1.5">
-          {(['confidence', 'iou_threshold', 'padding_ratio', 'feather_ratio'] as const).map((key) => (
+          {(mode === 'head_box' ? ['confidence', 'iou_threshold', 'padding_ratio', 'feather_ratio'] as const
+            : ['confidence', 'iou_threshold'] as const).map((key) => (
             <label key={key} className="flex flex-col gap-0.5 text-fg-tertiary">
               {t(`preprocessInpaint.headMask.${key}`)}
               <input
@@ -297,6 +354,15 @@ export default function AutoHeadMaskPanel({
                   [key]: Number(event.target.value),
                 }))}
               />
+            </label>
+          ))}
+          {mode === 'face_contour' && (['face_confidence', 'mask_threshold', 'feather_px'] as const).map((key) => (
+            <label key={key} className="flex flex-col gap-0.5 text-fg-tertiary">
+              {t(`preprocessInpaint.headMask.${key}`)}
+              <input className="input input-mono text-xs" type="number" value={faceParams[key]}
+                min={key === 'feather_px' ? 0 : 0.01} max={key === 'feather_px' ? 3 : 0.99}
+                step={key === 'feather_px' ? 1 : 0.01}
+                onChange={(event) => setFaceParams((p) => ({ ...p, [key]: Number(event.target.value) }))} />
             </label>
           ))}
         </div>
@@ -327,19 +393,28 @@ export default function AutoHeadMaskPanel({
 
       {proposal && (
         <>
+          {(proposal.parameters.mask_mode ?? 'head_box') !== mode && <p role="status" className="text-xs text-warn m-0">
+            {t('preprocessInpaint.headMask.proposalModeMismatch')}
+          </p>}
+          {previewState !== 'ready' && <p role="alert" className="text-xs text-warn m-0">
+            {t(`preprocessInpaint.headMask.${previewState === 'error' ? 'previewFailed' : 'previewLoading'}`)}
+          </p>}
           <div className="flex items-center gap-1.5 text-[11px] text-fg-secondary flex-wrap">
-            <span>{t('preprocessInpaint.headMask.summary', {
+            <span>{t(`preprocessInpaint.headMask.${faceProposal ? 'faceSummary' : 'summary'}`, {
               images: proposal.images.length, heads: totalHeads, selected: selectedCount,
             })}</span>
             <button type="button" className="underline text-accent"
               onClick={() => onShowUndetected(undetected)}>
-              {t('preprocessInpaint.headMask.showUndetected', { n: undetected.length })}
+              {t(`preprocessInpaint.headMask.${faceProposal ? 'faceUndetected' : 'showUndetected'}`, { n: undetected.length })}
             </button>
           </div>
           {proposal.stale_count > 0 && (
             <p className="m-0 text-[11px] text-err">
               {t('preprocessInpaint.headMask.stale', { n: proposal.stale_count })}
             </p>
+          )}
+          {(activeProposal?.review_status === 'needs_review' || activeProposal?.review_status === 'no_face') && (
+            <p role="status" className="text-xs text-warn m-0">{t('preprocessInpaint.headMask.needsReview')}</p>
           )}
           <div className="flex items-center gap-1">
             <button type="button" className="btn btn-ghost btn-sm" onClick={() => setActiveSelection(true)}>
@@ -359,15 +434,15 @@ export default function AutoHeadMaskPanel({
                 <input type="checkbox"
                   checked={(selections[activeProposal.name] ?? []).includes(region.id)}
                   onChange={() => toggleRegion(region.id)} />
-                <span>{t('preprocessInpaint.headMask.region', {
+                <span>{t(`preprocessInpaint.headMask.${faceProposal ? 'faceRegion' : 'region'}`, {
                   n: index + 1, score: Math.round(region.score * 100),
                 })}</span>
               </label>
             ))}
           </div>
-          <div className="grid grid-cols-2 gap-1.5">
+          <div className="flex flex-col gap-1.5">
             <button type="button" className="btn btn-primary btn-sm justify-center"
-              disabled={busy || selectedCount === 0 || proposal.stale_count > 0}
+              disabled={busy || previewState !== 'ready' || selectedCount === 0 || proposal.stale_count > 0}
               onClick={() => void apply()}>
               {t('preprocessInpaint.headMask.applySelected', { n: selectedCount })}
             </button>
@@ -377,6 +452,43 @@ export default function AutoHeadMaskPanel({
               {t('preprocessInpaint.headMask.undoApply')}
             </button>
           </div>
+          {proposal.parameters.mask_mode === 'face_contour' && (
+            <details className="text-xs border-t border-subtle pt-2">
+              <summary>{t('preprocessInpaint.headMask.replaceTitle')}</summary>
+              <select aria-label={t('preprocessInpaint.headMask.replaceSource')} className="input text-xs w-full mt-2"
+                value={replacementId} onChange={(event) => setReplacementId(event.target.value)}>
+                <option value="">{t('preprocessInpaint.headMask.replaceSource')}</option>
+                {applications.filter((a) => a.job_id !== proposal.job_id).map((a) => (
+                  <option key={a.apply_id} value={`${a.job_id}:${a.apply_id}`}>
+                    #{a.job_id} · {a.images.filter((i) => i.eligible).length}/{a.images.length}
+                  </option>
+                ))}
+              </select>
+              {replacement && <ul className="my-2 max-h-24 overflow-auto pl-4">
+                {replacement.images.map((i) => <li key={i.name} className={i.eligible ? 'text-fg-secondary' : 'text-err'}>
+                  {i.name} · {i.eligible ? t('preprocessInpaint.headMask.replaceEligible') : i.reason}
+                </li>)}
+              </ul>}
+              <button type="button" className="btn btn-secondary btn-sm mt-2" disabled={busy || previewState !== 'ready' || !replacement || selectedCount === 0}
+                onClick={() => void previewReplacement()}>{t('preprocessInpaint.headMask.replacePreview')}</button>
+              {replacementPreview && <section aria-label={t('preprocessInpaint.headMask.replacePreview')} className="mt-2">
+                <p>{t('preprocessInpaint.headMask.replaceWarning')}</p>
+                <div className="max-h-72 overflow-auto">
+                  {replacementPreview.images.map((i) => <details key={i.name} open={i.name === activeName}>
+                    <summary className="break-all">{i.name}</summary>
+                    <p>{t('preprocessInpaint.headMask.replaceDiff', { restored: i.restored_pixels, ignored: i.ignored_pixels })}</p>
+                    <div className="grid grid-cols-2 gap-2">
+                      <figure className="m-0"><img src={i.before_url} alt={t('preprocessInpaint.headMask.before')} /><figcaption>{t('preprocessInpaint.headMask.before')}</figcaption></figure>
+                      <figure className="m-0"><img src={i.after_url} alt={t('preprocessInpaint.headMask.after')} /><figcaption>{t('preprocessInpaint.headMask.after')}</figcaption></figure>
+                    </div>
+                  </details>)}
+                </div>
+                <button type="button" className="btn btn-primary btn-sm mt-2" disabled={busy || previewState !== 'ready' || replacementPreview.images.length === 0}
+                  onClick={() => void confirmReplacement()}>{t('preprocessInpaint.headMask.replaceConfirm')}</button>
+                <button type="button" className="btn btn-ghost btn-sm" onClick={() => setReplacementPreview(null)}>{t('common.cancel')}</button>
+              </section>}
+            </details>
+          )}
         </>
       )}
     </div>

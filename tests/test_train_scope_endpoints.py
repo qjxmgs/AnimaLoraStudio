@@ -59,6 +59,35 @@ def _make_pv(client: TestClient) -> tuple[dict, dict]:
     return p, v
 
 
+def test_face_mode_requires_prepared_model_and_validates_mode(client, monkeypatch):
+    from studio.services.models import face_segmenter
+    p, v = _make_pv(client)
+    url = f"/api/projects/{p['id']}/versions/{v['id']}/preprocess/head-mask/detect"
+    monkeypatch.setattr(model_downloader, 'head_detector_status', lambda: {'valid': True})
+    monkeypatch.setattr(face_segmenter, 'status', lambda: {'valid': False})
+    assert client.post(url, json={'mask_mode': 'face_contour'}).status_code == 409
+    assert client.post(url, json={'mask_mode': 'oval'}).status_code == 422
+    monkeypatch.setattr(face_segmenter, 'status', lambda: {'valid': True})
+    result = client.post(url, json={'mask_mode': 'face_contour'})
+    assert result.status_code == 200
+    assert result.json()['params_decoded']['mask_threshold'] == .5
+
+
+def test_bitmap_route_scopes_job_and_rejects_damaged_mask(client):
+    from studio.services.preprocess import face_contour
+    import numpy as np
+    p, v = _make_pv(client)
+    with db.connection_for() as conn:
+        job = project_jobs.create_job(conn, project_id=p['id'], version_id=v['id'], kind='preprocess', params={'stage': 'head_mask'})
+    bitmap = face_contour.save_bitmap(job['id'], '1_data/A.png', 0, (0, 0), np.zeros((8, 8), np.uint8))
+    head_mask.write_result(job['id'], {'images': [{'regions': [{'id': bitmap['id'], 'kind': 'bitmap', 'bitmap': bitmap}]}]})
+    url = f"/api/projects/{p['id']}/versions/{v['id']}/preprocess/head-mask/proposals/{job['id']}/masks/{bitmap['id']}"
+    assert client.get(url).status_code == 200
+    assert client.get(url.replace(f"versions/{v['id']}", 'versions/999')).status_code == 404
+    face_contour.bitmap_path(job['id'], bitmap['id']).write_bytes(b'broken')
+    assert client.get(url).status_code == 409
+
+
 def _train_sub(p: dict, label: str = "v1", folder: str = "1_data") -> Path:
     d = projects.project_dir(p["id"], p["slug"]) / "versions" / label / "train" / folder
     d.mkdir(parents=True, exist_ok=True)
@@ -249,6 +278,7 @@ def test_head_mask_detect_defaults_and_missing_model(
     params = created.json()["params_decoded"]
     assert params == {
         "stage": "head_mask",
+        "mask_mode": "head_box", "face_confidence": 0.25, "mask_threshold": 0.5, "feather_px": 0,
         "scope": "all",
         "confidence": 0.413,
         "iou_threshold": 0.7,

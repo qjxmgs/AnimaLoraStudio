@@ -63,6 +63,8 @@ from ....services import model_downloader
 from ....services.booru import downloader
 from ....services.preprocess import manifest as preprocess_manifest
 from ....services.preprocess import head_mask as head_mask_svc
+from ....services.preprocess import head_apply, face_contour
+from ....services.models import face_segmenter
 from ....services.dataset import uploads as uploads_svc
 
 router = APIRouter()
@@ -608,6 +610,9 @@ def start_head_mask_detection(
     """Queue proposal-only cartoon head detection; source images stay untouched."""
     _resolve_pv_or_404(pid, vid)
     status = model_downloader.head_detector_status()
+    if body.mask_mode == "face_contour" and not face_segmenter.status()["valid"]:
+        raise ConflictError("Face segmenter is not prepared", code="preprocess.head_mask_model_missing",
+                            details={"model_id": "face_segmenter"})
     if not status.get("valid"):
         raise ConflictError(
             "Anime head detector is not downloaded or failed integrity validation",
@@ -625,6 +630,10 @@ def start_head_mask_detection(
             iou_threshold=body.iou_threshold,
             padding_ratio=body.padding_ratio,
             feather_ratio=body.feather_ratio,
+            mask_mode=body.mask_mode,
+            face_confidence=body.face_confidence,
+            mask_threshold=body.mask_threshold,
+            feather_px=body.feather_px,
         )
     _publish_job_state(job)
     return job
@@ -640,6 +649,13 @@ def get_head_mask_proposals(
     p, v = _resolve_pv_or_404(pid, vid)
     result = head_mask_svc.load_result(job_id)
     train_dir = preprocess_svc.version_train_dir(p, v["label"])
+    for item in result["images"]:
+        for region in item["regions"]:
+            if region.get("kind") == "bitmap":
+                region["bitmap"]["url"] = (
+                    f"/api/projects/{pid}/versions/{vid}/preprocess/head-mask/"
+                    f"proposals/{job_id}/masks/{region['bitmap']['id']}"
+                )
     return {
         **head_mask_svc.result_with_staleness(result, train_dir),
         "undo_available": head_mask_svc.undo_available(job_id),
@@ -651,6 +667,8 @@ async def apply_head_mask_proposals(
     pid: int, vid: int, body: HeadMaskApplyRequest,
 ) -> dict[str, Any]:
     _head_mask_job_or_404(pid, vid, body.job_id)
+    if body.replace_from:
+        _head_mask_job_or_404(pid, vid, body.replace_from.job_id)
     p, v = _resolve_pv_or_404(pid, vid)
     train_dir = preprocess_svc.version_train_dir(p, v["label"])
     result = await run_in_threadpool(
@@ -658,9 +676,49 @@ async def apply_head_mask_proposals(
         body.job_id,
         train_dir,
         body.selections,
+        replace_from=body.replace_from.model_dump() if body.replace_from else None,
     )
     _publish_project_state(p)
     return result
+
+
+@router.get("/api/projects/{pid}/versions/{vid}/preprocess/head-mask/proposals/{job_id}/masks/{mask_id}")
+def get_face_mask_bitmap(pid: int, vid: int, job_id: int, mask_id: str):
+    _head_mask_job_or_404(pid, vid, job_id)
+    result = head_mask_svc.load_result(job_id)
+    region = next((r for i in result["images"] for r in i["regions"]
+                   if r.get("bitmap", {}).get("id") == mask_id), None)
+    if region is None:
+        raise NotFoundError("Face mask not found", code="preprocess.face_mask_missing")
+    face_contour.load_bitmap(job_id, region)
+    return FileResponse(face_contour.bitmap_path(job_id, mask_id), media_type="image/png",
+                        headers={"Cache-Control": "no-cache"})
+
+
+@router.get("/api/projects/{pid}/versions/{vid}/preprocess/head-mask/applications")
+def get_head_mask_applications(pid: int, vid: int) -> dict:
+    p, v = _resolve_pv_or_404(pid, vid)
+    train_dir = preprocess_svc.version_train_dir(p, v["label"])
+    with db.connection_for() as conn:
+        jobs = project_jobs.list_jobs(conn, project_id=pid, version_id=vid, kind=preprocess_svc.PREPROCESS_KIND)
+    applications = []
+    for job in jobs:
+        if (job.get("params_decoded") or {}).get("stage") == "head_mask":
+            if info := head_apply.replacement_info(job["id"], train_dir):
+                applications.append(info)
+    return {"applications": applications}
+
+
+@router.post("/api/projects/{pid}/versions/{vid}/preprocess/head-mask/replace-preview")
+async def preview_head_mask_replacement(pid: int, vid: int, body: HeadMaskApplyRequest) -> dict:
+    _head_mask_job_or_404(pid, vid, body.job_id)
+    if not body.replace_from:
+        raise ValidationError("Select a source application", code="preprocess.head_mask_replace_unavailable", http_status=400)
+    _head_mask_job_or_404(pid, vid, body.replace_from.job_id)
+    p, v = _resolve_pv_or_404(pid, vid)
+    return await run_in_threadpool(head_apply.preview, body.job_id,
+                                  preprocess_svc.version_train_dir(p, v["label"]),
+                                  body.selections, body.replace_from.model_dump())
 
 
 @router.post("/api/projects/{pid}/versions/{vid}/preprocess/head-mask/undo")

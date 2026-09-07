@@ -2194,13 +2194,13 @@
       "all": "全部",
       "pending": "未涂抹",
       "edited": "已涂抹",
-      "undetected": "未检测到头部"
+      "undetected": "无结果／需检查"
     },
     "filmstripEmpty": {
       "all": "工作集是空的。",
       "pending": "所有图都已有笔画。",
       "edited": "还没有涂抹过任何图。",
-      "undetected": "每张已检测图片都识别到了头部。"
+      "undetected": "每张已检测图片都有候选区域；仍请逐图检查轮廓质量。"
     },
     "loading": "加载工作集...",
     "emptyWorkspace": "工作集为空，",
@@ -2224,7 +2224,7 @@
       "boundary": "只生成空间遮罩，不修改原图，也不会自动删除 caption 中的角色名、发色或眼睛标签。",
       "modelReady": "模型就绪",
       "modelMissing": "模型未下载",
-      "modelRequired": "请先下载并校验头部检测模型。",
+      "modelRequired": "请先下载并准备所选模式需要的模型。",
       "downloadModel": "下载头部检测模型（约 42.5 MB）",
       "downloadStarted": "头部检测模型已开始下载",
       "downloading": "模型下载中…",
@@ -2238,7 +2238,7 @@
       "detectStarted": "头部检测任务 #{{id}} 已开始",
       "detectFailed": "头部检测失败，请查看任务日志。",
       "detectCanceled": "头部检测已取消，未保存不完整提案。",
-      "saveFirst": "还有 {{n}} 张图片存在未保存笔画，请先保存再运行批量检测。",
+      "saveFirst": "还有 {{n}} 张图片存在未保存笔画，请先保存再进行自动遮罩操作。",
       "progress": "正在检测 {{done}} / {{total}} · 已发现 {{heads}} 个头部",
       "summary": "{{images}} 张图 · {{heads}} 个头部 · 已选 {{selected}} 个",
       "showUndetected": "未检测到（{{n}}）",
@@ -2250,7 +2250,32 @@
       "applySelected": "应用所选（{{n}}）",
       "undoApply": "撤销本次自动遮罩",
       "applied": "已把自动遮罩合并到 {{n}} 张图片",
-      "undone": "已恢复 {{n}} 张图片应用前的遮罩"
+      "undone": "已恢复 {{n}} 张图片应用前的遮罩",
+      "mode": "遮罩模式",
+      "faceMode": "仅脸部 · 精细轮廓",
+      "boxMode": "头部矩形（旧模式）",
+      "prepareFaceModel": "下载并准备脸部分割模型",
+      "prepareLog": "模型准备日志",
+      "face_confidence": "脸部置信度",
+      "mask_threshold": "分割阈值",
+      "feather_px": "向内羽化（像素）",
+      "needsReview": "需要人工检查：未检测到脸部或部分分割失败。不会用方框代替。",
+      "previewFailed": "轮廓预览加载失败，已禁止应用；请重新打开图片或重新检测。",
+      "previewLoading": "正在加载真实轮廓预览，请稍候。",
+      "faceSummary": "{{images}} 张图 · {{heads}} 个脸部提案 · 已选 {{selected}} 个",
+      "faceRegion": "脸部 {{n}} · {{score}}%",
+      "faceUndetected": "无脸部／需检查（{{n}}）",
+      "proposalModeMismatch": "当前仍是上次任务的提案。切换模式不会改变旧结果，请重新检测后再应用。",
+      "replaceTitle": "替换旧自动遮罩",
+      "replaceSource": "选择旧应用记录",
+      "replaceEligible": "可安全替换",
+      "replacePreview": "预览替换差异",
+      "replaceConfirm": "确认替换所选图片",
+      "replaceWarning": "黑色为忽略区，白色为学习区。仅替换所选图片；没有选中脸部的图片保持不变。",
+      "replaceDiff": "恢复学习 {{restored}} 像素 · 新增忽略 {{ignored}} 像素",
+      "before": "替换前",
+      "after": "替换后",
+      "faceHelp": "仅生成可见脸部的像素级遮罩，不自动扩展到头发、脖子或肩膀。首次准备会在独立环境中安装转换工具，可能下载数百 MB；日常推理不依赖 Ultralytics。模型标注 AGPL-3.0，需人工审核特殊画风和遮挡结果。"
     }
   },
   "steps": {

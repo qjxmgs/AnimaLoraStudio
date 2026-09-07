@@ -1,5 +1,41 @@
 # Automatic head masks
 
+## Face only · precise contour
+
+The new UI defaults to contours; legacy rectangles remain selectable. Head boxes
+are input crops only. Orange overlays show actual visible-face pixel masks,
+aiming to retain hair, neck, shoulders and occluders. Review unusual styles, small
+or profile faces manually. Missing/failed segments never fall back to a box or
+ellipse. Use the undetected filter and normal brushes for corrections.
+
+Choose **Download and prepare face segmenter** in preprocessing or Settings. The
+checkpoint is about 5.74 MiB, but its independent conversion environment requires
+hundreds of MB of CPU dependencies initially. Logs show progress/failures; retry
+after fixing the cause. Studio's environment does not install Ultralytics/OpenCV.
+All weights and converted artifacts stay local and are excluded from Git. The
+model is marked AGPL-3.0; see third-party notices.
+
+Defaults: face confidence 0.25, NMS IoU 0.7, mask threshold 0.5, no outward padding
+and no feather. Optional 1–3 pixel inward feather does not expand the mask.
+Review/select faces before applying, then use normal mask brushes if needed.
+
+### Safely narrowing existing rectangles
+
+Normal application unions masks and cannot restore shoulders inside a rectangle.
+Use **Replace previous automatic masks**: choose an earlier application, select
+new faces, preview differences, then confirm. Black means ignored; white means
+learned. Counts show restored-learning/newly ignored pixels. Unselected images or
+images without a selected face are unchanged.
+
+Replacement verifies source snapshots, current mask hashes and backups. Later
+manual edits, damaged backups or unknown provenance block it. Do not delete all
+masks to bypass this guard. Earlier manual content survives. Undo returns to the
+pre-replacement masks, including rectangles; later manual edits block automatic
+undo. Save strokes before every automatic operation. Enable masked loss for
+training; Leap/NaViT restrictions remain. Captions/identity tags are not removed.
+
+## Legacy head rectangle
+
 Automatic head masks are intended for clothing, pose, and style LoRAs where cartoon faces, hair, ears, and head accessories should not contribute to the loss. The feature writes `.mask` sidecars only; source images are never modified.
 
 ## Workflow

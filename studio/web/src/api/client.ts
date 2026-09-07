@@ -971,6 +971,8 @@ export interface ModelsCatalog {
   eval_metric_catalog?: EvalMetricCatalogItem[]
   upscalers?: UpscalersCatalog
   head_detector?: HeadDetectorCatalog
+  face_segmenter?: { id: string; name: string; repo: string; revision: string;
+    target_path: string; valid: boolean; exists: boolean; size: number; license: string }
   /** 统一来源候选行（泛化候选卡消费；键 = domain：wd14 / eval_clip / ...）。 */
   model_sources?: Record<string, ModelSourceRow[]>
   /** 按类型的下载源选项：current = 当前选中，available = 可选源（长度 1 = 固定单源）。 */
@@ -1151,6 +1153,8 @@ export interface InpaintSaveResult {
 }
 
 export interface HeadMaskRegion {
+  kind?: 'bitmap'
+  bitmap?: { id: string; origin: [number, number]; size: [number, number]; sha256: string; url: string }
   id: string
   score: number
   /** Source-image pixel coordinates: x1, y1, x2, y2. */
@@ -1162,6 +1166,9 @@ export interface HeadMaskRegion {
 }
 
 export interface HeadMaskProposalImage {
+  review_status?: 'ready' | 'needs_review' | 'no_face'
+  error?: string
+  issues?: { head_index: number; reason: string; error?: string }[]
   name: string
   size: [number, number]
   source_mtime_ns: number
@@ -1181,6 +1188,10 @@ export interface HeadMaskProposals {
     provider: string
   }
   parameters: {
+    mask_mode?: 'head_box' | 'face_contour'
+    face_confidence?: number
+    mask_threshold?: number
+    feather_px?: number
     confidence: number
     iou_threshold: number
     padding_ratio: number
@@ -2775,6 +2786,10 @@ export const api = {
     vid: number,
     body: {
       scope: 'all' | 'selected'
+      mask_mode?: 'head_box' | 'face_contour'
+      face_confidence?: number
+      mask_threshold?: number
+      feather_px?: number
       filenames?: string[]
       confidence: number
       iou_threshold: number
@@ -2791,10 +2806,20 @@ export const api = {
     ),
   applyHeadMaskProposals: (
     pid: number, vid: number, jobId: number, selections: Record<string, string[]>,
+    replaceFrom?: { job_id: number; apply_id: string },
   ) => req<{ job_id: number; applied: number; images: string[]; undo_available: boolean }>(
     `/api/projects/${pid}/versions/${vid}/preprocess/head-mask/apply`,
-    { method: 'POST', body: JSON.stringify({ job_id: jobId, selections }) },
+    { method: 'POST', body: JSON.stringify({ job_id: jobId, selections, replace_from: replaceFrom }) },
   ),
+  getHeadMaskApplications: (pid: number, vid: number) => req<{ applications: {
+    job_id: number; apply_id: string; images: { name: string; eligible: boolean; reason: string | null }[]
+  }[] }>(`/api/projects/${pid}/versions/${vid}/preprocess/head-mask/applications`),
+  previewHeadMaskReplacement: (pid: number, vid: number, jobId: number,
+    selections: Record<string, string[]>, replaceFrom: { job_id: number; apply_id: string }) =>
+    req<{ images: { name: string; restored_pixels: number; ignored_pixels: number; before_url: string; after_url: string }[] }>(
+      `/api/projects/${pid}/versions/${vid}/preprocess/head-mask/replace-preview`,
+      { method: 'POST', body: JSON.stringify({ job_id: jobId, selections, replace_from: replaceFrom }) },
+    ),
   undoHeadMaskApply: (pid: number, vid: number, jobId: number) =>
     req<{ job_id: number; undone: number; images: string[] }>(
       `/api/projects/${pid}/versions/${vid}/preprocess/head-mask/undo`,

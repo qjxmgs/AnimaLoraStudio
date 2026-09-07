@@ -11,6 +11,7 @@ from typing import Any, Optional
 from ... import secrets
 from .. import eval_registry
 from .downloader import get_status_snapshot, head_detector_status
+from . import face_segmenter
 from .families import FAMILY_ASSETS
 from .paths import (
     CLTAGGER_VERSIONS,
@@ -554,6 +555,11 @@ def build_catalog(root: Optional[Path] = None) -> dict[str, Any]:
             "expected_size": HEAD_DETECTOR_SIZE,
             "expected_sha256": HEAD_DETECTOR_SHA256,
             **head_status,
+        },
+        "face_segmenter": {
+            "id": "face_segmenter", "name": "Anime Face Contour Segmenter",
+            "repo": face_segmenter.REPO, "revision": face_segmenter.REVISION,
+            "license": "AGPL-3.0", **face_segmenter.status(r),
         },
         # 统一来源候选行（前端泛化候选卡消费；键 = domain）。
         "model_sources": model_source_rows,

@@ -151,6 +151,10 @@ def _run_head_mask_train(
     emit_event: Callable[..., None],
 ) -> int:
     """Detect every cartoon head and persist reviewable proposals only."""
+    from studio.services.models import face_segmenter
+    from studio.services.preprocess.face_contour import FaceSegmenter
+    mask_mode = params.get("mask_mode", "head_box")
+    segmenter = None
     scope = str(params.get("scope") or "all")
     names = params.get("names") or None
     confidence = float(params.get("confidence", head_mask.DEFAULT_CONFIDENCE))
@@ -179,6 +183,8 @@ def _run_head_mask_train(
             )
             return 1
         detector = head_mask.HeadDetector(model_downloader.head_detector_target())
+        if mask_mode == "face_contour":
+            segmenter = FaceSegmenter(face_segmenter.target())
     except Exception as exc:  # noqa: BLE001
         log.error("Loading the anime head detector failed: %s", exc)
         return 1
@@ -209,6 +215,7 @@ def _run_head_mask_train(
             )
             continue
         try:
+            source_before = head_mask.source_snapshot(path)
             size, detections = detector.detect(
                 path, confidence=confidence, iou_threshold=iou_threshold,
             )
@@ -217,15 +224,31 @@ def _run_head_mask_train(
                 padding_ratio=padding_ratio,
                 feather_ratio=feather_ratio,
             )
+            if segmenter:
+                proposal = segmenter.propose(
+                    job_id, name, path, detections,
+                    confidence=float(params.get("face_confidence", 0.25)),
+                    iou_threshold=iou_threshold,
+                    threshold=float(params.get("mask_threshold", 0.5)),
+                    feather_px=int(params.get("feather_px", 0)),
+                    canceled=lambda: _stop_requested,
+                )
+            if source_before != head_mask.source_snapshot(path):
+                raise RuntimeError("Source changed during detection")
             proposals.append(proposal)
             succeeded += 1
             emit_event(
                 "head_mask_progress", idx=idx, total=total, name=name,
-                status="done", detections=len(detections),
+                status="done", detections=len(proposal["regions"]),
                 succeeded=succeeded, failed=failed, skipped=skipped,
             )
         except Exception as exc:  # noqa: BLE001
             failed += 1
+            if _stop_requested:
+                return 130
+            if mask_mode == "face_contour":
+                proposals.append({"name": name, "regions": [], "size": [0, 0],
+                                  "review_status": "needs_review", "error": str(exc)[:200]})
             log.warning("Head detection failed for %s: %s", name, exc)
             emit_event(
                 "head_mask_progress", idx=idx, total=total, name=name,
@@ -233,6 +256,8 @@ def _run_head_mask_train(
                 succeeded=succeeded, failed=failed, skipped=skipped,
             )
 
+    if _stop_requested:
+        return 130
     result = head_mask.new_result(
         job_id,
         confidence=confidence,
@@ -242,6 +267,13 @@ def _run_head_mask_train(
         provider=detector.provider,
         images=proposals,
     )
+    result["parameters"].update(mask_mode=mask_mode)
+    if segmenter:
+        result["face_model"] = {"revision": face_segmenter.REVISION,
+                                "sha256": face_segmenter.status()["sha256"], "provider": segmenter.provider}
+        result["parameters"].update(face_confidence=params.get("face_confidence", 0.25),
+                                     mask_threshold=params.get("mask_threshold", 0.5),
+                                     feather_px=params.get("feather_px", 0))
     head_mask.write_result(job_id, result)
     heads = sum(len(image["regions"]) for image in proposals)
     log.info(

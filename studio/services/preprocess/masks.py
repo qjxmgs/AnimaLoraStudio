@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, Iterable, Optional
 
 from studio.domain.errors import ValidationError
+from .mask_transaction import locked
 
 MASK_SUFFIX = ".mask"
 
@@ -37,6 +38,7 @@ def mask_path_for(train_dir: Path, rel_name: str) -> Path:
     return train_dir / f"{Path(rel_name).stem}{MASK_SUFFIX}"
 
 
+@locked
 def write_mask(
     train_dir: Path,
     rel_name: str,
@@ -83,6 +85,7 @@ def write_mask(
     return {"name": rel_name, "mtime": st.st_mtime, "size": st.st_size}
 
 
+@locked
 def delete_mask(train_dir: Path, rel_name: str) -> bool:
     """删除 mask 文件。返回是否真的删了（不存在返回 False，不报错）。"""
     p = mask_path_for(train_dir, rel_name)
@@ -104,6 +107,7 @@ def delete_masks_for(train_dir: Path, rel_names: Iterable[str]) -> int:
     return n
 
 
+@locked
 def crop_mask_like(
     train_dir: Path,
     src_rel: str,
@@ -142,6 +146,7 @@ def crop_mask_like(
             pass
 
 
+@locked
 def resize_mask_like(
     train_dir: Path, rel_name: str, size: tuple[int, int],
 ) -> None:

@@ -34,6 +34,7 @@ const catalog = {
     size: 44_585_386, mtime: 1,
   },
   downloads: {},
+  face_segmenter: { valid: true },
 } as unknown as ModelsCatalog
 
 const proposals: HeadMaskProposals = {
@@ -80,18 +81,91 @@ beforeEach(() => {
   vi.spyOn(api, 'getPreprocessStatusTrain').mockResolvedValue({ job: null, log_tail: '', summary: { image_count: 2 } })
   vi.spyOn(api, 'startHeadMaskDetection').mockResolvedValue(job)
   vi.spyOn(api, 'getHeadMaskProposals').mockResolvedValue(proposals)
+  vi.spyOn(api, 'getHeadMaskApplications').mockResolvedValue({ applications: [] })
   vi.spyOn(api, 'applyHeadMaskProposals').mockResolvedValue({ job_id: 41, applied: 1, images: ['1_data/A.png'], undo_available: true })
   vi.spyOn(api, 'undoHeadMaskApply').mockResolvedValue({ job_id: 41, undone: 1, images: ['1_data/A.png'] })
   vi.spyOn(api, 'cancelJob').mockResolvedValue({ task_id: 41, canceled: true })
 })
 
 describe('AutoHeadMaskPanel', () => {
+  it('gates apply and undo while strokes are unsaved', async () => {
+    vi.mocked(api.getPreprocessStatusTrain).mockResolvedValue({ job: { ...job, status: 'done' }, log_tail: '', summary: { image_count: 2 } })
+    vi.mocked(api.getHeadMaskProposals).mockResolvedValue({ ...proposals, undo_available: true })
+    renderPanel({ unsavedCount: 1 })
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: '应用所选（2）' }))
+    await user.click(screen.getByRole('button', { name: '撤销本次自动遮罩' }))
+    expect(api.applyHeadMaskProposals).not.toHaveBeenCalled()
+    expect(api.undoHeadMaskApply).not.toHaveBeenCalled()
+    expect(mocks.toast).toHaveBeenCalledWith(expect.stringContaining('先保存'), 'error')
+  })
+
+  it('previews replacement before an explicit confirmation and binds the apply identity', async () => {
+    vi.mocked(api.getPreprocessStatusTrain).mockResolvedValue({ job: { ...job, status: 'done' }, log_tail: '', summary: { image_count: 2 } })
+    vi.mocked(api.getHeadMaskProposals).mockResolvedValue({ ...proposals, parameters: { ...proposals.parameters, mask_mode: 'face_contour' } })
+    vi.mocked(api.getHeadMaskApplications).mockResolvedValue({ applications: [{ job_id: 40, apply_id: 'old-apply',
+      images: [{ name: '1_data/A.png', eligible: true, reason: null }] }] })
+    vi.spyOn(api, 'previewHeadMaskReplacement').mockResolvedValue({ images: [{ name: '1_data/A.png', restored_pixels: 100,
+      ignored_pixels: 0, before_url: 'data:image/png;base64,AA==', after_url: 'data:image/png;base64,AA==' }] })
+    const user = userEvent.setup()
+    renderPanel()
+    await user.click(await screen.findByText('替换旧自动遮罩'))
+    await user.selectOptions(await screen.findByLabelText('选择旧应用记录'), '40:old-apply')
+    await user.click(screen.getByRole('button', { name: '预览替换差异' }))
+    await screen.findByAltText('替换后')
+    expect(api.applyHeadMaskProposals).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: '确认替换所选图片' }))
+    expect(api.applyHeadMaskProposals).toHaveBeenCalledWith(2, 3, 41,
+      { '1_data/A.png': ['a', 'b'], '1_data/B.png': [] }, { job_id: 40, apply_id: 'old-apply' })
+  })
+
+  it('offers independent model preparation and does not silently use rectangles', async () => {
+    vi.mocked(api.getModelsCatalog).mockResolvedValue({ ...catalog, face_segmenter: undefined })
+    vi.spyOn(api, 'startModelDownload').mockResolvedValue({ key: 'face_segmenter', status: 'running' })
+    const user = userEvent.setup()
+    renderPanel()
+    expect(await screen.findByRole('combobox')).toHaveValue('face_contour')
+    expect(screen.getByRole('button', { name: '检测全部' })).toBeDisabled()
+    await user.click(screen.getByRole('button', { name: '下载并准备脸部分割模型' }))
+    expect(api.startModelDownload).toHaveBeenCalledWith({ model_id: 'face_segmenter' })
+  })
+
+  it('includes partially failed images in the manual-review filter', async () => {
+    vi.mocked(api.getPreprocessStatusTrain).mockResolvedValue({ job: { ...job, status: 'done' }, log_tail: '', summary: { image_count: 2 } })
+    vi.mocked(api.getHeadMaskProposals).mockResolvedValue({ ...proposals,
+      images: [{ ...proposals.images[0], review_status: 'needs_review' }, proposals.images[1]] })
+    const filter = vi.fn()
+    const user = userEvent.setup()
+    renderPanel({ onShowUndetected: filter })
+    await user.click(await screen.findByRole('button', { name: '未检测到（2）' }))
+    expect(filter).toHaveBeenCalledWith(['1_data/A.png', '1_data/B.png'])
+    expect(screen.getByText(/不会用方框代替/)).toBeInTheDocument()
+  })
+
   it('blocks detection while manual strokes are unsaved', async () => {
     const user = userEvent.setup()
     renderPanel({ unsavedCount: 2 })
     await user.click(await screen.findByRole('button', { name: '检测全部' }))
     expect(api.startHeadMaskDetection).not.toHaveBeenCalled()
     expect(mocks.toast).toHaveBeenCalledWith(expect.stringContaining('先保存'), 'error')
+  })
+
+  it('blocks application when the actual bitmap preview failed to load', async () => {
+    vi.mocked(api.getPreprocessStatusTrain).mockResolvedValue({
+      job: { ...job, status: 'done' }, log_tail: '', summary: { image_count: 2 },
+    })
+    renderPanel({ previewState: 'error' })
+    expect(await screen.findByRole('button', { name: '应用所选（2）' })).toBeDisabled()
+    expect(screen.getByRole('alert')).toHaveTextContent('轮廓预览加载失败')
+  })
+
+  it('makes it explicit that selecting contour mode does not convert a legacy proposal', async () => {
+    vi.mocked(api.getPreprocessStatusTrain).mockResolvedValue({
+      job: { ...job, status: 'done' }, log_tail: '', summary: { image_count: 2 },
+    })
+    renderPanel()
+    expect(await screen.findByText(/切换模式不会改变旧结果/)).toBeInTheDocument()
+    expect(api.startHeadMaskDetection).not.toHaveBeenCalled()
   })
 
   it('submits pinned defaults and loads proposals when the job completes', async () => {
@@ -102,6 +176,7 @@ describe('AutoHeadMaskPanel', () => {
     expect(api.startHeadMaskDetection).toHaveBeenCalledWith(2, 3, {
       scope: 'all', confidence: 0.413, iou_threshold: 0.7,
       padding_ratio: 0.1, feather_ratio: 0.03,
+      mask_mode: 'face_contour', face_confidence: 0.25, mask_threshold: 0.5, feather_px: 0,
     })
     act(() => {
       mocks.onEvent?.({ type: 'head_mask_progress', job_id: 41, idx: 1, total: 2, status: 'done', detections: 2 })

@@ -12,7 +12,6 @@ import hashlib
 import json
 import logging
 import os
-import shutil
 import time
 from pathlib import Path
 from typing import Any, Iterable
@@ -27,8 +26,6 @@ from studio.services.models.paths import (
 )
 from studio.services.tagging.onnx_base import silenced_fd_stderr
 
-from . import masks as train_masks
-
 logger = logging.getLogger(__name__)
 
 AUTO_HEAD_MASK_FEATURE_LEVEL = 1
@@ -37,7 +34,7 @@ DEFAULT_CONFIDENCE = 0.413
 DEFAULT_IOU_THRESHOLD = 0.7
 DEFAULT_PADDING_RATIO = 0.10
 DEFAULT_FEATHER_RATIO = 0.03
-RESULT_SCHEMA_VERSION = 1
+RESULT_SCHEMA_VERSION = 2
 
 
 def result_path(job_id: int) -> Path:
@@ -132,7 +129,7 @@ def result_with_staleness(result: dict[str, Any], train_dir: Path) -> dict[str, 
     images = []
     stale_count = 0
     for item in result["images"]:
-        reason = proposal_stale_reason(item, train_dir)
+        reason = None if item.get("error") else proposal_stale_reason(item, train_dir)
         stale = reason is not None
         stale_count += int(stale)
         images.append({**item, "stale": stale, "stale_reason": reason})
@@ -302,15 +299,18 @@ class HeadDetector:
         actual = list(self.session.get_providers())
         self.provider = actual[0] if actual else "CPUExecutionProvider"
 
-    def run(self, tensor: np.ndarray) -> np.ndarray:
+    def run_outputs(self, tensor: np.ndarray) -> list[np.ndarray]:
         try:
-            return np.asarray(self.session.run(None, {self.input_name: tensor})[0])
+            return self.session.run(None, {self.input_name: tensor})
         except Exception:
-            if self.provider != "CUDAExecutionProvider":
+            if self.provider == "CPUExecutionProvider":
                 raise
-            logger.warning("CUDA head detection failed; retrying this job on CPU")
+            logger.warning("Accelerated mask inference failed; retrying this job on CPU")
             self._create_session(cpu_only=True)
-            return np.asarray(self.session.run(None, {self.input_name: tensor})[0])
+            return self.session.run(None, {self.input_name: tensor})
+
+    def run(self, tensor: np.ndarray) -> np.ndarray:
+        return np.asarray(self.run_outputs(tensor)[0])
 
     def detect(
         self,
@@ -400,11 +400,23 @@ def make_image_proposal(
 
 def render_auto_mask(
     size: tuple[int, int], regions: Iterable[dict[str, Any]],
+    *, job_id: int | None = None,
 ) -> np.ndarray:
     """Render selected rectangles as grayscale loss weights (255 learn, 0 ignore)."""
     width, height = size
     out = np.full((height, width), 255, dtype=np.uint8)
     for proposal in regions:
+        if proposal.get("kind") == "bitmap":
+            from .face_contour import load_bitmap
+            if job_id is None:
+                raise ValueError("Bitmap masks require their owning job")
+            bitmap = load_bitmap(job_id, proposal)
+            x, y = proposal["bitmap"]["origin"]
+            h, w = bitmap.shape
+            if x < 0 or y < 0 or x + w > width or y + h > height:
+                raise ValueError("Face mask is outside the source image")
+            out[y:y+h, x:x+w] = np.minimum(out[y:y+h, x:x+w], bitmap)
+            continue
         region = proposal["mask_region"]
         x1 = max(0, min(width, int(region["x1"])))
         y1 = max(0, min(height, int(region["y1"])))
@@ -430,16 +442,6 @@ def render_auto_mask(
     return out
 
 
-def _file_sha256(path: Path) -> str | None:
-    if not path.is_file():
-        return None
-    digest = hashlib.sha256()
-    with path.open("rb") as fh:
-        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
 def _load_existing_mask(path: Path, size: tuple[int, int]) -> np.ndarray:
     from PIL import Image
 
@@ -459,194 +461,17 @@ def _load_existing_mask(path: Path, size: tuple[int, int]) -> np.ndarray:
         ) from exc
 
 
-def _restore_records(records: list[dict[str, Any]], train_dir: Path, backup_dir: Path) -> None:
-    for record in records:
-        target = train_masks.mask_path_for(train_dir, record["name"])
-        if record["before_exists"]:
-            source = backup_dir / record["backup_rel"]
-            target.parent.mkdir(parents=True, exist_ok=True)
-            tmp = target.with_suffix(target.suffix + ".rollback")
-            shutil.copy2(source, tmp)
-            os.replace(tmp, target)
-        else:
-            target.unlink(missing_ok=True)
-
-
 def apply_proposals(
-    job_id: int,
-    train_dir: Path,
-    selections: dict[str, list[str]],
+    job_id: int, train_dir: Path, selections: dict[str, list[str]],
+    *, replace_from: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Validate every proposal, then atomically merge reviewed regions into masks."""
-    from PIL import Image
-
-    result = load_result(job_id)
-    by_name = {str(item["name"]): item for item in result["images"]}
-    unknown_names = sorted(set(selections) - set(by_name))
-    if unknown_names:
-        raise ValidationError(
-            "Selection contains images outside this proposal",
-            code="preprocess.head_mask_selection_invalid",
-            details={"names": unknown_names}, http_status=400,
-        )
-    stale = [
-        {"name": item["name"], "reason": reason}
-        for item in result["images"]
-        if (reason := proposal_stale_reason(item, train_dir)) is not None
-    ]
-    if stale:
-        raise ConflictError(
-            "One or more images changed after detection; run detection again",
-            code="preprocess.head_mask_proposals_stale",
-            details={"images": stale},
-        )
-
-    selected: list[tuple[dict[str, Any], list[dict[str, Any]]]] = []
-    for name, ids in selections.items():
-        item = by_name[name]
-        regions = {str(region["id"]): region for region in item["regions"]}
-        unknown_ids = sorted(set(ids) - set(regions))
-        if unknown_ids:
-            raise ValidationError(
-                "Selection contains unknown head regions",
-                code="preprocess.head_mask_selection_invalid",
-                details={"name": name, "region_ids": unknown_ids}, http_status=400,
-            )
-        chosen = [regions[region_id] for region_id in dict.fromkeys(ids)]
-        if chosen:
-            selected.append((item, chosen))
-
-    apply_id = str(time.time_ns())
-    root = task_dir(job_id) / "head-mask"
-    staging = root / "staging" / apply_id
-    backup_dir = root / "undo" / apply_id
-    staging.mkdir(parents=True, exist_ok=False)
-    backup_dir.mkdir(parents=True, exist_ok=False)
-    records: list[dict[str, Any]] = []
-    try:
-        for item, regions in selected:
-            name = str(item["name"])
-            size = (int(item["size"][0]), int(item["size"][1]))
-            mask_path = train_masks.mask_path_for(train_dir, name)
-            existing = _load_existing_mask(mask_path, size)
-            merged = np.minimum(existing, render_auto_mask(size, regions))
-            if np.array_equal(existing, merged) and mask_path.is_file():
-                continue
-            rel = f"{Path(name).parent.as_posix()}/{Path(name).stem}.mask"
-            backup_rel = rel + ".before"
-            before_exists = mask_path.is_file()
-            if before_exists:
-                backup = backup_dir / backup_rel
-                backup.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(mask_path, backup)
-            staged = staging / rel
-            staged.parent.mkdir(parents=True, exist_ok=True)
-            Image.fromarray(merged, mode="L").save(staged, format="PNG", optimize=False)
-            records.append({
-                "name": name,
-                "staged_rel": rel,
-                "backup_rel": backup_rel,
-                "before_exists": before_exists,
-                "selected_region_ids": [region["id"] for region in regions],
-            })
-
-        committed: list[dict[str, Any]] = []
-        try:
-            for record in records:
-                source = staging / record["staged_rel"]
-                target = train_masks.mask_path_for(train_dir, record["name"])
-                target.parent.mkdir(parents=True, exist_ok=True)
-                os.replace(source, target)
-                record["applied_sha256"] = _file_sha256(target)
-                committed.append(record)
-            state = {
-                "schema_version": 1,
-                "job_id": job_id,
-                "apply_id": apply_id,
-                "applied_at": time.time(),
-                "backup_dir": str(backup_dir),
-                "records": records,
-                "undone": False,
-            }
-            _write_json_atomic(apply_state_path(job_id), state)
-        except Exception:
-            _restore_records(committed, train_dir, backup_dir)
-            raise
-    finally:
-        shutil.rmtree(staging, ignore_errors=True)
-    return {
-        "job_id": job_id,
-        "applied": len(records),
-        "images": [record["name"] for record in records],
-        "undo_available": bool(records),
-    }
+    from .head_apply import apply
+    return apply(job_id, train_dir, selections, replace_from=replace_from)
 
 
 def undo_apply(job_id: int, train_dir: Path) -> dict[str, Any]:
-    path = apply_state_path(job_id)
-    if not path.is_file():
-        raise NotFoundError(
-            "No automatic head-mask application can be undone",
-            code="preprocess.head_mask_undo_missing",
-            details={"job_id": job_id},
-        )
-    try:
-        state = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise ConflictError(
-            "Automatic head-mask undo data is unreadable",
-            code="preprocess.head_mask_undo_invalid",
-            details={"job_id": job_id},
-        ) from exc
-    if state.get("undone"):
-        raise ConflictError(
-            "This automatic head-mask application was already undone",
-            code="preprocess.head_mask_already_undone",
-            details={"job_id": job_id},
-        )
-    records = list(state.get("records") or [])
-    changed = []
-    for record in records:
-        current = train_masks.mask_path_for(train_dir, record["name"])
-        if _file_sha256(current) != record.get("applied_sha256"):
-            changed.append(record["name"])
-    if changed:
-        raise ConflictError(
-            "Masks were edited after automatic masking; undo was refused",
-            code="preprocess.head_mask_undo_modified",
-            details={"images": changed},
-        )
-
-    backup_dir = Path(str(state["backup_dir"]))
-    safety_dir = task_dir(job_id) / "head-mask" / "undo-staging" / str(time.time_ns())
-    safety_dir.mkdir(parents=True, exist_ok=False)
-    safety_records: list[dict[str, Any]] = []
-    try:
-        for record in records:
-            current = train_masks.mask_path_for(train_dir, record["name"])
-            if current.is_file():
-                rel = record["staged_rel"] + ".current"
-                saved = safety_dir / rel
-                saved.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(current, saved)
-                safety_records.append({**record, "backup_rel": rel, "before_exists": True})
-            else:
-                safety_records.append({**record, "before_exists": False})
-        try:
-            _restore_records(records, train_dir, backup_dir)
-            state["undone"] = True
-            state["undone_at"] = time.time()
-            _write_json_atomic(path, state)
-        except Exception:
-            _restore_records(safety_records, train_dir, safety_dir)
-            raise
-    finally:
-        shutil.rmtree(safety_dir, ignore_errors=True)
-    return {
-        "job_id": job_id,
-        "undone": len(records),
-        "images": [record["name"] for record in records],
-    }
+    from .head_apply import undo
+    return undo(job_id, train_dir)
 
 
 def new_result(
