@@ -15,6 +15,8 @@ from .families import FAMILY_ASSETS
 from .paths import (
     CLTAGGER_VERSIONS,
     DEFAULT_UPSCALER,
+    HEAD_DETECTOR_BUILTIN,
+    HEAD_DETECTOR_EXTS,
     HEAD_DETECTOR_REPO,
     HEAD_DETECTOR_REVISION,
     HEAD_DETECTOR_SHA256,
@@ -28,8 +30,10 @@ from .paths import (
     cltagger_required_files,
     cltagger_target_root,
     eval_model_target_dir,
+    head_detector_dir,
     head_detector_target,
     models_root,
+    selected_head_detector,
     selected_upscaler,
     taeflux_dir,
     upscaler_dir,
@@ -465,6 +469,89 @@ def build_catalog(root: Optional[Path] = None) -> dict[str, Any]:
         ))
     model_source_rows["upscaler"] = up_rows
 
+    # Head detector: pinned built-in + registered download/local + managed scan.
+    # Only the built-in claims the pinned digest; custom files are regular ONNX
+    # candidates whose tensor compatibility is validated by HeadDetector at run time.
+    selected_detector = selected_head_detector(r)
+    head_rows: list[dict[str, Any]] = [
+        _source_row(
+            kind="preset",
+            value=HEAD_DETECTOR_BUILTIN,
+            label="Anime Head Detector",
+            download_id="head_detector",
+            download_variant=None,
+            status_key="head_detector",
+            exists=bool(head_status.get("valid")),
+            size=int(head_status.get("size") or 0),
+            size_estimate=HEAD_DETECTOR_SIZE,
+            is_current=selected_detector == HEAD_DETECTOR_BUILTIN,
+            description=f"{HEAD_DETECTOR_REPO}@{HEAD_DETECTOR_REVISION[:12]}",
+        )
+    ]
+    builtin_head_name = head_detector_target(r).name
+    managed_head_names: set[str] = {builtin_head_name.casefold()}
+    for candidate in source_cfg.get("head_detector", []):
+        if candidate.kind == "download":
+            save_name = Path(candidate.filename).name
+            if save_name.casefold() == builtin_head_name.casefold():
+                continue
+            managed_head_names.add(save_name.casefold())
+            target = head_detector_dir(r) / save_name
+            status = _file_status(target)
+            head_rows.append(_source_row(
+                kind="download",
+                value=save_name,
+                label=save_name,
+                download_id="head_detector_custom",
+                download_variant=candidate.filename,
+                status_key=f"head_detector:custom:{save_name}",
+                exists=status["exists"] and target.is_file(),
+                size=status["size"],
+                is_current=selected_detector == save_name,
+                description=candidate.repo,
+                candidate=candidate.model_dump(),
+            ))
+        else:
+            target = Path(candidate.path)
+            status = _file_status(target)
+            head_rows.append(_source_row(
+                kind="local",
+                value=candidate.path,
+                label=target.name,
+                download_id=None,
+                exists=(
+                    status["exists"]
+                    and target.is_file()
+                    and target.suffix.lower() in HEAD_DETECTOR_EXTS
+                ),
+                size=status["size"],
+                is_current=selected_detector == candidate.path,
+                candidate=candidate.model_dump(),
+            ))
+    detector_dir = head_detector_dir(r)
+    if detector_dir.exists():
+        for candidate_path in sorted(detector_dir.iterdir()):
+            if (
+                not candidate_path.is_file()
+                or candidate_path.suffix.lower() not in HEAD_DETECTOR_EXTS
+                or candidate_path.name.casefold() in managed_head_names
+            ):
+                continue
+            status = _file_status(candidate_path)
+            head_rows.append(_source_row(
+                kind="scanned",
+                value=candidate_path.name,
+                label=candidate_path.name,
+                download_id="head_detector_custom",
+                download_variant=candidate_path.name,
+                status_key=f"head_detector:custom:{candidate_path.name}",
+                exists=True,
+                size=status["size"],
+                is_current=selected_detector == candidate_path.name,
+                removable=False,
+            ))
+    model_source_rows["head_detector"] = head_rows
+
     # 主模型族统一行：官方 variants（preset）+ download 候选（第三方微调，
     # value=落盘绝对路径，与 local/selected 同语义）+ local（PathPicker 注册）。
     for family_id in FAMILY_ASSETS:
@@ -551,6 +638,9 @@ def build_catalog(root: Optional[Path] = None) -> dict[str, Any]:
             "repo": HEAD_DETECTOR_REPO,
             "revision": HEAD_DETECTOR_REVISION,
             "target_path": str(head_detector_target(r)),
+            "target_dir": str(head_detector_dir(r)),
+            "default": HEAD_DETECTOR_BUILTIN,
+            "current": selected_detector,
             "expected_size": HEAD_DETECTOR_SIZE,
             "expected_sha256": HEAD_DETECTOR_SHA256,
             **head_status,
@@ -569,7 +659,10 @@ def build_catalog(root: Optional[Path] = None) -> dict[str, Any]:
                      "available": ["huggingface", "modelscope"]},
             "upscaler": {"current": src_cfg.get("upscaler", "huggingface"),
                           "available": ["huggingface", "modelscope"]},
-            "head_detector": {"current": "huggingface", "available": ["huggingface"]},
+            "head_detector": {
+                "current": src_cfg.get("head_detector", "huggingface"),
+                "available": ["huggingface", "modelscope"],
+            },
             "cltagger": {"current": "huggingface", "available": ["huggingface"]},
             "taeflux": {"current": "huggingface", "available": ["huggingface"]},
         },

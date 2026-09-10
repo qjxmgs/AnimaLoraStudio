@@ -1,7 +1,7 @@
 {
   "version": 1,
   "generated_from": "studio.server.app",
-  "count": 239,
+  "count": 240,
   "routes": [
     {
       "path": "/",
@@ -303,6 +303,14 @@
         "POST"
       ],
       "name": "attach_xy_composite",
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/head-detectors/select",
+      "methods": [
+        "POST"
+      ],
+      "name": "select_head_detector",
       "type": "APIRoute"
     },
     {
