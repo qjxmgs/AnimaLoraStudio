@@ -822,7 +822,12 @@ export default function SettingsPage() {
           reloadCatalog={reloadCatalog}
           t={t}
         />
-        <HeadDetectorSection catalog={catalog} />
+        <HeadDetectorSection
+          catalog={catalog}
+          setSource={setDownloadSource}
+          reloadCatalog={reloadCatalog}
+          t={t}
+        />
       </>)}
 
       {tab === 'testing' && (<>

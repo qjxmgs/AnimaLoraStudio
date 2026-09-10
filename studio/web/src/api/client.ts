@@ -602,6 +602,8 @@ export interface ModelsConfig {
   /** 预处理默认放大器：预设 label（"4x-AnimeSharp" 等）或 custom 文件名
    * （"my-anime.pth"）。Preprocess 页和 worker 用它定权重路径。 */
   selected_upscaler: string
+  /** 自动遮罩默认识别模型：builtin、managed filename 或 registered local path。 */
+  selected_head_detector: string
 }
 
 export interface QueueConfig {
@@ -868,7 +870,7 @@ export interface EvalMetricsCatalog {
 
 export interface ModelDownloadStatus {
   key: string
-  status: 'pending' | 'running' | 'done' | 'failed'
+  status: 'pending' | 'running' | 'done' | 'failed' | 'canceled'
   started_at: number
   finished_at: number | null
   message: string
@@ -947,6 +949,9 @@ export interface HeadDetectorCatalog extends ModelFileStatus {
   repo: string
   revision: string
   target_path: string
+  target_dir: string
+  default: string
+  current: string
   expected_size: number
   expected_sha256: string
   valid: boolean
@@ -1181,9 +1186,12 @@ export interface HeadMaskRegion {
 
 export interface HeadMaskProposalImage {
   name: string
-  size: [number, number]
-  source_mtime_ns: number
-  source_file_size: number
+  /** Absent only on legacy v1 proposal JSON. */
+  status?: 'done' | 'failed' | 'skipped'
+  error?: { code: string; message: string } | null
+  size: [number, number] | null
+  source_mtime_ns: number | null
+  source_file_size: number | null
   regions: HeadMaskRegion[]
   stale: boolean
   stale_reason: string | null
@@ -1191,12 +1199,19 @@ export interface HeadMaskProposalImage {
 
 export interface HeadMaskProposals {
   schema_version: number
+  status?: 'complete' | 'partial'
+  succeeded?: number
+  failed?: number
+  skipped?: number
   job_id: number
   model: {
+    /** Catalog identity used for this job (absent on legacy v1 results). */
+    identity?: string
     revision: string
     path: string
     input_size: [number, number]
     provider: string
+    builtin?: boolean
   }
   parameters: {
     confidence: number
@@ -2515,6 +2530,11 @@ export const api = {
       method: 'DELETE',
       body: JSON.stringify(cand),
     }),
+  selectHeadDetector: (identity: string) =>
+    req<{ selected: string }>('/api/head-detectors/select', {
+      method: 'POST',
+      body: JSON.stringify({ identity }),
+    }),
   selectUpscaler: (label: string) =>
     req<{ selected: string }>('/api/upscalers/select', {
       method: 'POST',
@@ -2730,12 +2750,12 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(body),
     }),
-  getPreprocessStatusTrain: (pid: number, vid: number) =>
+  getPreprocessStatusTrain: (pid: number, vid: number, stage?: 'upscale' | 'crop' | 'head_mask') =>
     req<{
       job: Job | null
       log_tail: string
       summary: { image_count: number }
-    }>(`/api/projects/${pid}/versions/${vid}/preprocess/status`),
+    }>(`/api/projects/${pid}/versions/${vid}/preprocess/status${stage ? `?stage=${stage}` : ''}`),
   listPreprocessFilesTrain: (pid: number, vid: number) =>
     req<{
       images: TrainImage[]
@@ -2827,6 +2847,7 @@ export const api = {
     body: {
       scope: 'all' | 'selected'
       filenames?: string[]
+      model?: string
       confidence: number
       iou_threshold: number
       padding_ratio: number
