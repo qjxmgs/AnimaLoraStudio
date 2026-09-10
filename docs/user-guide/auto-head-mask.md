@@ -25,4 +25,4 @@
 - “撤销本次自动遮罩”恢复应用前快照。若应用后又手工修改过任一相关 `.mask`，系统会拒绝撤销，避免覆盖新修改。
 - v1 不清理 caption。人物名、发色、眼睛等身份标签仍会参与文本条件训练；如需忽略，请在打标页手工删除。
 
-模型来自 `deepghs/anime_head_detection`，固定 revision 和校验值见 [ADR 0017](../adr/0017-proposal-based-auto-head-mask.md)。权重不随本项目分发，许可信息见根目录 `THIRD_PARTY_NOTICES.md`。
+模型来自 `deepghs/anime_head_detection`，固定 revision 和校验值见 [ADR 0018](../adr/0018-proposal-based-auto-head-mask.md)。权重不随本项目分发，许可信息见根目录 `THIRD_PARTY_NOTICES.md`。

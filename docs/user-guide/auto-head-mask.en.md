@@ -25,4 +25,4 @@ Automatic head masks are intended for clothing, pose, and style LoRAs where cart
 - **Undo this automatic mask** restores the pre-application snapshot. Undo is refused if a related `.mask` was manually changed afterward, protecting the newer edit.
 - v1 does not edit captions. Character names, hair colors, eye descriptions, and other identity tags still condition training; remove them manually on the Tagging page when required.
 
-The detector is downloaded on demand from `deepghs/anime_head_detection`. See [ADR 0017](../adr/0017-proposal-based-auto-head-mask.md) for the pinned revision and integrity contract, and `THIRD_PARTY_NOTICES.md` for licensing notes.
+The detector is downloaded on demand from `deepghs/anime_head_detection`. See [ADR 0018](../adr/0018-proposal-based-auto-head-mask.md) for the pinned revision and integrity contract, and `THIRD_PARTY_NOTICES.md` for licensing notes.
