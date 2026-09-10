@@ -163,6 +163,7 @@ def _run_head_mask_train(
     feather_ratio = float(
         params.get("feather_ratio", head_mask.DEFAULT_FEATHER_RATIO)
     )
+    model_identity = str(params.get("model") or "builtin")
     try:
         sources = preprocess.resolve_targets_train(
             project, version["label"], mode=scope, names=names,
@@ -171,14 +172,18 @@ def _run_head_mask_train(
         log.error("Resolving head-mask images failed: %s", exc)
         return 1
     try:
-        status = model_downloader.head_detector_status()
-        if not status.get("valid"):
-            log.error(
-                "Anime head detector is missing or damaged; download it under "
-                "Settings -> Preprocess before retrying"
-            )
-            return 1
-        detector = head_mask.HeadDetector(model_downloader.head_detector_target())
+        resolved_identity, model_path, builtin = model_downloader.resolve_head_detector(
+            model_identity
+        )
+        if builtin:
+            status = model_downloader.head_detector_status()
+            if not status.get("valid"):
+                log.error(
+                    "Anime head detector is missing or damaged; download it under "
+                    "Settings -> Preprocess before retrying"
+                )
+                return 1
+        detector = head_mask.HeadDetector(model_path)
     except Exception as exc:  # noqa: BLE001
         log.error("Loading the anime head detector failed: %s", exc)
         return 1
@@ -203,6 +208,7 @@ def _run_head_mask_train(
         path = train_dir / name
         if not path.is_file():
             skipped += 1
+            proposals.append(head_mask.unsuccessful_image(name, skipped=True))
             emit_event(
                 "head_mask_progress", idx=idx, total=total, name=name,
                 status="skip", succeeded=succeeded, failed=failed, skipped=skipped,
@@ -226,10 +232,12 @@ def _run_head_mask_train(
             )
         except Exception as exc:  # noqa: BLE001
             failed += 1
+            proposal = head_mask.unsuccessful_image(name)
+            proposals.append(proposal)
             log.warning("Head detection failed for %s: %s", name, exc)
             emit_event(
                 "head_mask_progress", idx=idx, total=total, name=name,
-                status="fail", error=str(exc)[:200],
+                status="fail", error=proposal["error"]["message"],
                 succeeded=succeeded, failed=failed, skipped=skipped,
             )
 
@@ -240,13 +248,16 @@ def _run_head_mask_train(
         padding_ratio=padding_ratio,
         feather_ratio=feather_ratio,
         provider=detector.provider,
+        model_identity=resolved_identity,
+        model_path=model_path,
+        builtin=builtin,
         images=proposals,
     )
     head_mask.write_result(job_id, result)
     heads = sum(len(image["regions"]) for image in proposals)
     log.info(
-        "Head detection proposal ready: images=%d heads=%d failed=%d skipped=%d",
-        succeeded, heads, failed, skipped,
+        "Head detection proposal ready: outcome=%s images=%d heads=%d failed=%d skipped=%d",
+        result["status"], succeeded, heads, failed, skipped,
     )
     return 0
 

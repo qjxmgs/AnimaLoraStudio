@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any, BinaryIO, Callable
+from typing import Any, BinaryIO, Callable, Literal
 
 from fastapi import APIRouter, File, Form, UploadFile
 from fastapi.concurrency import run_in_threadpool
@@ -437,13 +437,16 @@ def start_preprocess_train(
 
 
 @router.get("/api/projects/{pid}/versions/{vid}/preprocess/status")
-def preprocess_status_train(pid: int, vid: int) -> dict[str, Any]:
-    """最新 train-scope preprocess job + 日志尾 + train summary。"""
+def preprocess_status_train(
+    pid: int, vid: int,
+    stage: Literal["upscale", "crop", "head_mask"] | None = None,
+) -> dict[str, Any]:
+    """Latest matching train-scope job, its logs, and the train summary."""
     p, v = _resolve_pv_or_404(pid, vid)
     with db.connection_for() as conn:
         job = project_jobs.latest_for(
             conn, project_id=pid, version_id=vid,
-            kind=preprocess_svc.PREPROCESS_KIND,
+            kind=preprocess_svc.PREPROCESS_KIND, stage=stage,
         )
     log_tail = ""
     if job:
@@ -607,8 +610,19 @@ def start_head_mask_detection(
 ) -> dict[str, Any]:
     """Queue proposal-only cartoon head detection; source images stay untouched."""
     _resolve_pv_or_404(pid, vid)
+    requested_model = body.model.strip() if body.model else None
+    try:
+        model_identity, _model_path, builtin = model_downloader.resolve_head_detector(
+            requested_model
+        )
+    except ValueError as exc:
+        raise ConflictError(
+            "Selected head detector is missing or is no longer registered",
+            code="preprocess.head_mask_model_missing",
+            details={"model": requested_model or "global", "reason": str(exc)},
+        ) from exc
     status = model_downloader.head_detector_status()
-    if not status.get("valid"):
+    if builtin and not status.get("valid"):
         raise ConflictError(
             "Anime head detector is not downloaded or failed integrity validation",
             code="preprocess.head_mask_model_missing",
@@ -625,6 +639,7 @@ def start_head_mask_detection(
             iou_threshold=body.iou_threshold,
             padding_ratio=body.padding_ratio,
             feather_ratio=body.feather_ratio,
+            model=model_identity,
         )
     _publish_job_state(job)
     return job

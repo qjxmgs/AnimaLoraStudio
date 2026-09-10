@@ -133,6 +133,59 @@ def apply_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
     return {"train": train, "image": image, "proposal": proposal, "result": result}
 
 
+def test_partial_result_apply_ignores_failed_and_missing_sources(apply_env):
+    result = apply_env["result"]
+    result["images"].extend([
+        head_mask.unsuccessful_image("1_data/bad.png"),
+        head_mask.unsuccessful_image("1_data/missing.png", skipped=True),
+    ])
+    head_mask.write_result(7, result)
+    loaded = head_mask.load_result(7)
+    assert loaded["status"] == "partial"
+    assert head_mask.result_with_staleness(loaded, apply_env["train"])["stale_count"] == 0
+    region_id = apply_env["proposal"]["regions"][0]["id"]
+    applied = head_mask.apply_proposals(7, apply_env["train"], {"1_data/A.png": [region_id]})
+    assert applied["images"] == ["1_data/A.png"]
+    assert head_mask.undo_apply(7, apply_env["train"])["undone"] == 1
+
+
+@pytest.mark.parametrize("status", ["failed", "skipped"])
+def test_apply_cannot_select_regions_from_unsuccessful_image(apply_env, status):
+    from studio.domain.errors import ValidationError
+
+    # Even a malformed stored failure containing regions cannot be applied.
+    result = apply_env["result"]
+    result["images"][0]["status"] = status
+    head_mask.write_result(7, result)
+    region_id = apply_env["proposal"]["regions"][0]["id"]
+    with pytest.raises(ValidationError) as exc:
+        head_mask.apply_proposals(7, apply_env["train"], {"1_data/A.png": [region_id]})
+    assert exc.value.code == "preprocess.head_mask_selection_invalid"
+    assert not train_masks.mask_path_for(apply_env["train"], "1_data/A.png").exists()
+
+
+def test_legacy_result_normalizes_without_rewriting_file_or_region_ids(apply_env):
+    result = apply_env["result"]
+    result["schema_version"] = 1
+    for key in ("status", "succeeded", "failed", "skipped"):
+        result.pop(key)
+    for image in result["images"]:
+        image.pop("status")
+        image.pop("error")
+    head_mask.write_result(7, result)
+    before = head_mask.result_path(7).read_bytes()
+    loaded = head_mask.load_result(7)
+    assert loaded["schema_version"] == 1
+    assert loaded["status"] == "complete"
+    assert (loaded["succeeded"], loaded["failed"], loaded["skipped"]) == (1, 0, 0)
+    assert loaded["images"][0]["status"] == "done"
+    region_id = result["images"][0]["regions"][0]["id"]
+    assert head_mask.apply_proposals(
+        7, apply_env["train"], {"1_data/A.png": [region_id]},
+    )["applied"] == 1
+    assert head_mask.result_path(7).read_bytes() == before
+
+
 def test_apply_unions_manual_mask_and_undo_restores(apply_env) -> None:
     train = apply_env["train"]
     mask_path = train_masks.mask_path_for(train, "1_data/A.png")

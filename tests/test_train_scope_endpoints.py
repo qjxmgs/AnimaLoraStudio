@@ -128,6 +128,49 @@ def test_files_endpoint_returns_train_images_and_summary(client: TestClient) -> 
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize("legacy", [False, True])
+def test_status_stage_filters_before_latest_and_isolates_logs(client, legacy):
+    p, v = _make_pv(client)
+    url = f"/api/projects/{p['id']}/versions/{v['id']}/preprocess/status"
+    jobs = {}
+    with db.connection_for() as conn:
+        for stage in ("upscale", "crop", "head_mask"):
+            job = project_jobs.create_job(
+                conn, project_id=p["id"], version_id=v["id"], kind="preprocess",
+                params={} if legacy and stage == "upscale" else {"stage": stage},
+            )
+            log_path = Path(job["log_path"])
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            log_path.write_text(f"only {stage}", encoding="utf-8")
+            jobs[stage] = job
+        # A newer foreign-version job must not hide this version's matches.
+        project_jobs.create_job(
+            conn, project_id=p["id"], kind="preprocess", params={"stage": "crop"},
+        )
+    for stage, job in jobs.items():
+        response = client.get(url, params={"stage": stage})
+        assert response.status_code == 200
+        body = response.json()
+        assert body["job"]["id"] == job["id"]
+        assert body["log_tail"] == f"only {stage}"
+    assert client.get(url).json()["job"]["id"] == jobs["head_mask"]["id"]
+    assert client.get(url, params={"stage": "invalid"}).status_code == 422
+
+
+def test_status_stage_without_match_returns_null_and_empty_log(client):
+    p, v = _make_pv(client)
+    with db.connection_for() as conn:
+        project_jobs.create_job(
+            conn, project_id=p["id"], version_id=v["id"], kind="preprocess",
+            params={"stage": "crop"},
+        )
+    body = client.get(
+        f"/api/projects/{p['id']}/versions/{v['id']}/preprocess/status?stage=head_mask",
+    ).json()
+    assert body["job"] is None
+    assert body["log_tail"] == ""
+
+
 def test_status_endpoint_returns_null_job_when_none(client: TestClient) -> None:
     p, v = _make_pv(client)
     resp = client.get(
@@ -250,6 +293,7 @@ def test_head_mask_detect_defaults_and_missing_model(
     assert params == {
         "stage": "head_mask",
         "scope": "all",
+        "model": "builtin",
         "confidence": 0.413,
         "iou_threshold": 0.7,
         "padding_ratio": 0.1,

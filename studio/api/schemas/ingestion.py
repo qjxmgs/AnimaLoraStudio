@@ -65,6 +65,7 @@ class PreprocessCropRequest(BaseModel):
 class HeadMaskDetectRequest(BaseModel):
     scope: str = "all"  # all | selected
     filenames: Optional[list[str]] = None
+    model: Optional[str] = None
     confidence: float = Field(preprocess_svc.DEFAULT_HEAD_MASK_CONFIDENCE, ge=0.01, le=0.99)
     iou_threshold: float = Field(preprocess_svc.DEFAULT_HEAD_MASK_IOU, ge=0.01, le=0.99)
     padding_ratio: float = Field(preprocess_svc.DEFAULT_HEAD_MASK_PADDING, ge=0.0, le=1.0)
