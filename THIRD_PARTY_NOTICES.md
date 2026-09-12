@@ -28,7 +28,6 @@
   [上游 LICENSE](https://github.com/ultralytics/ultralytics/blob/v8.3.216/LICENSE)。
   本项目不复制其推理实现；日常运行使用既有 ONNX Runtime / NumPy / Pillow。
 - 按需下载、独立转换或不打包权重均不免除许可义务；本说明不作商业许可保证。
-
 ### deepghs / anime_head_detection (MIT，按需下载)
 
 - **来源**：[`deepghs/anime_head_detection`](https://huggingface.co/deepghs/anime_head_detection)

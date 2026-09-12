@@ -69,6 +69,7 @@ class HeadMaskDetectRequest(BaseModel):
     feather_px: int = Field(0, ge=0, le=3)
     scope: str = "all"  # all | selected
     filenames: Optional[list[str]] = None
+    model: Optional[str] = None
     confidence: float = Field(preprocess_svc.DEFAULT_HEAD_MASK_CONFIDENCE, ge=0.01, le=0.99)
     iou_threshold: float = Field(preprocess_svc.DEFAULT_HEAD_MASK_IOU, ge=0.01, le=0.99)
     padding_ratio: float = Field(preprocess_svc.DEFAULT_HEAD_MASK_PADDING, ge=0.0, le=1.0)

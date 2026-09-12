@@ -154,6 +154,8 @@ def test_head_detector_download_uses_pinned_revision_and_rejects_corruption(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from studio.services.models import downloader as dl
+    # This test covers the pinned HF request, independent of local source preferences.
+    monkeypatch.setattr(dl._sources, "_source_for", lambda _kind: "huggingface")
 
     payload = b"verified-model"
     monkeypatch.setattr(dl, "HEAD_DETECTOR_SIZE", len(payload))

@@ -1,496 +1,224 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-
-import {
-  api,
-  type HeadMaskProposalImage,
-  type Job,
-  type ModelsCatalog,
-} from '../../api/client'
-import { useToast } from '../Toast'
+import { api, type HeadMaskProposals, type Job } from '../../api/client'
+import { ownsPreprocessJob } from '../../lib/preprocessJob'
+import { useSettingsData } from '../../lib/SettingsData'
 import { useEventStream } from '../../lib/useEventStream'
-
-export interface AutoHeadMaskState {
-  images: HeadMaskProposalImage[]
-  selections: Record<string, string[]>
-}
+import { useToast } from '../Toast'
+import HeadMaskSetupModal from './HeadMaskSetupModal'
 
 interface Props {
   projectId: number
   versionId: number
   activeName: string | null
   unsavedCount: number
-  previewState?: 'loading' | 'ready' | 'error'
-  onStateChange: (state: AutoHeadMaskState | null) => void
-  onShowUndetected: (names: string[]) => void
-  onWorkspaceChanged: () => Promise<void>
+  setupOpen: boolean
+  onCloseSetup: () => void
+  onResults: (result: HeadMaskProposals) => void
+  onBusyChange?: (busy: boolean) => void
 }
 
-function isHeadMaskJob(job: Job | null): boolean {
-  if (!job) return false
-  let params = job.params_decoded
-  if (!params && typeof job.params === 'string') {
-    try { params = JSON.parse(job.params) as Record<string, unknown> } catch { return false }
-  }
-  return params?.stage === 'head_mask'
+/** Key owns all version-local request and job lifetimes. */
+export default function AutoHeadMaskPanel(props: Props) {
+  return <HeadMaskWorkspace key={`${props.projectId}:${props.versionId}`} {...props} />
 }
 
-export default function AutoHeadMaskPanel({
+function HeadMaskWorkspace({
   projectId,
   versionId,
   activeName,
   unsavedCount,
-  previewState = 'ready',
-  onStateChange,
-  onShowUndetected,
-  onWorkspaceChanged,
+  setupOpen,
+  onCloseSetup,
+  onResults,
+  onBusyChange,
 }: Props) {
   const { t } = useTranslation()
   const { toast } = useToast()
-  const [catalog, setCatalog] = useState<ModelsCatalog | null>(null)
+  const { catalog, catalogError, downloadBusy } = useSettingsData()
   const [job, setJob] = useState<Job | null>(null)
-  const [proposal, setProposal] = useState<Awaited<ReturnType<typeof api.getHeadMaskProposals>> | null>(null)
-  const [selections, setSelections] = useState<Record<string, string[]>>({})
   const [busy, setBusy] = useState(false)
-  const [mode, setMode] = useState<'face_contour' | 'head_box'>('face_contour')
-  const [applications, setApplications] = useState<Awaited<ReturnType<typeof api.getHeadMaskApplications>>['applications']>([])
-  const [replacementId, setReplacementId] = useState('')
-  const [replacementPreview, setReplacementPreview] = useState<Awaited<ReturnType<typeof api.previewHeadMaskReplacement>> | null>(null)
-  const [faceParams, setFaceParams] = useState({ face_confidence: 0.25, mask_threshold: 0.5, feather_px: 0 })
-  const [downloadRequested, setDownloadRequested] = useState(false)
-  const [progress, setProgress] = useState({ done: 0, total: 0, heads: 0 })
-  const [params, setParams] = useState({
-    confidence: 0.413,
-    iou_threshold: 0.7,
-    padding_ratio: 0.10,
-    feather_ratio: 0.03,
-  })
-  const jobIdRef = useRef<number | null>(null)
-  const proposalJobRef = useRef<number | null>(null)
-  jobIdRef.current = job?.id ?? null
+  const [error, setError] = useState('')
+  const mounted = useRef(true)
+  const busyRef = useRef(false)
+  const jobRef = useRef<Job | null>(null)
+  const statusRequest = useRef(0)
+  const proposalRequest = useRef(0)
+  const sessionOwnedJobs = useRef(new Set<number>())
+  const incorporatedJobs = useRef(new Set<number>())
+  const terminalNotifiedJobs = useRef(new Set<number>())
 
-  const reloadCatalog = useCallback(() => {
-    void api.getModelsCatalog().then(setCatalog).catch(() => setCatalog(null))
+  useEffect(() => {
+    mounted.current = true
+    statusRequest.current++
+    proposalRequest.current++
+    return () => { mounted.current = false }
   }, [])
 
   const loadProposal = useCallback(async (jobId: number) => {
-    const result = await api.getHeadMaskProposals(projectId, versionId, jobId)
-    setProposal(result)
-    const sameJob = proposalJobRef.current === jobId
-    proposalJobRef.current = jobId
-    setSelections((previous) => {
-      if (sameJob) return previous
-      return Object.fromEntries(
-        result.images.map((image) => [image.name, image.regions.map((region) => region.id)]),
-      )
-    })
-    void api.getHeadMaskApplications(projectId, versionId).then((r) => setApplications(r.applications)).catch(() => setApplications([]))
-  }, [projectId, versionId])
+    if (incorporatedJobs.current.has(jobId)) return
+    const request = ++proposalRequest.current
+    try {
+      const result = await api.getHeadMaskProposals(projectId, versionId, jobId)
+      if (
+        !mounted.current
+        || request !== proposalRequest.current
+        || jobRef.current?.id !== jobId
+        || result.job_id !== jobId
+        || incorporatedJobs.current.has(jobId)
+      ) return
+      incorporatedJobs.current.add(jobId)
+      // Contours require the custom bitmap preview and transactional Apply path.
+      if (result.parameters.mask_mode === 'face_contour') return
+      setError('')
+      onResults(result)
+    } catch (e) {
+      if (mounted.current && request === proposalRequest.current && jobRef.current?.id === jobId) {
+        setError(String(e))
+        toast(String(e), 'error')
+      }
+    }
+  }, [onResults, projectId, toast, versionId])
 
+  const acceptJob = useCallback((next: Job | null) => {
+    if (!mounted.current) return
+    if (next && !ownsPreprocessJob(next, projectId, versionId, 'head_mask')) return
+    if (next?.params_decoded?.mask_mode === 'face_contour') return
+    const previous = jobRef.current
+    if (
+      next
+      && previous?.id === next.id
+      && (previous.status === 'pending' || previous.status === 'running')
+      && (next.status === 'done' || next.status === 'failed' || next.status === 'canceled')
+    ) {
+      sessionOwnedJobs.current.add(next.id)
+    }
+    if (previous?.id !== next?.id) proposalRequest.current++
+    jobRef.current = next
+    setJob(next)
+    if (next?.status === 'done' && sessionOwnedJobs.current.has(next.id)) {
+      void loadProposal(next.id)
+    }
+    if (
+      next
+      && (next.status === 'failed' || next.status === 'canceled')
+      && sessionOwnedJobs.current.has(next.id)
+      && !terminalNotifiedJobs.current.has(next.id)
+    ) {
+      terminalNotifiedJobs.current.add(next.id)
+      toast(t(next.status === 'failed'
+        ? 'preprocessInpaint.headMask.detectFailed'
+        : 'preprocessInpaint.headMask.detectCanceled'), next.status === 'failed' ? 'error' : 'info')
+    }
+  }, [loadProposal, projectId, t, toast, versionId])
+
+  const refreshStatus = useCallback(async () => {
+    if (busyRef.current) return
+    const request = ++statusRequest.current
+    try {
+      const result = await api.getPreprocessStatusTrain(projectId, versionId, 'head_mask')
+      if (!mounted.current || request !== statusRequest.current) return
+      acceptJob(ownsPreprocessJob(result.job, projectId, versionId, 'head_mask') ? result.job : null)
+    } catch (e) {
+      if (mounted.current && request === statusRequest.current) setError(String(e))
+    }
+  }, [acceptJob, projectId, versionId])
+
+  useEffect(() => { void refreshStatus() }, [refreshStatus])
+
+  const running = job?.status === 'pending' || job?.status === 'running'
+  const activeJobId = job?.id
   useEffect(() => {
-    reloadCatalog()
-    void api.getPreprocessStatusTrain(projectId, versionId).then((status) => {
-      if (!isHeadMaskJob(status.job)) return
-      setJob(status.job)
-      if (status.job?.status === 'done') void loadProposal(status.job.id)
-    }).catch(() => {})
-  }, [projectId, versionId, reloadCatalog, loadProposal])
-
-  useEffect(() => {
-    if (!downloadRequested || (catalog?.head_detector?.valid && catalog?.face_segmenter?.valid)) return
-    const timer = window.setInterval(reloadCatalog, 1000)
-    return () => window.clearInterval(timer)
-  }, [downloadRequested, catalog?.head_detector?.valid, catalog?.face_segmenter?.valid, reloadCatalog])
-
-  useEffect(() => { setReplacementPreview(null) }, [selections, replacementId, proposal?.job_id])
-
-  // SSE is the fast path. Polling is the recovery path for a sleeping browser,
-  // a proxy that buffered events, or a reconnect that missed the terminal event.
-  useEffect(() => {
-    if (!job || (job.status !== 'pending' && job.status !== 'running')) return
+    if (!running || !activeJobId) return
     let active = true
+    let timer: ReturnType<typeof setTimeout>
+    const jobId = activeJobId
     const poll = async () => {
       try {
-        const latest = await api.getJob(job.id)
-        if (!active) return
-        setJob(latest)
-        if (latest.status === 'done') await loadProposal(latest.id)
-        else if (latest.status === 'failed') toast(t('preprocessInpaint.headMask.detectFailed'), 'error')
-        else if (latest.status === 'canceled') toast(t('preprocessInpaint.headMask.detectCanceled'), 'info')
-      } catch {
-        // A transient status read must not replace a still-running job with an error.
-      }
+        const latest = await api.getJob(jobId)
+        if (!active || !mounted.current || jobRef.current?.id !== jobId) return
+        if (ownsPreprocessJob(latest, projectId, versionId, 'head_mask')) acceptJob(latest)
+      } catch { /* Keep the owned snapshot until the next poll/SSE update. */ }
+      if (active) timer = setTimeout(() => void poll(), 3000)
     }
-    const timer = window.setInterval(() => { void poll() }, 1500)
-    return () => {
-      active = false
-      window.clearInterval(timer)
-    }
-  }, [job, loadProposal, t, toast])
-
-  useEffect(() => {
-    onStateChange(proposal ? { images: proposal.images, selections } : null)
-  }, [proposal, selections, onStateChange])
+    timer = setTimeout(() => void poll(), 1500)
+    return () => { active = false; clearTimeout(timer) }
+  }, [acceptJob, activeJobId, projectId, running, versionId])
 
   useEventStream((event) => {
-    if (event.type === 'model_download_changed' && ['head_detector', 'face_segmenter'].includes(String(event.key))) {
-      reloadCatalog()
+    const current = jobRef.current
+    if (!mounted.current || !current || event.job_id !== current.id) return
+    if (event.project_id != null && event.project_id !== projectId) return
+    if (event.version_id != null && event.version_id !== versionId) return
+    if (event.type === 'job_state_changed') {
+      statusRequest.current++
+      acceptJob({ ...current, status: String(event.status) as Job['status'] })
     }
-    const currentJobId = jobIdRef.current
-    if (!currentJobId || event.job_id !== currentJobId) return
-    if (event.type === 'head_mask_progress') {
-      setProgress((current) => ({
-        done: Number(event.idx ?? current.done),
-        total: Number(event.total ?? current.total),
-        heads: current.heads + (event.status === 'done' ? Number(event.detections ?? 0) : 0),
-      }))
-    } else if (event.type === 'job_state_changed') {
-      const status = String(event.status) as Job['status']
-      setJob((current) => current ? { ...current, status } : current)
-      if (status === 'done') {
-        void loadProposal(currentJobId).catch((error) => toast(String(error), 'error'))
-      } else if (status === 'failed') {
-        toast(t('preprocessInpaint.headMask.detectFailed'), 'error')
-      } else if (status === 'canceled') {
-        toast(t('preprocessInpaint.headMask.detectCanceled'), 'info')
-      }
-    }
-  })
+  }, { onOpen: () => { void refreshStatus() } })
 
-  const startDetection = async (scope: 'all' | 'selected') => {
+  useEffect(() => { onBusyChange?.(busy || running) }, [busy, onBusyChange, running])
+
+  const installedModels = useMemo(
+    () => (catalog?.model_sources?.head_detector ?? []).filter((row) => row.exists),
+    [catalog],
+  )
+  const defaultModel = installedModels.some((row) => row.value === catalog?.head_detector?.current)
+    ? catalog?.head_detector?.current ?? ''
+    : installedModels[0]?.value ?? ''
+  const modelReady = installedModels.length > 0 && !catalogError
+    && !downloadBusy.has('head_detector')
+
+  const startDetection = async (
+    scope: 'all' | 'selected',
+    model: string,
+    params: HeadMaskProposals['parameters'],
+  ) => {
+    if (
+      busyRef.current || running || !modelReady || !installedModels.some((row) => row.value === model)
+      || (scope === 'selected' && !activeName)
+    ) return
     if (unsavedCount > 0) {
-      toast(t('preprocessInpaint.headMask.saveFirst', { n: unsavedCount }), 'error')
+      setError(t('preprocessInpaint.headMask.saveFirst', { n: unsavedCount }))
       return
     }
-    if (!catalog?.head_detector?.valid || (mode === 'face_contour' && !catalog?.face_segmenter?.valid)) {
-      toast(t('preprocessInpaint.headMask.modelRequired'), 'error')
-      return
-    }
-    if (scope === 'selected' && !activeName) return
+    busyRef.current = true
     setBusy(true)
-    setProposal(null)
-    setSelections({})
-    setProgress({ done: 0, total: scope === 'selected' ? 1 : 0, heads: 0 })
+    setError('')
+    statusRequest.current++
+    proposalRequest.current++
     try {
       const next = await api.startHeadMaskDetection(projectId, versionId, {
         scope,
         ...(scope === 'selected' && activeName ? { filenames: [activeName] } : {}),
+        model,
         ...params,
-        mask_mode: mode,
-        ...(mode === 'face_contour' ? faceParams : {}),
       })
-      setJob(next)
-      toast(t('preprocessInpaint.headMask.detectStarted', { id: next.id }), 'success')
-    } catch (error) {
-      toast(String(error), 'error')
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const downloadModel = async () => {
-    setDownloadRequested(true)
-    try {
-      await api.startModelDownload({ model_id: catalog?.head_detector?.valid ? 'face_segmenter' : 'head_detector' })
-      toast(t('preprocessInpaint.headMask.downloadStarted'), 'success')
-      reloadCatalog()
-    } catch (error) {
-      toast(String(error), 'error')
-    }
-  }
-
-  const activeProposal = proposal?.images.find((image) => image.name === activeName) ?? null
-  const selectedCount = Object.values(selections).reduce((total, ids) => total + ids.length, 0)
-  const totalHeads = proposal?.images.reduce((total, image) => total + image.regions.length, 0) ?? 0
-  const faceProposal = proposal?.parameters.mask_mode === 'face_contour'
-  const undetected = useMemo(
-    () => proposal?.images.filter((image) => image.regions.length === 0 || image.review_status === 'needs_review').map((image) => image.name) ?? [],
-    [proposal],
-  )
-
-  const setActiveSelection = (all: boolean) => {
-    if (!activeProposal) return
-    setSelections((current) => ({
-      ...current,
-      [activeProposal.name]: all ? activeProposal.regions.map((region) => region.id) : [],
-    }))
-  }
-
-  const toggleRegion = (regionId: string) => {
-    if (!activeProposal) return
-    setSelections((current) => {
-      const existing = current[activeProposal.name] ?? []
-      return {
-        ...current,
-        [activeProposal.name]: existing.includes(regionId)
-          ? existing.filter((id) => id !== regionId)
-          : [...existing, regionId],
+      if (!mounted.current) return
+      if (ownsPreprocessJob(next, projectId, versionId, 'head_mask')) {
+        sessionOwnedJobs.current.add(next.id)
       }
-    })
-  }
-
-  const apply = async () => {
-    if (!ensureSaved()) return
-    if (previewState !== 'ready') return
-    if (!proposal || selectedCount === 0) return
-    setBusy(true)
-    try {
-      const result = await api.applyHeadMaskProposals(
-        projectId, versionId, proposal.job_id, selections,
-      )
-      toast(t('preprocessInpaint.headMask.applied', { n: result.applied }), 'success')
-      await onWorkspaceChanged()
-      await loadProposal(proposal.job_id)
-    } catch (error) {
-      toast(String(error), 'error')
+      acceptJob(next)
+      onCloseSetup()
+    } catch (e) {
+      if (mounted.current) setError(String(e))
     } finally {
-      setBusy(false)
+      busyRef.current = false
+      if (mounted.current) setBusy(false)
     }
   }
 
-  const undoApply = async () => {
-    if (!ensureSaved()) return
-    if (!proposal) return
-    setBusy(true)
-    try {
-      const result = await api.undoHeadMaskApply(projectId, versionId, proposal.job_id)
-      toast(t('preprocessInpaint.headMask.undone', { n: result.undone }), 'success')
-      await onWorkspaceChanged()
-      await loadProposal(proposal.job_id)
-    } catch (error) {
-      toast(String(error), 'error')
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const running = job?.status === 'pending' || job?.status === 'running'
-  const modelReady = catalog?.head_detector?.valid === true && (mode === 'head_box' || catalog?.face_segmenter?.valid === true)
-  const modelKey = catalog?.head_detector?.valid ? 'face_segmenter' : 'head_detector'
-  const download = catalog?.downloads[modelKey]
-  const replacement = applications.find((a) => `${a.job_id}:${a.apply_id}` === replacementId)
-  const ensureSaved = () => {
-    if (unsavedCount === 0) return true
-    toast(t('preprocessInpaint.headMask.saveFirst', { n: unsavedCount }), 'error')
-    return false
-  }
-  const previewReplacement = async () => {
-    if (!ensureSaved() || previewState !== 'ready' || !proposal || !replacement) return
-    setBusy(true)
-    try {
-      setReplacementPreview(await api.previewHeadMaskReplacement(projectId, versionId, proposal.job_id, selections,
-        { job_id: replacement.job_id, apply_id: replacement.apply_id }))
-    } catch (error) { toast(String(error), 'error') } finally { setBusy(false) }
-  }
-  const confirmReplacement = async () => {
-    if (!ensureSaved() || previewState !== 'ready' || !proposal || !replacement || !replacementPreview) return
-    setBusy(true)
-    try {
-      const result = await api.applyHeadMaskProposals(projectId, versionId, proposal.job_id, selections,
-        { job_id: replacement.job_id, apply_id: replacement.apply_id })
-      toast(t('preprocessInpaint.headMask.applied', { n: result.applied }), 'success')
-      setReplacementPreview(null)
-      await onWorkspaceChanged()
-      await loadProposal(proposal.job_id)
-    } catch (error) { toast(String(error), 'error') } finally { setBusy(false) }
-  }
-
+  if (!setupOpen) return null
   return (
-    <div className="flex flex-col gap-2 border-t border-subtle pt-2 mt-1" data-testid="auto-head-mask-panel">
-      <div className="flex items-center justify-between gap-2">
-        <h4 className="caption">{t('preprocessInpaint.headMask.title')}</h4>
-        <span className={`text-[10px] ${modelReady ? 'text-ok' : 'text-warn'}`}>
-          {modelReady
-            ? t('preprocessInpaint.headMask.modelReady')
-            : t('preprocessInpaint.headMask.modelMissing')}
-        </span>
-      </div>
-      <p className="text-[11px] text-fg-tertiary leading-relaxed m-0">
-        {t('preprocessInpaint.headMask.boundary')}
-      </p>
-      <label className="text-xs flex flex-col gap-1">
-        {t('preprocessInpaint.headMask.mode')}
-        <select className="input text-xs" value={mode} disabled={busy || running}
-          onChange={(event) => setMode(event.target.value as typeof mode)}>
-          <option value="face_contour">{t('preprocessInpaint.headMask.faceMode')}</option>
-          <option value="head_box">{t('preprocessInpaint.headMask.boxMode')}</option>
-        </select>
-      </label>
-
-      {!modelReady && (
-        <button
-          type="button"
-          className="btn btn-secondary btn-sm justify-center"
-          disabled={download?.status === 'running'}
-          onClick={() => void downloadModel()}
-        >
-          {download?.status === 'running'
-            ? t('preprocessInpaint.headMask.downloading')
-            : t(`preprocessInpaint.headMask.${modelKey === 'face_segmenter' ? 'prepareFaceModel' : 'downloadModel'}`)}
-        </button>
-      )}
-      {download?.message && <p role="alert" className="text-xs text-err m-0">{download.message}</p>}
-      {download?.log_tail && <details className="text-xs"><summary>{t('preprocessInpaint.headMask.prepareLog')}</summary>
-        <pre className="max-h-32 overflow-auto whitespace-pre-wrap">{download.log_tail.join('\n')}</pre>
-      </details>}
-
-      <details className="text-[11px]">
-        <summary className="cursor-pointer text-fg-secondary">
-          {t('preprocessInpaint.headMask.parameters')}
-        </summary>
-        <div className="grid grid-cols-2 gap-1.5 mt-1.5">
-          {(mode === 'head_box' ? ['confidence', 'iou_threshold', 'padding_ratio', 'feather_ratio'] as const
-            : ['confidence', 'iou_threshold'] as const).map((key) => (
-            <label key={key} className="flex flex-col gap-0.5 text-fg-tertiary">
-              {t(`preprocessInpaint.headMask.${key}`)}
-              <input
-                className="input input-mono text-xs"
-                type="number"
-                min={0} max={key === 'feather_ratio' ? 0.5 : 1}
-                step={0.01}
-                value={params[key]}
-                onChange={(event) => setParams((current) => ({
-                  ...current,
-                  [key]: Number(event.target.value),
-                }))}
-              />
-            </label>
-          ))}
-          {mode === 'face_contour' && (['face_confidence', 'mask_threshold', 'feather_px'] as const).map((key) => (
-            <label key={key} className="flex flex-col gap-0.5 text-fg-tertiary">
-              {t(`preprocessInpaint.headMask.${key}`)}
-              <input className="input input-mono text-xs" type="number" value={faceParams[key]}
-                min={key === 'feather_px' ? 0 : 0.01} max={key === 'feather_px' ? 3 : 0.99}
-                step={key === 'feather_px' ? 1 : 0.01}
-                onChange={(event) => setFaceParams((p) => ({ ...p, [key]: Number(event.target.value) }))} />
-            </label>
-          ))}
-        </div>
-      </details>
-
-      <div className="grid grid-cols-2 gap-1.5">
-        <button type="button" className="btn btn-secondary btn-sm justify-center"
-          disabled={busy || running || !modelReady}
-          onClick={() => void startDetection('all')}>
-          {t('preprocessInpaint.headMask.detectAll')}
-        </button>
-        <button type="button" className="btn btn-secondary btn-sm justify-center"
-          disabled={busy || running || !modelReady || !activeName}
-          onClick={() => void startDetection('selected')}>
-          {t('preprocessInpaint.headMask.detectCurrent')}
-        </button>
-      </div>
-
-      {running && (
-        <div className="rounded-sm bg-overlay px-2 py-1.5 text-[11px] text-fg-secondary">
-          {t('preprocessInpaint.headMask.progress', progress)}
-          <button type="button" className="ml-2 text-err underline"
-            onClick={() => job && void api.cancelJob(job.id)}>
-            {t('common.cancel')}
-          </button>
-        </div>
-      )}
-
-      {proposal && (
-        <>
-          {(proposal.parameters.mask_mode ?? 'head_box') !== mode && <p role="status" className="text-xs text-warn m-0">
-            {t('preprocessInpaint.headMask.proposalModeMismatch')}
-          </p>}
-          {previewState !== 'ready' && <p role="alert" className="text-xs text-warn m-0">
-            {t(`preprocessInpaint.headMask.${previewState === 'error' ? 'previewFailed' : 'previewLoading'}`)}
-          </p>}
-          <div className="flex items-center gap-1.5 text-[11px] text-fg-secondary flex-wrap">
-            <span>{t(`preprocessInpaint.headMask.${faceProposal ? 'faceSummary' : 'summary'}`, {
-              images: proposal.images.length, heads: totalHeads, selected: selectedCount,
-            })}</span>
-            <button type="button" className="underline text-accent"
-              onClick={() => onShowUndetected(undetected)}>
-              {t(`preprocessInpaint.headMask.${faceProposal ? 'faceUndetected' : 'showUndetected'}`, { n: undetected.length })}
-            </button>
-          </div>
-          {proposal.stale_count > 0 && (
-            <p className="m-0 text-[11px] text-err">
-              {t('preprocessInpaint.headMask.stale', { n: proposal.stale_count })}
-            </p>
-          )}
-          {(activeProposal?.review_status === 'needs_review' || activeProposal?.review_status === 'no_face') && (
-            <p role="status" className="text-xs text-warn m-0">{t('preprocessInpaint.headMask.needsReview')}</p>
-          )}
-          <div className="flex items-center gap-1">
-            <button type="button" className="btn btn-ghost btn-sm" onClick={() => setActiveSelection(true)}>
-              {t('preprocessInpaint.headMask.selectCurrent')}
-            </button>
-            <button type="button" className="btn btn-ghost btn-sm" onClick={() => setActiveSelection(false)}>
-              {t('preprocessInpaint.headMask.clearCurrent')}
-            </button>
-          </div>
-          <div className="flex flex-col gap-1 max-h-28 overflow-auto">
-            {!activeProposal || activeProposal.regions.length === 0 ? (
-              <span className="text-[11px] text-fg-tertiary">
-                {t('preprocessInpaint.headMask.noneCurrent')}
-              </span>
-            ) : activeProposal.regions.map((region, index) => (
-              <label key={region.id} className="flex items-center gap-1.5 text-[11px]">
-                <input type="checkbox"
-                  checked={(selections[activeProposal.name] ?? []).includes(region.id)}
-                  onChange={() => toggleRegion(region.id)} />
-                <span>{t(`preprocessInpaint.headMask.${faceProposal ? 'faceRegion' : 'region'}`, {
-                  n: index + 1, score: Math.round(region.score * 100),
-                })}</span>
-              </label>
-            ))}
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <button type="button" className="btn btn-primary btn-sm justify-center"
-              disabled={busy || previewState !== 'ready' || selectedCount === 0 || proposal.stale_count > 0}
-              onClick={() => void apply()}>
-              {t('preprocessInpaint.headMask.applySelected', { n: selectedCount })}
-            </button>
-            <button type="button" className="btn btn-ghost btn-sm justify-center"
-              disabled={busy || !proposal.undo_available}
-              onClick={() => void undoApply()}>
-              {t('preprocessInpaint.headMask.undoApply')}
-            </button>
-          </div>
-          {proposal.parameters.mask_mode === 'face_contour' && (
-            <details className="text-xs border-t border-subtle pt-2">
-              <summary>{t('preprocessInpaint.headMask.replaceTitle')}</summary>
-              <select aria-label={t('preprocessInpaint.headMask.replaceSource')} className="input text-xs w-full mt-2"
-                value={replacementId} onChange={(event) => setReplacementId(event.target.value)}>
-                <option value="">{t('preprocessInpaint.headMask.replaceSource')}</option>
-                {applications.filter((a) => a.job_id !== proposal.job_id).map((a) => (
-                  <option key={a.apply_id} value={`${a.job_id}:${a.apply_id}`}>
-                    #{a.job_id} · {a.images.filter((i) => i.eligible).length}/{a.images.length}
-                  </option>
-                ))}
-              </select>
-              {replacement && <ul className="my-2 max-h-24 overflow-auto pl-4">
-                {replacement.images.map((i) => <li key={i.name} className={i.eligible ? 'text-fg-secondary' : 'text-err'}>
-                  {i.name} · {i.eligible ? t('preprocessInpaint.headMask.replaceEligible') : i.reason}
-                </li>)}
-              </ul>}
-              <button type="button" className="btn btn-secondary btn-sm mt-2" disabled={busy || previewState !== 'ready' || !replacement || selectedCount === 0}
-                onClick={() => void previewReplacement()}>{t('preprocessInpaint.headMask.replacePreview')}</button>
-              {replacementPreview && <section aria-label={t('preprocessInpaint.headMask.replacePreview')} className="mt-2">
-                <p>{t('preprocessInpaint.headMask.replaceWarning')}</p>
-                <div className="max-h-72 overflow-auto">
-                  {replacementPreview.images.map((i) => <details key={i.name} open={i.name === activeName}>
-                    <summary className="break-all">{i.name}</summary>
-                    <p>{t('preprocessInpaint.headMask.replaceDiff', { restored: i.restored_pixels, ignored: i.ignored_pixels })}</p>
-                    <div className="grid grid-cols-2 gap-2">
-                      <figure className="m-0"><img src={i.before_url} alt={t('preprocessInpaint.headMask.before')} /><figcaption>{t('preprocessInpaint.headMask.before')}</figcaption></figure>
-                      <figure className="m-0"><img src={i.after_url} alt={t('preprocessInpaint.headMask.after')} /><figcaption>{t('preprocessInpaint.headMask.after')}</figcaption></figure>
-                    </div>
-                  </details>)}
-                </div>
-                <button type="button" className="btn btn-primary btn-sm mt-2" disabled={busy || previewState !== 'ready' || replacementPreview.images.length === 0}
-                  onClick={() => void confirmReplacement()}>{t('preprocessInpaint.headMask.replaceConfirm')}</button>
-                <button type="button" className="btn btn-ghost btn-sm" onClick={() => setReplacementPreview(null)}>{t('common.cancel')}</button>
-              </section>}
-            </details>
-          )}
-        </>
-      )}
-    </div>
+    <HeadMaskSetupModal
+      activeName={activeName}
+      busy={busy}
+      running={running}
+      models={installedModels}
+      defaultModel={defaultModel}
+      unsavedCount={unsavedCount}
+      error={error}
+      onClose={onCloseSetup}
+      onStart={startDetection}
+    />
   )
 }

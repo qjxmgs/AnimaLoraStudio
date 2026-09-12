@@ -167,6 +167,7 @@ def _run_head_mask_train(
     feather_ratio = float(
         params.get("feather_ratio", head_mask.DEFAULT_FEATHER_RATIO)
     )
+    model_identity = str(params.get("model") or "builtin")
     try:
         sources = preprocess.resolve_targets_train(
             project, version["label"], mode=scope, names=names,
@@ -175,14 +176,18 @@ def _run_head_mask_train(
         log.error("Resolving head-mask images failed: %s", exc)
         return 1
     try:
-        status = model_downloader.head_detector_status()
-        if not status.get("valid"):
-            log.error(
-                "Anime head detector is missing or damaged; download it under "
-                "Settings -> Preprocess before retrying"
-            )
-            return 1
-        detector = head_mask.HeadDetector(model_downloader.head_detector_target())
+        resolved_identity, model_path, builtin = model_downloader.resolve_head_detector(
+            model_identity
+        )
+        if builtin:
+            status = model_downloader.head_detector_status()
+            if not status.get("valid"):
+                log.error(
+                    "Anime head detector is missing or damaged; download it under "
+                    "Settings -> Preprocess before retrying"
+                )
+                return 1
+        detector = head_mask.HeadDetector(model_path)
         if mask_mode == "face_contour":
             segmenter = FaceSegmenter(face_segmenter.target())
     except Exception as exc:  # noqa: BLE001
@@ -209,6 +214,7 @@ def _run_head_mask_train(
         path = train_dir / name
         if not path.is_file():
             skipped += 1
+            proposals.append(head_mask.unsuccessful_image(name, skipped=True))
             emit_event(
                 "head_mask_progress", idx=idx, total=total, name=name,
                 status="skip", succeeded=succeeded, failed=failed, skipped=skipped,
@@ -246,13 +252,14 @@ def _run_head_mask_train(
             failed += 1
             if _stop_requested:
                 return 130
+            proposal = head_mask.unsuccessful_image(name)
             if mask_mode == "face_contour":
-                proposals.append({"name": name, "regions": [], "size": [0, 0],
-                                  "review_status": "needs_review", "error": str(exc)[:200]})
+                proposal["review_status"] = "needs_review"
+            proposals.append(proposal)
             log.warning("Head detection failed for %s: %s", name, exc)
             emit_event(
                 "head_mask_progress", idx=idx, total=total, name=name,
-                status="fail", error=str(exc)[:200],
+                status="fail", error=proposal["error"]["message"],
                 succeeded=succeeded, failed=failed, skipped=skipped,
             )
 
@@ -265,6 +272,9 @@ def _run_head_mask_train(
         padding_ratio=padding_ratio,
         feather_ratio=feather_ratio,
         provider=detector.provider,
+        model_identity=resolved_identity,
+        model_path=model_path,
+        builtin=builtin,
         images=proposals,
     )
     result["parameters"].update(mask_mode=mask_mode)

@@ -466,6 +466,7 @@ def start_head_mask_job_train(
     face_confidence: float = 0.25,
     mask_threshold: float = 0.5,
     feather_px: int = 0,
+    model: str = "builtin",
 ) -> dict[str, Any]:
     """Create a proposal-only anime head detection job in the preprocess queue."""
     if not projects.get_project(conn, project_id):
@@ -494,6 +495,7 @@ def start_head_mask_job_train(
         "mask_threshold": mask_threshold,
         "feather_px": feather_px,
         "scope": scope,
+        "model": model,
         "confidence": float(confidence),
         "iou_threshold": float(iou_threshold),
         "padding_ratio": float(padding_ratio),

@@ -42,6 +42,8 @@ HEAD_DETECTOR_SIZE = 44_585_386
 HEAD_DETECTOR_SHA256 = (
     "6679f9b71192298bbf174d82e9e5581c3237b0c3dc67deace7cdbf686b070a00"
 )
+HEAD_DETECTOR_BUILTIN = "builtin"
+HEAD_DETECTOR_EXTS = (".onnx",)
 
 # CLTagger 预设。v1 在 cella110n/cl_tagger 的版本子目录下；v2 是独立 gated
 # repo，但文件仍在版本子目录下。新版本出现时往这里加一行，UI 自动作为 radio 暴露。
@@ -302,6 +304,74 @@ def head_detector_target(root: Optional[Path] = None) -> Path:
     return head_detector_dir(root) / "model.onnx"
 
 
+def head_detector_custom_target(
+    filename: str, root: Optional[Path] = None,
+) -> Path:
+    """Resolve a managed custom detector without exposing the pinned target."""
+    normalized = filename.replace("\\", "/")
+    save_name = Path(filename).name
+    if (
+        not save_name
+        or save_name != normalized.rsplit("/", 1)[-1]
+        or ".." in save_name
+        or not save_name.lower().endswith(HEAD_DETECTOR_EXTS)
+    ):
+        raise ValueError("invalid head detector filename")
+    if save_name.casefold() == head_detector_target(root).name.casefold():
+        raise ValueError("head detector filename is reserved for the built-in model")
+    return head_detector_dir(root) / save_name
+
+
+def resolve_head_detector(
+    identity: str | None = None, root: Optional[Path] = None,
+) -> tuple[str, Path, bool]:
+    """Resolve a persisted catalog identity to a safe ONNX path.
+
+    Returns ``(identity, path, is_builtin)``. Relative identities are plain
+    managed filenames only; absolute paths must already be registered as local
+    head-detector candidates. The built-in is separately integrity checked by
+    the caller.
+    """
+    configured = identity
+    if configured is None:
+        try:
+            configured = secrets.load().models.selected_head_detector
+        except Exception:
+            configured = HEAD_DETECTOR_BUILTIN
+    value = str(configured or HEAD_DETECTOR_BUILTIN).strip()
+    if value == HEAD_DETECTOR_BUILTIN:
+        return value, head_detector_target(root), True
+    candidates = secrets.load().model_sources.get("head_detector", [])
+    if secrets.is_abs_path(value):
+        if not any(c.kind == "local" and c.path == value for c in candidates):
+            raise ValueError("head detector local path is not registered")
+        target = Path(value).expanduser()
+    else:
+        if value.casefold() == head_detector_target(root).name.casefold():
+            raise ValueError("head detector filename is reserved for the built-in model")
+        if Path(value).name != value or "/" in value or "\\" in value or ".." in value:
+            raise ValueError("invalid head detector identity")
+        if not value.lower().endswith(HEAD_DETECTOR_EXTS):
+            raise ValueError("head detector must be an .onnx file")
+        registered = any(
+            c.kind == "download" and Path(c.filename).name == value
+            for c in candidates
+        )
+        target = head_detector_dir(root) / value
+        if not registered and not target.is_file():
+            raise ValueError("head detector download is not registered")
+    if target.suffix.lower() not in HEAD_DETECTOR_EXTS or not target.is_file():
+        raise ValueError("head detector file is missing")
+    return value, target, False
+
+
+def selected_head_detector(root: Optional[Path] = None) -> str:
+    """Return the valid configured detector identity, otherwise built-in."""
+    try:
+        identity, _path, _builtin = resolve_head_detector(None, root)
+        return identity
+    except (OSError, ValueError):
+        return HEAD_DETECTOR_BUILTIN
 def upscaler_target(label: str, root: Optional[Path] = None) -> Path:
     """单个放大器权重的目标路径。
 

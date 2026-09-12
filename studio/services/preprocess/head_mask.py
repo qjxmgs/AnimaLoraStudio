@@ -83,7 +83,44 @@ def load_result(job_id: int) -> dict[str, Any]:
             code="preprocess.head_mask_proposals_invalid",
             details={"job_id": job_id},
         )
-    return value
+    return with_outcomes(value)
+
+
+def with_outcomes(result: dict[str, Any]) -> dict[str, Any]:
+    """Add outcome fields to legacy proposals without rewriting their IDs/files.
+
+    Version 1 only saved successful images: missing outcomes cannot be recovered.
+    Its recorded images (including empty detections) therefore default to done.
+    """
+    images = []
+    for item in result["images"]:
+        status = item.get("status", "failed" if item.get("error") else "done")
+        images.append({
+            **item, "status": status,
+            "regions": item["regions"] if status == "done" else [],
+            "error": item.get("error") if status != "done" else None,
+        })
+    succeeded = sum(item["status"] == "done" for item in images)
+    failed = sum(item["status"] == "failed" for item in images)
+    skipped = sum(item["status"] == "skipped" for item in images)
+    return {
+        **result, "images": images,
+        "status": "partial" if failed or skipped else "complete",
+        "succeeded": succeeded, "failed": failed, "skipped": skipped,
+    }
+
+
+def unsuccessful_image(name: str, *, skipped: bool = False) -> dict[str, Any]:
+    """Safe durable error information: never serialize exception paths/tokens."""
+    return {
+        "name": name, "status": "skipped" if skipped else "failed",
+        "size": None, "source_mtime_ns": None, "source_file_size": None,
+        "regions": [],
+        "error": {
+            "code": "source_missing" if skipped else "detection_failed",
+            "message": "Source image is missing." if skipped else "Head detection failed for this image.",
+        },
+    }
 
 
 def undo_available(job_id: int) -> bool:
@@ -103,6 +140,8 @@ def source_snapshot(path: Path) -> dict[str, int]:
 
 
 def proposal_stale_reason(image: dict[str, Any], train_dir: Path) -> str | None:
+    if image.get("status", "done") != "done":
+        return None
     path = train_dir / str(image.get("name") or "")
     try:
         snap = source_snapshot(path)
@@ -126,10 +165,11 @@ def proposal_stale_reason(image: dict[str, Any], train_dir: Path) -> str | None:
 
 
 def result_with_staleness(result: dict[str, Any], train_dir: Path) -> dict[str, Any]:
+    result = with_outcomes(result)
     images = []
     stale_count = 0
     for item in result["images"]:
-        reason = None if item.get("error") else proposal_stale_reason(item, train_dir)
+        reason = proposal_stale_reason(item, train_dir)
         stale = reason is not None
         stale_count += int(stale)
         images.append({**item, "stale": stale, "stale_reason": reason})
@@ -295,7 +335,22 @@ class HeadDetector:
             self.session = ort.InferenceSession(
                 str(self.model_path), providers=["CPUExecutionProvider"]
             )
-        self.input_name = self.session.get_inputs()[0].name
+        inputs = list(self.session.get_inputs())
+        if len(inputs) != 1:
+            raise RuntimeError(
+                f"incompatible head detector: expected one input, got {len(inputs)}"
+            )
+        shape = getattr(inputs[0], "shape", None)
+        if isinstance(shape, (list, tuple)) and len(shape) == 4:
+            expected = (3, INPUT_SIZE, INPUT_SIZE)
+            actual = tuple(shape[-3:])
+            for got, want in zip(actual, expected):
+                if isinstance(got, int) and got != want:
+                    raise RuntimeError(
+                        "incompatible head detector input shape: "
+                        f"expected [N, 3, {INPUT_SIZE}, {INPUT_SIZE}], got {shape}"
+                    )
+        self.input_name = inputs[0].name
         actual = list(self.session.get_providers())
         self.provider = actual[0] if actual else "CPUExecutionProvider"
 
@@ -391,6 +446,8 @@ def make_image_proposal(
         region["id"] = f"{index}-{region['id']}"
     return {
         "name": name,
+        "status": "done",
+        "error": None,
         "size": [int(size[0]), int(size[1])],
         "source_mtime_ns": snap["mtime_ns"],
         "source_file_size": snap["file_size"],
@@ -483,16 +540,24 @@ def new_result(
     feather_ratio: float,
     provider: str,
     images: list[dict[str, Any]],
+    model_identity: str = "builtin",
+    model_path: Path | None = None,
+    builtin: bool = True,
 ) -> dict[str, Any]:
-    return {
+    resolved_path = model_path or head_detector_target()
+    model: dict[str, Any] = {
+        "identity": model_identity,
+        "path": str(resolved_path),
+        "input_size": [INPUT_SIZE, INPUT_SIZE],
+        "provider": provider,
+        "built_in": builtin,
+    }
+    if builtin:
+        model["revision"] = HEAD_DETECTOR_REVISION
+    return with_outcomes({
         "schema_version": RESULT_SCHEMA_VERSION,
         "job_id": job_id,
-        "model": {
-            "revision": HEAD_DETECTOR_REVISION,
-            "path": str(head_detector_target()),
-            "input_size": [INPUT_SIZE, INPUT_SIZE],
-            "provider": provider,
-        },
+        "model": model,
         "parameters": {
             "confidence": confidence,
             "iou_threshold": iou_threshold,
@@ -501,4 +566,4 @@ def new_result(
         },
         "created_at": time.time(),
         "images": images,
-    }
+    })

@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any, BinaryIO, Callable
+from typing import Any, BinaryIO, Callable, Literal
 
 from fastapi import APIRouter, File, Form, UploadFile
 from fastapi.concurrency import run_in_threadpool
@@ -439,13 +439,16 @@ def start_preprocess_train(
 
 
 @router.get("/api/projects/{pid}/versions/{vid}/preprocess/status")
-def preprocess_status_train(pid: int, vid: int) -> dict[str, Any]:
-    """最新 train-scope preprocess job + 日志尾 + train summary。"""
+def preprocess_status_train(
+    pid: int, vid: int,
+    stage: Literal["upscale", "crop", "head_mask"] | None = None,
+) -> dict[str, Any]:
+    """Latest matching train-scope job, its logs, and the train summary."""
     p, v = _resolve_pv_or_404(pid, vid)
     with db.connection_for() as conn:
         job = project_jobs.latest_for(
             conn, project_id=pid, version_id=vid,
-            kind=preprocess_svc.PREPROCESS_KIND,
+            kind=preprocess_svc.PREPROCESS_KIND, stage=stage,
         )
     log_tail = ""
     if job:
@@ -609,11 +612,22 @@ def start_head_mask_detection(
 ) -> dict[str, Any]:
     """Queue proposal-only cartoon head detection; source images stay untouched."""
     _resolve_pv_or_404(pid, vid)
-    status = model_downloader.head_detector_status()
     if body.mask_mode == "face_contour" and not face_segmenter.status()["valid"]:
         raise ConflictError("Face segmenter is not prepared", code="preprocess.head_mask_model_missing",
                             details={"model_id": "face_segmenter"})
-    if not status.get("valid"):
+    requested_model = body.model.strip() if body.model else None
+    try:
+        model_identity, _model_path, builtin = model_downloader.resolve_head_detector(
+            requested_model
+        )
+    except ValueError as exc:
+        raise ConflictError(
+            "Selected head detector is missing or is no longer registered",
+            code="preprocess.head_mask_model_missing",
+            details={"model": requested_model or "global", "reason": str(exc)},
+        ) from exc
+    status = model_downloader.head_detector_status()
+    if builtin and not status.get("valid"):
         raise ConflictError(
             "Anime head detector is not downloaded or failed integrity validation",
             code="preprocess.head_mask_model_missing",
@@ -634,6 +648,7 @@ def start_head_mask_detection(
             face_confidence=body.face_confidence,
             mask_threshold=body.mask_threshold,
             feather_px=body.feather_px,
+            model=model_identity,
         )
     _publish_job_state(job)
     return job
@@ -719,8 +734,6 @@ async def preview_head_mask_replacement(pid: int, vid: int, body: HeadMaskApplyR
     return await run_in_threadpool(head_apply.preview, body.job_id,
                                   preprocess_svc.version_train_dir(p, v["label"]),
                                   body.selections, body.replace_from.model_dump())
-
-
 @router.post("/api/projects/{pid}/versions/{vid}/preprocess/head-mask/undo")
 async def undo_head_mask_apply(
     pid: int, vid: int, body: HeadMaskUndoRequest,

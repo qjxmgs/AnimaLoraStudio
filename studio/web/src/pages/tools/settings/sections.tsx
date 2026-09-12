@@ -442,56 +442,84 @@ export function UpscalerSection({
 }
 
 export function HeadDetectorSection({
-  catalog,
+  catalog, setSource, reloadCatalog, t,
 }: {
   catalog: ModelsCatalog | null
+  setSource: (type: string, source: string) => Promise<void>
+  reloadCatalog: () => Promise<ModelsCatalog | null>
+  t: TFunction
 }) {
-  const { t } = useTranslation()
-  const { startDownload, deleteAsset, downloadBusy } = useSettingsData()
-  const model = catalog?.head_detector
-  const download = catalog?.downloads.head_detector
+  const { toast } = useToast()
+  const { runSave, startDownload, downloadBusy } = useSettingsData()
   const face = catalog?.face_segmenter
   const faceDownload = catalog?.downloads.face_segmenter
+
+  const pickDetector = async (identity: string) => {
+    try {
+      await runSave(() => api.selectHeadDetector(identity))
+      toast(t('settings.defaultHeadDetector', { name: identity }), 'success')
+      await reloadCatalog()
+    } catch (e) {
+      toast(String(e), 'error')
+    }
+  }
+
   return (
     <SettingsSection id="head-detector" title={t('settings.headDetectorTitle')}>
-      {!model ? (
+      <SourceSelect
+        opt={catalog?.download_source_options?.head_detector}
+        onChange={(source) => void setSource('head_detector', source)}
+      />
+      {!catalog ? (
         <p className="text-fg-tertiary text-xs">{t('common.loading')}</p>
       ) : (
-        <ModelGroupCard
-          title={model.name}
-          helpTooltip={<p>{t('settings.headDetectorHelp')}</p>}
-        >
-          <div className="flex items-center gap-2 text-xs">
-            <div className="flex flex-col flex-1 min-w-0">
-              <code className="font-mono text-fg-primary truncate">{model.repo}</code>
-              <span className="text-fg-tertiary truncate">
-                {t('settings.headDetectorRevision', { revision: model.revision.slice(0, 12) })}
-              </span>
-              <span className="text-fg-tertiary truncate" title={model.target_path}>
-                {model.target_path}
-              </span>
-            </div>
-            <ModelStatusBadge
-              exists={model.valid}
-              size={model.size}
-              status={download?.status}
-            />
-            <DownloadButton
-              exists={model.valid}
-              status={download?.status}
-              busy={downloadBusy.has('head_detector')}
-              onClick={() => void startDownload('head_detector')}
-              onDelete={() => void deleteAsset('head_detector', undefined, model.name)}
-            />
-          </div>
-          {model.exists && !model.valid && (
-            <p className="text-xs text-err m-0">{t('settings.headDetectorCorrupt')}</p>
+        <div className="flex flex-col gap-2">
+          <ModelSourceCard
+            domain="head_detector"
+            title={t('settings.availableHeadDetectors')}
+            helpTooltip={(
+              <>
+                <p><Trans i18nKey="settings.headDetectorsHelpPath" values={{ path: catalog.head_detector?.target_dir }} components={{ code: <code /> }} /></p>
+                <p>{t('settings.headDetectorsHelpDefault')}</p>
+                <p><Trans i18nKey="settings.customHeadDetectorHelpTypes" components={{ code: <code /> }} /></p>
+              </>
+            )}
+            catalog={catalog}
+            currentValue={catalog.head_detector?.current ?? ''}
+            onSelect={(value) => void pickDetector(value)}
+            addDownload={{
+              filenameField: true,
+              repoPlaceholder: 'owner/anime-head-detector',
+              filenamePlaceholder: 'anime-head-v2.onnx',
+            }}
+            addLocal={{}}
+            selectRequiresExists
+            t={t}
+          />
+
+          {Object.values(catalog.downloads).filter((download) => download.key.startsWith('head_detector') && (download.status === 'running' || download.status === 'failed')).length > 0 && (
+            <details className="text-xs">
+              <summary className="cursor-pointer text-fg-tertiary">{t('settings.headDetectorDownloadLogs')}</summary>
+              <div className="mt-1 flex flex-col gap-2">
+                {Object.values(catalog.downloads).filter((download) => download.key.startsWith('head_detector')).map((download) => (
+                  <div key={download.key} className="rounded-sm border border-subtle bg-sunken p-2">
+                    <div className="flex items-center gap-2 mb-1">
+                      <code className="font-mono text-fg-secondary">{download.key}</code>
+                      <ModelStatusBadge exists={download.status === 'done'} size={0} status={download.status} />
+                      {download.message && <span className="text-err overflow-hidden text-ellipsis whitespace-nowrap">{download.message}</span>}
+                    </div>
+                    <pre className="text-xs font-mono text-fg-tertiary max-h-32 overflow-auto whitespace-pre-wrap m-0">
+                      {download.log_tail.join('\n') || t('settings.emptyLog')}
+                    </pre>
+                  </div>
+                ))}
+              </div>
+            </details>
           )}
-          {download?.message && <p className="text-xs text-err m-0">{download.message}</p>}
-        </ModelGroupCard>
+        </div>
       )}
-      {face && <ModelGroupCard title={t('preprocessInpaint.headMask.faceMode')}
-        helpTooltip={<p>{t('preprocessInpaint.headMask.faceHelp')}</p>}>
+      {face && <ModelGroupCard title={t('preprocessInpaint.faceMask.faceMode')}
+        helpTooltip={<p>{t('preprocessInpaint.faceMask.faceHelp')}</p>}>
         <div className="flex items-center gap-2 text-xs">
           <div className="flex-1 min-w-0">
             <code className="block truncate">{face.repo}</code>
@@ -501,11 +529,11 @@ export function HeadDetectorSection({
           <button type="button" className="btn btn-secondary btn-sm"
             disabled={face.valid || downloadBusy.has('face_segmenter') || faceDownload?.status === 'running'}
             onClick={() => void startDownload('face_segmenter')}>
-            {t('preprocessInpaint.headMask.prepareFaceModel')}
+            {t('preprocessInpaint.faceMask.prepareFaceModel')}
           </button>
         </div>
         {faceDownload?.message && <p className="text-xs text-err">{faceDownload.message}</p>}
-        {faceDownload?.log_tail && <details className="text-xs"><summary>{t('preprocessInpaint.headMask.prepareLog')}</summary>
+        {faceDownload?.log_tail && <details className="text-xs"><summary>{t('preprocessInpaint.faceMask.prepareLog')}</summary>
           <pre className="max-h-48 overflow-auto whitespace-pre-wrap">{faceDownload.log_tail.join('\n')}</pre>
         </details>}
       </ModelGroupCard>}
