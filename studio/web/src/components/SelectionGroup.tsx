@@ -6,6 +6,8 @@ export type TabsAppearance = 'underline' | 'segmented'
 export interface SelectionItem<T extends string> {
   value: T
   label: string
+  title?: string
+  shortcut?: string
   icon?: ReactNode
   controls?: string
   disabled?: boolean
@@ -129,7 +131,8 @@ function SelectionGroup<T extends string>({
             aria-controls={item.controls}
             disabled={item.disabled}
             tabIndex={index === tabbableIndex ? 0 : -1}
-            title={item.label}
+            title={item.title ?? item.label}
+            aria-keyshortcuts={item.shortcut}
             data-state={active ? 'active' : 'inactive'}
             onClick={() => {
               if (!item.disabled && item.value !== value) onChange(item.value)

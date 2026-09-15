@@ -3,6 +3,7 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useMemo,
   useRef,
   useState,
 } from 'react'
@@ -29,6 +30,26 @@ export interface InpaintStroke {
 }
 
 export type InpaintMode = 'paint' | 'mask'
+export type InpaintTool = 'brush' | 'eraser' | 'lasso'
+
+export interface LassoPoint {
+  id: string
+  x: number
+  y: number
+  /** Smooth points curve both adjacent segments; corner points stay straight. */
+  smooth: boolean
+}
+
+export interface LassoShape {
+  id: string
+  points: LassoPoint[]
+  /** Captured when a paint-mode lasso is closed. Mask-mode lassos ignore it. */
+  color: string
+}
+
+export type PaintEdit =
+  | { type: 'stroke'; stroke: InpaintStroke }
+  | { type: 'lasso'; shape: LassoShape }
 
 export interface HeadMaskOverlayRegion {
   bitmap?: { url: string; origin: [number, number]; size: [number, number] }
@@ -50,6 +71,7 @@ export interface AutoMaskRegion {
 export type MaskEdit =
   | { type: 'stroke'; stroke: InpaintStroke }
   | { type: 'auto'; regions: AutoMaskRegion[] }
+  | { type: 'lasso'; shape: LassoShape }
 export interface InpaintCanvasHandle {
   /** 当前图 + 全部涂抹笔画合成导出 PNG。图片未加载完成时返回 null。 */
   exportBlob: () => Promise<Blob | null>
@@ -72,6 +94,22 @@ const BRUSH_ADJUST_AXIS_DOMINANCE = 1.25
 const BRUSH_HUD_GAP = 8
 const BRUSH_HUD_WIDTH = 132
 const BRUSH_HUD_HEIGHT = 44
+const LASSO_CLOSE_RADIUS = 10
+const LASSO_POINT_RADIUS = 5
+
+let lassoIdSequence = 0
+function createLassoId(prefix: 'shape' | 'point'): string {
+  lassoIdSequence += 1
+  return `${prefix}-${Date.now().toString(36)}-${lassoIdSequence.toString(36)}`
+}
+
+function hasVisibleModal(): boolean {
+  return Array.from(document.querySelectorAll<HTMLElement>('[aria-modal="true"]')).some((modal) => {
+    const style = window.getComputedStyle(modal)
+    return !modal.hidden && modal.getAttribute('aria-hidden') !== 'true'
+      && style.display !== 'none' && style.visibility !== 'hidden'
+  })
+}
 
 /** Wait for a deliberate dominant direction before locking the whole gesture
  * to one parameter. Near-diagonal movement remains pending. */
@@ -139,6 +177,73 @@ function strokePath(ctx: CanvasRenderingContext2D, s: InpaintStroke, color?: str
   ctx.stroke()
 }
 
+/** Trace a closed polygon whose smooth anchors use Catmull-Rom-derived cubic
+ * handles. A smooth anchor affects the segment entering and leaving it. */
+function lassoSegmentControls(points: LassoPoint[], i: number) {
+  const j = (i + 1) % points.length
+  const a = points[i]
+  const b = points[j]
+  const prevA = points[(i - 1 + points.length) % points.length]
+  const nextB = points[(j + 1) % points.length]
+  return {
+    a,
+    b,
+    curved: a.smooth || b.smooth,
+    cp1: a.smooth
+      ? { x: a.x + (b.x - prevA.x) / 6, y: a.y + (b.y - prevA.y) / 6 }
+      : a,
+    cp2: b.smooth
+      ? { x: b.x - (nextB.x - a.x) / 6, y: b.y - (nextB.y - a.y) / 6 }
+      : b,
+  }
+}
+
+export function traceLassoPath(
+  ctx: Pick<CanvasRenderingContext2D,
+    'beginPath' | 'moveTo' | 'lineTo' | 'bezierCurveTo' | 'closePath'>,
+  shape: LassoShape,
+): boolean {
+  const points = shape.points
+  if (points.length < 3) return false
+  ctx.beginPath()
+  ctx.moveTo(points[0].x, points[0].y)
+  for (let i = 0; i < points.length; i++) {
+    const { b, curved, cp1, cp2 } = lassoSegmentControls(points, i)
+    if (!curved) {
+      ctx.lineTo(b.x, b.y)
+      continue
+    }
+    ctx.bezierCurveTo(cp1.x, cp1.y, cp2.x, cp2.y, b.x, b.y)
+  }
+  ctx.closePath()
+  return true
+}
+
+function lassoPathData(shape: LassoShape): string {
+  const points = shape.points
+  if (points.length < 3) return ''
+  const commands = [`M ${points[0].x} ${points[0].y}`]
+  for (let i = 0; i < points.length; i++) {
+    const { b, curved, cp1, cp2 } = lassoSegmentControls(points, i)
+    commands.push(curved
+      ? `C ${cp1.x} ${cp1.y} ${cp2.x} ${cp2.y} ${b.x} ${b.y}`
+      : `L ${b.x} ${b.y}`)
+  }
+  commands.push('Z')
+  return commands.join(' ')
+}
+
+function drawLassoShape(
+  ctx: CanvasRenderingContext2D,
+  shape: LassoShape,
+  color: string,
+): void {
+  ctx.save()
+  ctx.fillStyle = color
+  if (traceLassoPath(ctx, shape)) ctx.fill('evenodd')
+  ctx.restore()
+}
+
 type ScratchRef = { current: HTMLCanvasElement | null }
 
 /** 画一笔（含软边：经复用 scratch canvas + blur filter 合成）。 */
@@ -189,12 +294,15 @@ function drawStrokesToLayer(
   }
 }
 
-function drawPaintStrokes(
+function drawPaintEdits(
   ctx: CanvasRenderingContext2D,
-  strokes: InpaintStroke[],
+  edits: PaintEdit[],
   scratchRef: ScratchRef,
 ): void {
-  drawStrokesToLayer(ctx, strokes, scratchRef, (s) => s.color)
+  for (const edit of edits) {
+    if (edit.type === 'lasso') drawLassoShape(ctx, edit.shape, edit.shape.color)
+    else drawStrokesToLayer(ctx, [edit.stroke], scratchRef, (s) => s.color)
+  }
 }
 
 function drawMaskStrokes(
@@ -259,6 +367,7 @@ function drawMaskEdits(
 ): void {
   for (const edit of edits) {
     if (edit.type === 'auto') drawAutoRegions(ctx, edit.regions)
+    else if (edit.type === 'lasso') drawLassoShape(ctx, edit.shape, TRAINING_MASK_COLOR)
     else drawMaskStrokes(ctx, [edit.stroke], scratchRef)
   }
 }
@@ -339,7 +448,7 @@ export async function renderInpaintedBlob(
   imageUrl: string,
   w: number,
   h: number,
-  strokes: InpaintStroke[],
+  edits: PaintEdit[],
 ): Promise<Blob> {
   const img = await loadImage(imageUrl)
   const canvas = document.createElement('canvas')
@@ -353,7 +462,7 @@ export async function renderInpaintedBlob(
   layer.height = h
   const lctx = layer.getContext('2d')
   if (!lctx) throw new Error('canvas 2d context unavailable')
-  drawPaintStrokes(lctx, strokes, { current: null })
+  drawPaintEdits(lctx, edits, { current: null })
   ctx.drawImage(layer, 0, 0)
   return await new Promise<Blob>((resolve, reject) => {
     canvas.toBlob(
@@ -385,17 +494,18 @@ const InpaintCanvas = forwardRef<
     imageW: number
     imageH: number
     mode: InpaintMode
-    strokes: InpaintStroke[]
+    paintEdits: PaintEdit[]
     maskEdits: MaskEdit[]
     /** 服务器已有 mask 的 URL；null = 无底图。 */
     maskBaseUrl: string | null
     brush: { color: string; size: number; hardness: number }
     /** Alt + right-drag updates the shared, controlled brush preferences. */
     onBrushAdjust: (next: BrushAdjustment) => void
-    /** 当前工具是否橡皮擦（涂抹 / 遮罩两模式共用）。 */
-    erase: boolean
+    tool: InpaintTool
     onStrokeEnd: (s: InpaintStroke) => void
     onMaskStrokeEnd: (s: InpaintStroke) => void
+    onLassoCreate: (mode: InpaintMode, shape: LassoShape) => void
+    onLassoUpdate: (mode: InpaintMode, shape: LassoShape) => void
     onPickColor: (hex: string) => void
     /** Proposal-only overlay. It is never included in image or mask exports. */
     proposalRegions?: HeadMaskOverlayRegion[]
@@ -403,8 +513,9 @@ const InpaintCanvas = forwardRef<
   }
 >(function InpaintCanvas(
   {
-    imageUrl, imageW, imageH, mode, strokes, maskEdits, maskBaseUrl,
-    brush, onBrushAdjust, erase, onStrokeEnd, onMaskStrokeEnd, onPickColor,
+    imageUrl, imageW, imageH, mode, paintEdits, maskEdits, maskBaseUrl,
+    brush, onBrushAdjust, tool, onStrokeEnd, onMaskStrokeEnd,
+    onLassoCreate, onLassoUpdate, onPickColor,
     proposalRegions = [],
     onProposalPreviewState,
   },
@@ -434,17 +545,27 @@ const InpaintCanvas = forwardRef<
   const [brushHud, setBrushHud] = useState<(
     BrushAdjustment & { left: number; top: number; axis: BrushAdjustmentAxis }
   ) | null>(null)
+  const [lassoDraft, setLassoDraft] = useState<LassoShape | null>(null)
+  const [selectedLassoPoint, setSelectedLassoPoint] = useState<{
+    mode: InpaintMode
+    shapeId: string
+    pointId: string
+  } | null>(null)
+  const [lassoPreview, setLassoPreview] = useState<{
+    mode: InpaintMode
+    shape: LassoShape
+  } | null>(null)
 
-  const strokesRef = useRef(strokes)
-  strokesRef.current = strokes
+  const paintEditsRef = useRef(paintEdits)
+  paintEditsRef.current = paintEdits
   const maskEditsRef = useRef(maskEdits)
   maskEditsRef.current = maskEdits
   const brushRef = useRef(brush)
   brushRef.current = brush
   const modeRef = useRef(mode)
   modeRef.current = mode
-  const eraseRef = useRef(erase)
-  eraseRef.current = erase
+  const toolRef = useRef(tool)
+  toolRef.current = tool
   const proposalRegionsRef = useRef(proposalRegions)
   const proposalBitmaps = useRef(new Map<string, HTMLCanvasElement>())
   proposalRegionsRef.current = proposalRegions
@@ -457,6 +578,30 @@ const InpaintCanvas = forwardRef<
     lastPublished: BrushAdjustment
   } | null>(null)
   const suppressContextMenuRef = useRef(false)
+  const lassoDragRef = useRef<{
+    pointerId: number
+    mode: InpaintMode
+    original: LassoShape
+    current: LassoShape
+    pointId: string
+    changed: boolean
+  } | null>(null)
+
+  const displayedPaintEdits = useMemo(() => paintEdits.map((edit) => (
+    edit.type === 'lasso' && lassoPreview?.mode === 'paint' && edit.shape.id === lassoPreview.shape.id
+      ? { ...edit, shape: lassoPreview.shape }
+      : edit
+  )), [paintEdits, lassoPreview])
+  const displayedMaskEdits = useMemo(() => maskEdits.map((edit) => (
+    edit.type === 'lasso' && lassoPreview?.mode === 'mask' && edit.shape.id === lassoPreview.shape.id
+      ? { ...edit, shape: lassoPreview.shape }
+      : edit
+  )), [maskEdits, lassoPreview])
+  const editableLassos = useMemo(() => (
+    mode === 'paint' ? displayedPaintEdits : displayedMaskEdits
+  ).flatMap((edit) => edit.type === 'lasso' ? [edit.shape] : []), [
+    displayedMaskEdits, displayedPaintEdits, mode,
+  ])
 
   const ensureLayer = useCallback((
     holder: React.MutableRefObject<HTMLCanvasElement | null>,
@@ -566,9 +711,9 @@ const InpaintCanvas = forwardRef<
   // mask 层重建（底图 / 笔画变化）→ 主画布重绘
   useEffect(() => {
     const layer = ensureLayer(maskLayerRef)
-    rebuildMaskLayer(layer, maskBaseRef.current, maskEdits, scratchRef)
+    rebuildMaskLayer(layer, maskBaseRef.current, displayedMaskEdits, scratchRef)
     redraw()
-  }, [maskEdits, maskBaseTick, ensureLayer, redraw])
+  }, [displayedMaskEdits, maskBaseTick, ensureLayer, redraw])
 
   // 涂抹层重建（undo / redo / 落笔提交 / 清除 —— 含橡皮 composite）
   useEffect(() => {
@@ -576,10 +721,10 @@ const InpaintCanvas = forwardRef<
     const ctx = layer.getContext('2d')
     if (ctx) {
       ctx.clearRect(0, 0, layer.width, layer.height)
-      drawPaintStrokes(ctx, strokes, scratchRef)
+      drawPaintEdits(ctx, displayedPaintEdits, scratchRef)
     }
     redraw()
-  }, [strokes, ensureLayer, redraw])
+  }, [displayedPaintEdits, ensureLayer, redraw])
 
   useEffect(() => {
     redraw()
@@ -646,7 +791,7 @@ const InpaintCanvas = forwardRef<
       layer.height = out.height
       const lctx = layer.getContext('2d')
       if (!lctx) return null
-      drawPaintStrokes(lctx, strokesRef.current, scratchRef)
+      drawPaintEdits(lctx, paintEditsRef.current, scratchRef)
       ctx.drawImage(layer, 0, 0)
       return await new Promise<Blob | null>((resolve) => {
         out.toBlob((b) => resolve(b), 'image/png')
@@ -676,6 +821,7 @@ const InpaintCanvas = forwardRef<
     cur.style.top = `${clientY - rect.top - d / 2}px`
     cur.style.width = `${d}px`
     cur.style.height = `${d}px`
+    cur.style.display = 'block'
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -754,15 +900,71 @@ const InpaintCanvas = forwardRef<
 
   useEffect(() => () => {
     brushAdjustRef.current = null
+    lassoDragRef.current = null
     if (contextMenuResetRef.current != null) {
       window.clearTimeout(contextMenuResetRef.current)
     }
   }, [])
 
+  // An open path is deliberately local to the active image/mode/tool. Closed
+  // shapes live in the page history and therefore survive ordinary redraws.
+  useEffect(() => {
+    setLassoDraft(null)
+    setSelectedLassoPoint(null)
+    setLassoPreview(null)
+    lassoDragRef.current = null
+  }, [mode, tool])
+
+  useEffect(() => {
+    if (tool !== 'lasso') return
+    setBrushHud(null)
+  }, [tool])
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const wrap = wrapRef.current
+      if (
+        tool !== 'lasso' ||
+        !wrap ||
+        !wrap.contains(document.activeElement) ||
+        event.defaultPrevented ||
+        event.isComposing ||
+        event.ctrlKey || event.altKey || event.metaKey || event.shiftKey ||
+        hasVisibleModal()
+      ) return
+      if (event.code === 'Escape') {
+        if (!lassoDraft && !selectedLassoPoint) return
+        event.preventDefault()
+        setLassoDraft(null)
+        setSelectedLassoPoint(null)
+        return
+      }
+      if (event.code !== 'KeyC' || event.repeat || !selectedLassoPoint) return
+      const shape = editableLassos.find((item) => item.id === selectedLassoPoint.shapeId)
+      if (!shape) return
+      const pointIndex = shape.points.findIndex((point) => point.id === selectedLassoPoint.pointId)
+      if (pointIndex < 0) return
+      const points = shape.points.map((point, index) => index === pointIndex
+        ? { ...point, smooth: !point.smooth }
+        : point)
+      event.preventDefault()
+      onLassoUpdate(selectedLassoPoint.mode, { ...shape, points })
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [
+    editableLassos, lassoDraft, onLassoUpdate, selectedLassoPoint,
+    tool, wrapRef,
+  ])
+
   const onPointerDown = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
       if (!loaded) return
-      if (e.pointerType === 'mouse' && e.button === 2 && e.altKey) {
+      e.currentTarget.focus({ preventScroll: true })
+      if (
+        toolRef.current !== 'lasso' &&
+        e.pointerType === 'mouse' && e.button === 2 && e.altKey
+      ) {
         e.preventDefault()
         if (contextMenuResetRef.current != null) {
           window.clearTimeout(contextMenuResetRef.current)
@@ -796,13 +998,59 @@ const InpaintCanvas = forwardRef<
       }
       const pt = toContentPoint(e.clientX, e.clientY)
       if (!pt) return
+      if (pt.x < 0 || pt.y < 0 || pt.x > imageW || pt.y > imageH) return
+      if (toolRef.current === 'lasso') {
+        const scale = Math.max(0.0001, zp.viewRef.current.scale)
+        const hitRadius = LASSO_CLOSE_RADIUS / scale
+        const hit = [...editableLassos].reverse().flatMap((shape) => (
+          [...shape.points].reverse().map((point) => ({ shape, point }))
+        )).find(({ point }) => Math.hypot(point.x - pt.x, point.y - pt.y) <= hitRadius)
+        if (hit) {
+          setSelectedLassoPoint({ mode: modeRef.current, shapeId: hit.shape.id, pointId: hit.point.id })
+          lassoDragRef.current = {
+            pointerId: e.pointerId,
+            mode: modeRef.current,
+            original: hit.shape,
+            current: hit.shape,
+            pointId: hit.point.id,
+            changed: false,
+          }
+          return
+        }
+        const first = lassoDraft?.points[0]
+        if (
+          first && lassoDraft.points.length >= 3 &&
+          Math.hypot(first.x - pt.x, first.y - pt.y) <= hitRadius
+        ) {
+          const shape = { ...lassoDraft, color: brushRef.current.color }
+          setLassoDraft(null)
+          setSelectedLassoPoint({ mode: modeRef.current, shapeId: shape.id, pointId: first.id })
+          onLassoCreate(modeRef.current, shape)
+          return
+        }
+        const point: LassoPoint = {
+          id: createLassoId('point'),
+          x: pt.x,
+          y: pt.y,
+          smooth: false,
+        }
+        setSelectedLassoPoint(null)
+        setLassoDraft((current) => current
+          ? { ...current, points: [...current.points, point] }
+          : {
+              id: createLassoId('shape'),
+              color: brushRef.current.color,
+              points: [point],
+            })
+        return
+      }
       const b = brushRef.current
       const isMask = modeRef.current === 'mask'
       const stroke: InpaintStroke = {
         color: isMask ? TRAINING_MASK_COLOR : b.color,
         size: b.size,
         hardness: b.hardness,
-        ...(eraseRef.current ? { erase: true } : {}),
+        ...(toolRef.current === 'eraser' ? { erase: true } : {}),
         points: [pt],
       }
       drawingRef.current = { stroke, target: isMask ? 'mask' : 'paint' }
@@ -823,18 +1071,35 @@ const InpaintCanvas = forwardRef<
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [loaded, pickColor, toContentPoint, updateBrushHud, updateCursor, zp.panPointerDown],
+    [
+      editableLassos, imageH, imageW, lassoDraft, loaded, onLassoCreate,
+      pickColor, toContentPoint, updateBrushHud, updateCursor, zp.panPointerDown,
+    ],
   )
 
   const onPointerMove = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
-      updateCursor(e.clientX, e.clientY)
+      if (toolRef.current !== 'lasso') updateCursor(e.clientX, e.clientY)
       const pt = toContentPoint(e.clientX, e.clientY)
       if (pt) {
         setCursorPos({
           x: Math.max(0, Math.min(imageW, Math.round(pt.x))),
           y: Math.max(0, Math.min(imageH, Math.round(pt.y))),
         })
+      }
+      const lassoDrag = lassoDragRef.current
+      if (lassoDrag && lassoDrag.pointerId === e.pointerId && pt) {
+        const x = Math.max(0, Math.min(imageW, pt.x))
+        const y = Math.max(0, Math.min(imageH, pt.y))
+        const points = lassoDrag.original.points.map((point) => point.id === lassoDrag.pointId
+          ? { ...point, x, y }
+          : point)
+        const next = { ...lassoDrag.original, points }
+        const originalPoint = lassoDrag.original.points.find((point) => point.id === lassoDrag.pointId)
+        lassoDrag.changed = Boolean(originalPoint && (originalPoint.x !== x || originalPoint.y !== y))
+        lassoDrag.current = next
+        setLassoPreview({ mode: lassoDrag.mode, shape: next })
+        return
       }
       const adjusting = brushAdjustRef.current
       if (adjusting && adjusting.pointerId === e.pointerId) {
@@ -909,6 +1174,15 @@ const InpaintCanvas = forwardRef<
     e: React.PointerEvent<HTMLDivElement>,
     cancelled = false,
   ) => {
+    const lassoDrag = lassoDragRef.current
+    if (lassoDrag && lassoDrag.pointerId === e.pointerId) {
+      lassoDragRef.current = null
+      setLassoPreview(null)
+      if (!cancelled && lassoDrag.changed) {
+        onLassoUpdate(lassoDrag.mode, lassoDrag.current)
+      }
+      return
+    }
     const adjusting = brushAdjustRef.current
     if (adjusting && adjusting.pointerId === e.pointerId) {
       brushAdjustRef.current = null
@@ -918,9 +1192,10 @@ const InpaintCanvas = forwardRef<
       return
     }
     endStroke()
-  }, [endStroke, scheduleContextMenuReset])
+  }, [endStroke, onLassoUpdate, scheduleContextMenuReset])
 
   const onContextMenu = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    if (toolRef.current === 'lasso') return
     if (!suppressContextMenuRef.current && !(e.altKey && e.button === 2)) return
     e.preventDefault()
     suppressContextMenuRef.current = false
@@ -930,12 +1205,20 @@ const InpaintCanvas = forwardRef<
     }
   }, [])
 
+  const lassoScale = Math.max(0.0001, zp.viewRef.current.scale)
+  const draftPoints = lassoDraft
+    ? [...lassoDraft.points, ...(cursorPos ? [{ ...cursorPos, id: 'cursor', smooth: false }] : [])]
+    : []
+  const erase = tool === 'eraser'
+
   return (
     <div className="flex flex-col h-full min-h-0 gap-1.5">
       <div
         ref={wrapRef}
         className="relative flex-1 min-h-0 overflow-hidden rounded border border-subtle bg-sunken"
-        style={{ touchAction: 'none', cursor: 'none' }}
+        style={{ touchAction: 'none', cursor: tool === 'lasso' ? 'crosshair' : 'none' }}
+        tabIndex={0}
+        aria-label={t('preprocessInpaint.canvasLabel')}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={(e) => endInteraction(e)}
@@ -945,33 +1228,98 @@ const InpaintCanvas = forwardRef<
         onPointerLeave={() => {
           const cur = cursorRef.current
           if (cur) {
-            cur.style.width = '0px'
-            cur.style.height = '0px'
+            cur.style.display = 'none'
           }
           setCursorPos(null)
         }}
       >
-        <canvas
-          ref={(el) => {
-            canvasRef.current = el
-            contentRef.current = el
-          }}
-          width={imageW}
-          height={imageH}
-          style={{ position: 'absolute', left: 0, top: 0, transformOrigin: '0 0' }}
-        />
-        {/* 笔刷圆圈光标（遮罩画笔描红 / 橡皮虚线白） */}
         <div
+          ref={(el) => { contentRef.current = el }}
+          style={{
+            position: 'absolute', left: 0, top: 0,
+            width: imageW, height: imageH, transformOrigin: '0 0',
+          }}
+        >
+          <canvas
+            ref={canvasRef}
+            width={imageW}
+            height={imageH}
+            style={{ position: 'absolute', inset: 0 }}
+          />
+          {tool === 'lasso' && (
+            <svg
+              data-testid="lasso-overlay"
+              width={imageW}
+              height={imageH}
+              viewBox={`0 0 ${imageW} ${imageH}`}
+              className="absolute inset-0 pointer-events-none text-accent"
+              aria-hidden="true"
+            >
+              {editableLassos.map((shape) => (
+                <g key={shape.id} data-lasso-id={shape.id}>
+                  <path
+                    d={lassoPathData(shape)}
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth={1.5 / lassoScale}
+                  />
+                  {shape.points.map((point) => {
+                    const selected = selectedLassoPoint?.shapeId === shape.id
+                      && selectedLassoPoint.pointId === point.id
+                    return (
+                      <circle
+                        key={point.id}
+                        data-lasso-point-id={point.id}
+                        data-smooth={String(point.smooth)}
+                        cx={point.x}
+                        cy={point.y}
+                        r={(selected ? 7 : LASSO_POINT_RADIUS) / lassoScale}
+                        fill={selected ? '#ffffff' : point.smooth ? '#38bdf8' : '#111827'}
+                        stroke="#38bdf8"
+                        strokeWidth={(selected ? 2 : 1.5) / lassoScale}
+                      />
+                    )
+                  })}
+                </g>
+              ))}
+              {lassoDraft && (
+                <g data-testid="lasso-draft">
+                  <polyline
+                    points={draftPoints.map((point) => `${point.x},${point.y}`).join(' ')}
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth={1.5 / lassoScale}
+                    strokeDasharray={`${5 / lassoScale} ${4 / lassoScale}`}
+                  />
+                  {lassoDraft.points.map((point, index) => (
+                    <circle
+                      key={point.id}
+                      cx={point.x}
+                      cy={point.y}
+                      r={(index === 0 && lassoDraft.points.length >= 3 ? 7 : LASSO_POINT_RADIUS) / lassoScale}
+                      fill={index === 0 ? '#ffffff' : '#111827'}
+                      stroke="#38bdf8"
+                      strokeWidth={1.5 / lassoScale}
+                    />
+                  ))}
+                </g>
+              )}
+            </svg>
+          )}
+        </div>
+        {/* 套索不挂载圆形光标，避免 0×0 元素的边框残留成一个点。 */}
+        {tool !== 'lasso' && <div
           ref={cursorRef}
           data-testid="brush-cursor"
           className="absolute pointer-events-none rounded-full"
           style={{
+            display: 'none',
             border: mode === 'mask' && !erase
               ? '1.5px solid rgba(255,45,45,0.95)'
               : `1.5px ${erase ? 'dashed' : 'solid'} rgba(255,255,255,0.9)`,
             outline: '1px solid rgba(0,0,0,0.6)',
           }}
-        />
+        />}
         {brushHud && createPortal(
           <div
             data-testid="brush-adjust-hud"
@@ -1017,7 +1365,11 @@ const InpaintCanvas = forwardRef<
           <span>{cursorPos.x}, {cursorPos.y}</span>
         )}
         <span>{imageW}×{imageH}</span>
-        <span className="text-fg-disabled">{t('preprocessInpaint.canvasHint')}</span>
+        <span className="text-fg-disabled">
+          {t(tool === 'lasso'
+            ? 'preprocessInpaint.lassoCanvasHint'
+            : 'preprocessInpaint.canvasHint')}
+        </span>
       </div>
     </div>
   )

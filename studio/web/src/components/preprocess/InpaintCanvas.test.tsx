@@ -6,6 +6,10 @@ import InpaintCanvas, {
   resolveBrushAdjustmentAxis,
   type BrushAdjustment,
   type InpaintMode,
+  type InpaintTool,
+  type LassoShape,
+  type MaskEdit,
+  type PaintEdit,
 } from './InpaintCanvas'
 
 const nativeImage = globalThis.Image
@@ -28,20 +32,39 @@ function pointerEvent(
 
 function Harness({
   mode = 'paint',
-  erase = false,
+  tool = 'brush',
   onBrushAdjust,
   onStrokeEnd,
   onMaskStrokeEnd,
+  onLassoCreate,
+  onLassoUpdate,
   onPickColor = vi.fn(),
 }: {
   mode?: InpaintMode
-  erase?: boolean
+  tool?: InpaintTool
   onBrushAdjust: (next: BrushAdjustment) => void
   onStrokeEnd: ReturnType<typeof vi.fn>
   onMaskStrokeEnd: ReturnType<typeof vi.fn>
+  onLassoCreate: ReturnType<typeof vi.fn>
+  onLassoUpdate: ReturnType<typeof vi.fn>
   onPickColor?: ReturnType<typeof vi.fn>
 }) {
   const [brush, setBrush] = useState({ color: '#ffffff', size: 20, hardness: 0.5 })
+  const [paintEdits, setPaintEdits] = useState<PaintEdit[]>([])
+  const [maskEdits, setMaskEdits] = useState<MaskEdit[]>([])
+  const createLasso = (target: InpaintMode, shape: LassoShape) => {
+    onLassoCreate(target, shape)
+    if (target === 'paint') setPaintEdits((prev) => [...prev, { type: 'lasso', shape }])
+    else setMaskEdits((prev) => [...prev, { type: 'lasso', shape }])
+  }
+  const updateLasso = (target: InpaintMode, shape: LassoShape) => {
+    onLassoUpdate(target, shape)
+    const replace = <T extends PaintEdit | MaskEdit>(edits: T[]): T[] => edits.map((edit) => (
+      edit.type === 'lasso' && edit.shape.id === shape.id ? { ...edit, shape } : edit
+    )) as T[]
+    if (target === 'paint') setPaintEdits((prev) => replace(prev))
+    else setMaskEdits((prev) => replace(prev))
+  }
   return (
     <div style={{ width: 500, height: 400 }}>
       <InpaintCanvas
@@ -49,17 +72,19 @@ function Harness({
         imageW={400}
         imageH={400}
         mode={mode}
-        strokes={[]}
-        maskEdits={[]}
+        paintEdits={paintEdits}
+        maskEdits={maskEdits}
         maskBaseUrl={null}
         brush={brush}
         onBrushAdjust={(next) => {
           onBrushAdjust(next)
           setBrush((prev) => ({ ...prev, ...next }))
         }}
-        erase={erase}
+        tool={tool}
         onStrokeEnd={onStrokeEnd}
         onMaskStrokeEnd={onMaskStrokeEnd}
+        onLassoCreate={createLasso}
+        onLassoUpdate={updateLasso}
         onPickColor={onPickColor}
       />
     </div>
@@ -108,6 +133,8 @@ describe('InpaintCanvas brush adjustment gesture', () => {
     getImageData: vi.fn(() => ({ data: new Uint8ClampedArray([10, 20, 30, 255]) })),
     putImageData: vi.fn(),
     beginPath: vi.fn(),
+    closePath: vi.fn(),
+    bezierCurveTo: vi.fn(),
     arc: vi.fn(),
     fill: vi.fn(),
     moveTo: vi.fn(),
@@ -157,18 +184,19 @@ describe('InpaintCanvas brush adjustment gesture', () => {
     })
   })
 
-  async function renderLoaded(options: { mode?: InpaintMode; erase?: boolean } = {}) {
+  async function renderLoaded(options: { mode?: InpaintMode; tool?: InpaintTool } = {}) {
     const callbacks = {
       onBrushAdjust: vi.fn(),
       onStrokeEnd: vi.fn(),
       onMaskStrokeEnd: vi.fn(),
+      onLassoCreate: vi.fn(),
+      onLassoUpdate: vi.fn(),
     }
     const view = render(<Harness {...options} {...callbacks} />)
     await waitFor(() => expect(screen.queryByText('加载原图...')).not.toBeInTheDocument())
-    const canvas = view.container.querySelector('canvas') as HTMLCanvasElement
-    const viewport = canvas.parentElement as HTMLDivElement
+    const viewport = screen.getByLabelText('涂抹编辑画布') as HTMLDivElement
     fireEvent.click(screen.getByRole('button', { name: '100%' }))
-    return { ...callbacks, viewport }
+    return { ...callbacks, viewport, rerender: view.rerender }
   }
 
   it('locks horizontal movement to diameter despite vertical jitter', async () => {
@@ -261,7 +289,7 @@ describe('InpaintCanvas brush adjustment gesture', () => {
 
   it('works for the training-mask eraser and suppresses only its context menu', async () => {
     const { viewport, onBrushAdjust, onStrokeEnd, onMaskStrokeEnd } = await renderLoaded({
-      mode: 'mask', erase: true,
+      mode: 'mask', tool: 'eraser',
     })
 
     const ordinaryMenu = new MouseEvent('contextmenu', {
@@ -315,5 +343,128 @@ describe('InpaintCanvas brush adjustment gesture', () => {
       fireEvent(viewport, pointerEvent('pointercancel', { button: 2 }))
     })
     expect(screen.queryByTestId('brush-adjust-hud')).not.toBeInTheDocument()
+  })
+
+  it('builds and closes a lasso only after three points reach the start', async () => {
+    const { viewport, onLassoCreate } = await renderLoaded({ tool: 'lasso' })
+    const tap = (x: number, y: number) => {
+      fireEvent(viewport, pointerEvent('pointerdown', { button: 0, clientX: x, clientY: y }))
+      fireEvent(viewport, pointerEvent('pointerup', { button: 0, clientX: x, clientY: y }))
+    }
+
+    tap(100, 100)
+    tap(200, 100)
+    tap(200, 200)
+    expect(onLassoCreate).not.toHaveBeenCalled()
+    expect(screen.getByTestId('lasso-draft').querySelectorAll('circle')).toHaveLength(3)
+
+    tap(108, 100)
+    expect(onLassoCreate).toHaveBeenCalledTimes(1)
+    expect(onLassoCreate).toHaveBeenCalledWith('paint', expect.objectContaining({
+      color: '#ffffff',
+      points: expect.arrayContaining([
+        expect.objectContaining({ x: 50, y: 100, smooth: false }),
+      ]),
+    }))
+    expect(screen.queryByTestId('lasso-draft')).not.toBeInTheDocument()
+    expect(screen.getByTestId('lasso-overlay').querySelectorAll('[data-lasso-point-id]')).toHaveLength(3)
+    expect(context.fill).toHaveBeenCalledWith('evenodd')
+  })
+
+  it('commits a dragged lasso point once and cancels a later drag safely', async () => {
+    const { viewport, onLassoUpdate } = await renderLoaded({ tool: 'lasso' })
+    const tap = (x: number, y: number) => {
+      fireEvent(viewport, pointerEvent('pointerdown', { button: 0, clientX: x, clientY: y }))
+      fireEvent(viewport, pointerEvent('pointerup', { button: 0, clientX: x, clientY: y }))
+    }
+    tap(100, 100); tap(200, 100); tap(200, 200); tap(100, 100)
+
+    fireEvent(viewport, pointerEvent('pointerdown', { button: 0, clientX: 100, clientY: 100 }))
+    fireEvent(viewport, pointerEvent('pointermove', { buttons: 1, clientX: 130, clientY: 120 }))
+    expect(onLassoUpdate).not.toHaveBeenCalled()
+    fireEvent(viewport, pointerEvent('pointerup', { button: 0, clientX: 130, clientY: 120 }))
+    expect(onLassoUpdate).toHaveBeenCalledTimes(1)
+    expect(onLassoUpdate).toHaveBeenLastCalledWith('paint', expect.objectContaining({
+      points: expect.arrayContaining([expect.objectContaining({ x: 80, y: 120 })]),
+    }))
+
+    fireEvent(viewport, pointerEvent('pointerdown', { button: 0, clientX: 130, clientY: 120 }))
+    fireEvent(viewport, pointerEvent('pointermove', { buttons: 1, clientX: 160, clientY: 140 }))
+    fireEvent(viewport, pointerEvent('pointercancel', { button: 0, clientX: 160, clientY: 140 }))
+    expect(onLassoUpdate).toHaveBeenCalledTimes(1)
+  })
+
+  it('toggles the selected anchor curve with C and ignores modified shortcuts', async () => {
+    const { viewport, onLassoUpdate } = await renderLoaded({ mode: 'mask', tool: 'lasso' })
+    const tap = (x: number, y: number) => {
+      fireEvent(viewport, pointerEvent('pointerdown', { button: 0, clientX: x, clientY: y }))
+      fireEvent(viewport, pointerEvent('pointerup', { button: 0, clientX: x, clientY: y }))
+    }
+    tap(100, 100); tap(200, 100); tap(200, 200); tap(100, 100)
+
+    fireEvent.keyDown(window, { code: 'KeyC', key: 'c', ctrlKey: true })
+    expect(onLassoUpdate).not.toHaveBeenCalled()
+    fireEvent.keyDown(window, { code: 'KeyC', key: 'c' })
+    expect(onLassoUpdate).toHaveBeenCalledTimes(1)
+    expect(onLassoUpdate).toHaveBeenLastCalledWith('mask', expect.objectContaining({
+      points: expect.arrayContaining([expect.objectContaining({ smooth: true })]),
+    }))
+    fireEvent.keyDown(window, { code: 'KeyC', key: 'c' })
+    expect(onLassoUpdate).toHaveBeenCalledTimes(2)
+    expect(onLassoUpdate).toHaveBeenLastCalledWith('mask', expect.objectContaining({
+      points: expect.arrayContaining([expect.objectContaining({ smooth: false })]),
+    }))
+  })
+
+  it('cancels an open lasso with Escape and disables Alt-right brush adjustment', async () => {
+    const { viewport, onBrushAdjust, onLassoCreate } = await renderLoaded({ tool: 'lasso' })
+    fireEvent(viewport, pointerEvent('pointerdown', {
+      button: 0, clientX: 100, clientY: 100,
+    }))
+    expect(screen.getByTestId('lasso-draft')).toBeInTheDocument()
+    fireEvent.keyDown(window, { code: 'Escape', key: 'Escape' })
+    expect(screen.queryByTestId('lasso-draft')).not.toBeInTheDocument()
+
+    fireEvent(viewport, pointerEvent('pointerdown', {
+      button: 2, buttons: 2, altKey: true, clientX: 100, clientY: 100,
+    }))
+    fireEvent(viewport, pointerEvent('pointermove', {
+      button: 2, buttons: 2, clientX: 140, clientY: 80,
+    }))
+    expect(screen.queryByTestId('brush-adjust-hud')).not.toBeInTheDocument()
+    expect(onBrushAdjust).not.toHaveBeenCalled()
+    expect(onLassoCreate).not.toHaveBeenCalled()
+  })
+
+  it('removes the circular cursor in lasso mode and keeps it hidden until pointer movement', async () => {
+    const {
+      viewport, rerender, onBrushAdjust, onStrokeEnd, onMaskStrokeEnd,
+      onLassoCreate, onLassoUpdate,
+    } = await renderLoaded()
+
+    fireEvent(viewport, pointerEvent('pointermove', { clientX: 180, clientY: 160 }))
+    expect(screen.getByTestId('brush-cursor')).toHaveStyle({ display: 'block' })
+
+    rerender(<Harness
+      tool="lasso"
+      onBrushAdjust={onBrushAdjust}
+      onStrokeEnd={onStrokeEnd}
+      onMaskStrokeEnd={onMaskStrokeEnd}
+      onLassoCreate={onLassoCreate}
+      onLassoUpdate={onLassoUpdate}
+    />)
+    expect(screen.queryByTestId('brush-cursor')).not.toBeInTheDocument()
+
+    rerender(<Harness
+      tool="brush"
+      onBrushAdjust={onBrushAdjust}
+      onStrokeEnd={onStrokeEnd}
+      onMaskStrokeEnd={onMaskStrokeEnd}
+      onLassoCreate={onLassoCreate}
+      onLassoUpdate={onLassoUpdate}
+    />)
+    expect(screen.getByTestId('brush-cursor')).toHaveStyle({ display: 'none' })
+    fireEvent(viewport, pointerEvent('pointermove', { clientX: 190, clientY: 170 }))
+    expect(screen.getByTestId('brush-cursor')).toHaveStyle({ display: 'block' })
   })
 })

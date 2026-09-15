@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
-import { applyAutoMaskRegions } from './InpaintCanvas'
+import { describe, expect, it, vi } from 'vitest'
+import { applyAutoMaskRegions, traceLassoPath, type LassoShape } from './InpaintCanvas'
 import {
   applyTrainingMaskPreviewPixels,
   TRAINING_MASK_COLOR,
@@ -60,5 +60,49 @@ describe('automatic mask rasterization', () => {
     expect(alpha(2, 1)).toBe(255)
     expect(alpha(3, 1)).toBe(255)
     expect(alpha(4, 1)).toBe(0)
+  })
+})
+
+describe('lasso path geometry', () => {
+  it('keeps corner segments straight and curves both sides of a smooth anchor', () => {
+    const context = {
+      beginPath: vi.fn(), moveTo: vi.fn(), lineTo: vi.fn(),
+      bezierCurveTo: vi.fn(), closePath: vi.fn(),
+    }
+    const shape: LassoShape = {
+      id: 'shape', color: '#ffffff',
+      points: [
+        { id: 'a', x: 0, y: 0, smooth: false },
+        { id: 'b', x: 60, y: 0, smooth: true },
+        { id: 'c', x: 60, y: 60, smooth: false },
+        { id: 'd', x: 0, y: 60, smooth: false },
+      ],
+    }
+
+    expect(traceLassoPath(context, shape)).toBe(true)
+    expect(context.bezierCurveTo).toHaveBeenCalledTimes(2)
+    expect(context.lineTo).toHaveBeenCalledTimes(2)
+    expect(context.closePath).toHaveBeenCalledTimes(1)
+    expect(context.bezierCurveTo).toHaveBeenNthCalledWith(
+      1, 0, 0, 50, -10, 60, 0,
+    )
+    expect(context.bezierCurveTo).toHaveBeenNthCalledWith(
+      2, 70, 10, 60, 60, 60, 60,
+    )
+  })
+
+  it('rejects an open shape with fewer than three anchors', () => {
+    const context = {
+      beginPath: vi.fn(), moveTo: vi.fn(), lineTo: vi.fn(),
+      bezierCurveTo: vi.fn(), closePath: vi.fn(),
+    }
+    expect(traceLassoPath(context, {
+      id: 'short', color: '#ffffff',
+      points: [
+        { id: 'a', x: 0, y: 0, smooth: false },
+        { id: 'b', x: 1, y: 1, smooth: false },
+      ],
+    })).toBe(false)
+    expect(context.beginPath).not.toHaveBeenCalled()
   })
 })

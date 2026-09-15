@@ -2309,8 +2309,10 @@
     "toolLabel": "工具",
     "tool": {
       "brush": "画笔",
-      "eraser": "橡皮"
+      "eraser": "橡皮",
+      "lasso": "套索"
     },
+    "toolShortcut": "{{tool}}（快捷键 {{key}}）",
     "clearActive": "放弃当前修改",
     "filter": {
       "all": "全部",
@@ -2331,7 +2333,10 @@
     "emptyWorkspace": "工作集为空，",
     "goToOverview": "回总览页看看",
     "canvasLoading": "加载原图...",
+    "canvasLabel": "涂抹编辑画布",
     "canvasHint": "滚轮缩放 · 空格拖拽平移 · Alt 点击取色 · Alt 右键拖拽调画笔",
+    "lassoCanvasHint": "点击添加点 · 点击起点闭合 · 拖动点调整 · 选中点按 C 切换曲线 · Esc 取消",
+    "lassoPanelHint": "点击起点闭合套索；闭合后可拖动控制点，选中点按 C 切换直线或平滑曲线。",
     "zoomFit": "适应窗口",
     "brushColor": "颜色",
     "colorWheel": "色轮选择（含取色器 / RGB 输入）",

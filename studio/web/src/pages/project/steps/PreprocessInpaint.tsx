@@ -20,7 +20,10 @@ import InpaintCanvas, {
   type HeadMaskOverlayRegion,
   type InpaintMode,
   type InpaintStroke,
+  type InpaintTool,
+  type LassoShape,
   type MaskEdit,
+  type PaintEdit,
 } from '../../../components/preprocess/InpaintCanvas'
 import PreprocessToolsBar from '../../../components/preprocess/PreprocessToolsBar'
 import { SegmentedControl } from '../../../components/SelectionGroup'
@@ -39,8 +42,9 @@ type Filter = 'all' | 'pending' | 'edited' | 'undetected'
 
 /** 统一编辑历史条目：涂抹与 mask 笔画共用一条时间线。 */
 type HistoryEntry =
-  | { kind: 'paint'; stroke: InpaintStroke }
+  | { kind: 'paint'; edit: PaintEdit }
   | { kind: 'mask'; edit: MaskEdit }
+  | { kind: 'lasso-update'; target: InpaintMode; shape: LassoShape }
 
 interface BrushState {
   color: string
@@ -49,6 +53,77 @@ interface BrushState {
 }
 
 const DEFAULT_BRUSH: BrushState = { color: '#ffffff', size: 24, hardness: 1 }
+
+const TOOL_SHORTCUTS: Readonly<Record<string, InpaintTool>> = {
+  KeyB: 'brush',
+  KeyE: 'eraser',
+  KeyL: 'lasso',
+}
+
+const TOOL_SHORTCUT_LABELS: Readonly<Record<InpaintTool, string>> = {
+  brush: 'B',
+  eraser: 'E',
+  lasso: 'L',
+}
+
+function isTextEntryTarget(target: EventTarget | null): boolean {
+  return target instanceof HTMLElement && Boolean(target.closest(
+    'input, textarea, select, [contenteditable]:not([contenteditable="false"])',
+  ))
+}
+
+function hasVisibleModal(): boolean {
+  return Array.from(document.querySelectorAll<HTMLElement>('[aria-modal="true"]')).some((modal) => {
+    const style = window.getComputedStyle(modal)
+    return !modal.hidden && modal.getAttribute('aria-hidden') !== 'true' &&
+      style.display !== 'none' && style.visibility !== 'hidden'
+  })
+}
+
+function legacyInpaintTool(): InpaintTool {
+  if (typeof window === 'undefined') return 'brush'
+  try {
+    return JSON.parse(window.localStorage.getItem('studio:inpaint:erase') ?? 'false')
+      ? 'eraser'
+      : 'brush'
+  } catch {
+    return 'brush'
+  }
+}
+
+function latestLassoShapes(history: HistoryEntry[], target: InpaintMode): Map<string, LassoShape> {
+  const latest = new Map<string, LassoShape>()
+  for (const entry of history) {
+    if (entry.kind === 'lasso-update' && entry.target === target) {
+      latest.set(entry.shape.id, entry.shape)
+    }
+  }
+  return latest
+}
+
+function resolvePaintEdits(history: HistoryEntry[]): PaintEdit[] {
+  const latest = latestLassoShapes(history, 'paint')
+  const edits: PaintEdit[] = []
+  for (const entry of history) {
+    if (entry.kind !== 'paint') continue
+    edits.push(entry.edit.type === 'lasso'
+      ? { ...entry.edit, shape: latest.get(entry.edit.shape.id) ?? entry.edit.shape }
+      : entry.edit)
+  }
+  return edits
+}
+
+function resolveMaskEdits(history: HistoryEntry[]): MaskEdit[] {
+  const latest = latestLassoShapes(history, 'mask')
+  const edits: MaskEdit[] = []
+  for (const entry of history) {
+    if (entry.kind !== 'mask') continue
+    edits.push(entry.edit.type === 'lasso'
+      ? { ...entry.edit, shape: latest.get(entry.edit.shape.id) ?? entry.edit.shape }
+      : entry.edit)
+  }
+  return edits
+}
 
 function splitRel(name: string): { folder: string; filename: string } {
   const i = name.lastIndexOf('/')
@@ -102,9 +177,9 @@ function InpaintWorkspace() {
   const [mode, setMode] = useLocalStorageState<InpaintMode>(
     'studio:inpaint:mode', 'paint',
   )
-  // 画笔 / 橡皮跨模式共用：涂抹橡皮擦未保存笔画，遮罩橡皮擦 mask
-  const [erase, setErase] = useLocalStorageState<boolean>(
-    'studio:inpaint:erase', false,
+  // 工具跨模式、项目和版本共用；默认值兼容旧版的 erase 布尔偏好。
+  const [tool, setTool] = useLocalStorageState<InpaintTool>(
+    'studio:inpaint:tool', legacyInpaintTool(),
   )
   const [activeName, setActiveName] = useState<string | null>(null)
   const [historyByImage, setHistoryByImage] = useState<Record<string, HistoryEntry[]>>({})
@@ -126,6 +201,22 @@ function InpaintWorkspace() {
   const [recentColors, setRecentColors] = useLocalStorageState<string[]>(
     'studio:inpaint:recent_colors', [],
   )
+
+  // Keep the old preference current for safe downgrade to builds that do not
+  // know the three-state tool key. Lasso has no legacy representation.
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    try {
+      if (window.localStorage.getItem('studio:inpaint:tool') === null) {
+        window.localStorage.setItem('studio:inpaint:tool', JSON.stringify(tool))
+      }
+      if (tool !== 'lasso') {
+        window.localStorage.setItem('studio:inpaint:erase', JSON.stringify(tool === 'eraser'))
+      }
+    } catch {
+      /* state remains usable when storage is unavailable */
+    }
+  }, [tool])
 
   const canvasRef = useRef<InpaintCanvasHandle | null>(null)
 
@@ -149,12 +240,12 @@ function InpaintWorkspace() {
     () => (activeName ? (redoByImage[activeName] ?? []) : []),
     [activeName, redoByImage],
   )
-  const activePaintStrokes = useMemo(
-    () => activeHistory.filter((h) => h.kind === 'paint').map((h) => h.stroke),
+  const activePaintEdits = useMemo(
+    () => resolvePaintEdits(activeHistory),
     [activeHistory],
   )
   const activeMaskEdits = useMemo(
-    () => activeHistory.filter((h) => h.kind === 'mask').map((h) => h.edit),
+    () => resolveMaskEdits(activeHistory),
     [activeHistory],
   )
 
@@ -222,7 +313,7 @@ function InpaintWorkspace() {
         return next
       })
       setMode('mask')
-      setErase(false)
+      setTool('brush')
     }
     const heads = applicable.reduce((sum, item) => sum + item.regions.length, 0)
     const failed = result.images.filter((item) => item.status === 'failed').length
@@ -244,7 +335,7 @@ function InpaintWorkspace() {
       : summary
     toast(message, applicable.length === 0 && (failed > 0 || skipped > 0) ? 'error'
       : issues.length > 0 ? 'info' : 'success')
-  }, [setErase, setMode, t, toast])
+  }, [setMode, setTool, t, toast])
 
   const rawUrl = useCallback((im: CropWorkspaceItem) => {
     const { folder, filename } = splitRel(im.name)
@@ -272,12 +363,22 @@ function InpaintWorkspace() {
   }, [activeName])
 
   const onStrokeEnd = useCallback((s: InpaintStroke) => {
-    pushEntry({ kind: 'paint', stroke: s })
+    pushEntry({ kind: 'paint', edit: { type: 'stroke', stroke: s } })
     pushRecentColor(s.color)
   }, [pushEntry, pushRecentColor])
 
   const onMaskStrokeEnd = useCallback((s: InpaintStroke) => {
     pushEntry({ kind: 'mask', edit: { type: 'stroke', stroke: s } })
+  }, [pushEntry])
+
+  const onLassoCreate = useCallback((target: InpaintMode, shape: LassoShape) => {
+    pushEntry(target === 'paint'
+      ? { kind: 'paint', edit: { type: 'lasso', shape } }
+      : { kind: 'mask', edit: { type: 'lasso', shape } })
+  }, [pushEntry])
+
+  const onLassoUpdate = useCallback((target: InpaintMode, shape: LassoShape) => {
+    pushEntry({ kind: 'lasso-update', target, shape })
   }, [pushEntry])
 
   const undo = useCallback(() => {
@@ -332,6 +433,21 @@ function InpaintWorkspace() {
     return () => window.removeEventListener('keydown', onKey)
   }, [undo, redo])
 
+  useEffect(() => {
+    const onToolShortcut = (event: KeyboardEvent) => {
+      const nextTool = TOOL_SHORTCUTS[event.code]
+      if (
+        !nextTool || nextTool === tool || event.defaultPrevented || event.repeat ||
+        event.isComposing || event.ctrlKey || event.altKey || event.metaKey || event.shiftKey ||
+        isTextEntryTarget(event.target) || hasVisibleModal()
+      ) return
+      event.preventDefault()
+      setTool(nextTool)
+    }
+    window.addEventListener('keydown', onToolShortcut)
+    return () => window.removeEventListener('keydown', onToolShortcut)
+  }, [setTool, tool])
+
   const onPickColor = useCallback((hex: string) => {
     setBrush((prev) => ({ ...prev, color: hex }))
     pushRecentColor(hex)
@@ -342,7 +458,9 @@ function InpaintWorkspace() {
   const clearSavedKind = useCallback((name: string, kind: InpaintMode) => {
     setHistoryByImage((prev) => ({
       ...prev,
-      [name]: (prev[name] ?? []).filter((h) => h.kind !== kind),
+      [name]: (prev[name] ?? []).filter((h) => (
+        h.kind !== kind && !(h.kind === 'lasso-update' && h.target === kind)
+      )),
     }))
     setRedoByImage((prev) => ({ ...prev, [name]: [] }))
   }, [])
@@ -352,7 +470,7 @@ function InpaintWorkspace() {
    *  返回保存后的 name（无涂抹改动时原样）。 */
   const saveImageBoth = useCallback(async (
     im: CropWorkspaceItem,
-    paintStrokes: InpaintStroke[],
+    paintEdits: PaintEdit[],
     maskEdits: MaskEdit[],
     exporters?: {
       paint: () => Promise<Blob | null>
@@ -360,10 +478,10 @@ function InpaintWorkspace() {
     },
   ): Promise<string> => {
     let name = im.name
-    if (paintStrokes.length > 0) {
+    if (paintEdits.length > 0) {
       const blob = exporters
         ? await exporters.paint()
-        : await renderInpaintedBlob(rawUrl(im), im.w, im.h, paintStrokes)
+        : await renderInpaintedBlob(rawUrl(im), im.w, im.h, paintEdits)
       if (!mounted.current) return name
       if (!blob) throw new Error('canvas not ready')
       const res = await api.saveInpaintTrain(project.id, vid, name, blob)
@@ -394,7 +512,7 @@ function InpaintWorkspace() {
     try {
       // 活动图用挂载中的 canvas 导出（所见即所得），非活动图才走离屏重放
       const newName = await saveImageBoth(
-        activeImage, activePaintStrokes, activeMaskEdits,
+        activeImage, activePaintEdits, activeMaskEdits,
         {
           paint: () => canvasRef.current?.exportBlob() ?? Promise.resolve(null),
           mask: async () => {
@@ -416,7 +534,7 @@ function InpaintWorkspace() {
     }
   }, [
     activeName, activeImage, activeHistory.length,
-    activePaintStrokes, activeMaskEdits,
+    activePaintEdits, activeMaskEdits,
     saveImageBoth, refreshWorkspace, reload, toast, t,
   ])
 
@@ -435,8 +553,8 @@ function InpaintWorkspace() {
         try {
           await saveImageBoth(
             im,
-            hist.filter((h) => h.kind === 'paint').map((h) => h.stroke),
-            hist.filter((h) => h.kind === 'mask').map((h) => h.edit),
+            resolvePaintEdits(hist),
+            resolveMaskEdits(hist),
           )
           ok++
         } catch {
@@ -617,14 +735,16 @@ function InpaintWorkspace() {
                     imageW={activeImage.w}
                     imageH={activeImage.h}
                     mode={mode}
-                    strokes={activePaintStrokes}
+                    paintEdits={activePaintEdits}
                     maskEdits={activeMaskEdits}
                     maskBaseUrl={maskBaseUrlFor(activeImage)}
                     brush={brush}
                     onBrushAdjust={(next) => setBrush((prev) => ({ ...prev, ...next }))}
-                    erase={erase}
+                    tool={tool}
                     onStrokeEnd={onStrokeEnd}
                     onMaskStrokeEnd={onMaskStrokeEnd}
+                    onLassoCreate={onLassoCreate}
+                    onLassoUpdate={onLassoUpdate}
                     onPickColor={onPickColor}
                     proposalRegions={activeProposalRegions}
                     onProposalPreviewState={setPreviewState}
@@ -634,8 +754,8 @@ function InpaintWorkspace() {
                 <ToolPanel
                   mode={mode}
                   setMode={setMode}
-                  erase={erase}
-                  setErase={setErase}
+                  tool={tool}
+                  setTool={setTool}
                   brush={brush}
                   setBrush={setBrush}
                   recentColors={recentColors}
@@ -680,8 +800,8 @@ function InpaintWorkspace() {
 function ToolPanel({
   mode,
   setMode,
-  erase,
-  setErase,
+  tool,
+  setTool,
   brush,
   setBrush,
   recentColors,
@@ -689,8 +809,8 @@ function ToolPanel({
 }: {
   mode: InpaintMode
   setMode: (m: InpaintMode) => void
-  erase: boolean
-  setErase: (v: boolean) => void
+  tool: InpaintTool
+  setTool: (v: InpaintTool) => void
   brush: BrushState
   setBrush: (v: BrushState | ((prev: BrushState) => BrushState)) => void
   recentColors: string[]
@@ -721,12 +841,18 @@ function ToolPanel({
         <div className="flex items-center gap-1.5 text-xs">
           <span className="text-fg-tertiary shrink-0 w-10">{t('preprocessInpaint.toolLabel')}</span>
           <SegmentedControl
-            items={(['brush', 'eraser'] as const).map((value) => ({
-              value,
-              label: t(`preprocessInpaint.tool.${value}`),
-            }))}
-            value={erase ? 'eraser' : 'brush'}
-            onChange={(value) => setErase(value === 'eraser')}
+            items={(['brush', 'eraser', 'lasso'] as const).map((value) => {
+              const label = t(`preprocessInpaint.tool.${value}`)
+              const shortcut = TOOL_SHORTCUT_LABELS[value]
+              return {
+                value,
+                label,
+                shortcut,
+                title: t('preprocessInpaint.toolShortcut', { tool: label, key: shortcut }),
+              }
+            })}
+            value={tool}
+            onChange={setTool}
             ariaLabel={t('preprocessInpaint.toolLabel')}
             idPrefix="inpaint-tool"
             size="sm"
@@ -785,7 +911,7 @@ function ToolPanel({
           </div>
         )}
 
-        <div className="flex items-center gap-1.5 text-xs">
+        {tool !== 'lasso' && <div className="flex items-center gap-1.5 text-xs">
           <span className="text-fg-tertiary shrink-0 w-10">{t('preprocessInpaint.brushSize')}</span>
           <input
             type="range"
@@ -806,8 +932,8 @@ function ToolPanel({
             style={{ width: 56, padding: '2px 6px' }}
             aria-label={t('preprocessInpaint.brushSizeValue')}
           />
-        </div>
-        <div className="flex items-center gap-1.5 text-xs">
+        </div>}
+        {tool !== 'lasso' && <div className="flex items-center gap-1.5 text-xs">
           <span className="text-fg-tertiary shrink-0 w-10">{t('preprocessInpaint.brushHardness')}</span>
           <input
             type="range"
@@ -829,7 +955,12 @@ function ToolPanel({
             style={{ width: 56, padding: '2px 6px' }}
             aria-label={t('preprocessInpaint.brushHardnessValue')}
           />
-        </div>
+        </div>}
+        {tool === 'lasso' && (
+          <p className="text-[11px] leading-4 text-fg-tertiary">
+            {t('preprocessInpaint.lassoPanelHint')}
+          </p>
+        )}
         {children}
       </div>
     </div>

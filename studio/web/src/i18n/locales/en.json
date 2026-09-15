@@ -2309,8 +2309,10 @@
     "toolLabel": "Tool",
     "tool": {
       "brush": "Brush",
-      "eraser": "Eraser"
+      "eraser": "Eraser",
+      "lasso": "Lasso"
     },
+    "toolShortcut": "{{tool}} (shortcut {{key}})",
     "clearActive": "Discard current edits",
     "filter": {
       "all": "All",
@@ -2331,7 +2333,10 @@
     "emptyWorkspace": "Workspace is empty,",
     "goToOverview": "go to Overview",
     "canvasLoading": "Loading full-resolution image...",
+    "canvasLabel": "Inpaint editing canvas",
     "canvasHint": "Wheel to zoom · Space-drag to pan · Alt-click to pick color · Alt-right-drag to adjust brush",
+    "lassoCanvasHint": "Click to add points · Click the start to close · Drag points to adjust · Select a point and press C to curve · Esc to cancel",
+    "lassoPanelHint": "Click the start point to close the lasso. Drag closed control points to adjust them; select a point and press C to toggle straight or smooth.",
     "zoomFit": "Fit",
     "brushColor": "Color",
     "colorWheel": "Color wheel (with eyedropper / RGB input)",

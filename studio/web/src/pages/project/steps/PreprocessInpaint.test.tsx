@@ -1,8 +1,9 @@
-import { act, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Outlet, Route, Routes } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { api, type CropWorkspaceItem } from '../../../api/client'
+import type { InpaintStroke, LassoShape } from '../../../components/preprocess/InpaintCanvas'
 import PreprocessInpaintPage from './PreprocessInpaint'
 
 const mocks = vi.hoisted(() => ({
@@ -33,10 +34,13 @@ vi.mock('../../../components/preprocess/InpaintCanvas', async () => {
   const Canvas = React.forwardRef(function Canvas(
     props: {
       mode: 'paint' | 'mask'
-      erase: boolean
+      tool: 'brush' | 'eraser' | 'lasso'
+      paintEdits: object[]
       maskEdits: object[]
       onStrokeEnd: (stroke: object) => void
       onMaskStrokeEnd: (stroke: object) => void
+      onLassoCreate: (mode: 'paint' | 'mask', shape: object) => void
+      onLassoUpdate: (mode: 'paint' | 'mask', shape: object) => void
     },
     ref: React.ForwardedRef<{
       exportBlob: () => Promise<Blob | null>
@@ -50,7 +54,8 @@ vi.mock('../../../components/preprocess/InpaintCanvas', async () => {
     mocks.canvasProps.push(props as unknown as Record<string, unknown>)
     const stroke = { color: '#ffffff', size: 24, hardness: 1, points: [{ x: 10, y: 10 }] }
     return (
-      <div data-testid="inpaint-canvas" data-mode={props.mode} data-erase={String(props.erase)}
+      <div data-testid="inpaint-canvas" data-mode={props.mode} data-tool={props.tool}
+        data-paint-edits={JSON.stringify(props.paintEdits)}
         data-mask-edits={JSON.stringify(props.maskEdits)}>
         <button
         type="button"
@@ -146,6 +151,7 @@ describe('Preprocess inpaint contracts', () => {
     await user.click(within(screen.getByRole('radiogroup', { name: '工具' })).getByRole('radio', { name: '橡皮' }))
 
     expect(window.localStorage.getItem('studio:inpaint:mode')).toBe(JSON.stringify('mask'))
+    expect(window.localStorage.getItem('studio:inpaint:tool')).toBe(JSON.stringify('eraser'))
     expect(window.localStorage.getItem('studio:inpaint:erase')).toBe(JSON.stringify(true))
 
     firstProject.unmount()
@@ -155,7 +161,154 @@ describe('Preprocess inpaint contracts', () => {
     expect(within(screen.getByRole('radiogroup', { name: '模式' })).getByRole('radio', { name: '训练遮罩' })).toBeChecked()
     expect(within(screen.getByRole('radiogroup', { name: '工具' })).getByRole('radio', { name: '橡皮' })).toBeChecked()
     expect(screen.getByTestId('inpaint-canvas')).toHaveAttribute('data-mode', 'mask')
-    expect(screen.getByTestId('inpaint-canvas')).toHaveAttribute('data-erase', 'true')
+    expect(screen.getByTestId('inpaint-canvas')).toHaveAttribute('data-tool', 'eraser')
+  })
+
+  it('switches tools with B, E and L and exposes each shortcut on hover', async () => {
+    renderPage()
+    await screen.findByRole('group', { name: '涂抹工作集图片' })
+    const tools = within(screen.getByRole('radiogroup', { name: '工具' }))
+    const brush = tools.getByRole('radio', { name: '画笔' })
+    const eraser = tools.getByRole('radio', { name: '橡皮' })
+    const lasso = tools.getByRole('radio', { name: '套索' })
+
+    expect(brush).toHaveAttribute('title', '画笔（快捷键 B）')
+    expect(eraser).toHaveAttribute('title', '橡皮（快捷键 E）')
+    expect(lasso).toHaveAttribute('title', '套索（快捷键 L）')
+    expect(brush).toHaveAttribute('aria-keyshortcuts', 'B')
+    expect(eraser).toHaveAttribute('aria-keyshortcuts', 'E')
+    expect(lasso).toHaveAttribute('aria-keyshortcuts', 'L')
+
+    fireEvent.keyDown(window, { code: 'KeyE', key: 'e' })
+    expect(eraser).toBeChecked()
+    fireEvent.keyDown(window, { code: 'KeyL', key: 'l' })
+    expect(lasso).toBeChecked()
+    fireEvent.keyDown(window, { code: 'KeyB', key: 'b' })
+    expect(brush).toBeChecked()
+    expect(window.localStorage.getItem('studio:inpaint:tool')).toBe(JSON.stringify('brush'))
+  })
+
+  it('ignores tool shortcuts while editing text, composing, modified, repeated, or modal', async () => {
+    renderPage()
+    await screen.findByRole('group', { name: '涂抹工作集图片' })
+    const tools = within(screen.getByRole('radiogroup', { name: '工具' }))
+    const brush = tools.getByRole('radio', { name: '画笔' })
+    const eraser = tools.getByRole('radio', { name: '橡皮' })
+
+    const size = screen.getByLabelText('画笔大小数值')
+    size.focus()
+    fireEvent.keyDown(size, { code: 'KeyE', key: 'e' })
+    expect(brush).toBeChecked()
+
+    fireEvent.keyDown(window, { code: 'KeyE', key: 'e', isComposing: true })
+    fireEvent.keyDown(window, { code: 'KeyE', key: 'e', ctrlKey: true })
+    fireEvent.keyDown(window, { code: 'KeyE', key: 'e', repeat: true })
+    expect(brush).toBeChecked()
+
+    const modal = document.createElement('div')
+    modal.setAttribute('aria-modal', 'true')
+    document.body.appendChild(modal)
+    fireEvent.keyDown(window, { code: 'KeyE', key: 'e' })
+    expect(brush).toBeChecked()
+    modal.remove()
+
+    fireEvent.keyDown(window, { code: 'KeyE', key: 'e' })
+    expect(eraser).toBeChecked()
+  })
+
+  it('migrates the legacy eraser preference and remembers lasso globally', async () => {
+    window.localStorage.setItem('studio:inpaint:erase', JSON.stringify(true))
+    const user = userEvent.setup()
+    const firstProject = renderPage(1)
+    await screen.findByRole('group', { name: '涂抹工作集图片' })
+
+    expect(within(screen.getByRole('radiogroup', { name: '工具' })).getByRole('radio', { name: '橡皮' })).toBeChecked()
+    await waitFor(() => expect(window.localStorage.getItem('studio:inpaint:tool')).toBe(JSON.stringify('eraser')))
+
+    await user.click(within(screen.getByRole('radiogroup', { name: '工具' })).getByRole('radio', { name: '套索' }))
+    expect(window.localStorage.getItem('studio:inpaint:tool')).toBe(JSON.stringify('lasso'))
+    expect(screen.queryByLabelText('画笔大小数值')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('画笔硬度数值')).not.toBeInTheDocument()
+    expect(screen.getByLabelText('色轮选择（含取色器 / RGB 输入）')).toBeInTheDocument()
+
+    firstProject.unmount()
+    renderPage(99)
+    await screen.findByRole('group', { name: '涂抹工作集图片' })
+    expect(within(screen.getByRole('radiogroup', { name: '工具' })).getByRole('radio', { name: '套索' })).toBeChecked()
+    expect(screen.getByTestId('inpaint-canvas')).toHaveAttribute('data-tool', 'lasso')
+  })
+
+  it('updates lasso geometry without moving it past later eraser edits', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await screen.findByRole('group', { name: '涂抹工作集图片' })
+    const shape: LassoShape = {
+      id: 'lasso-1', color: '#ff00ff',
+      points: [
+        { id: 'a', x: 10, y: 10, smooth: false },
+        { id: 'b', x: 50, y: 10, smooth: false },
+        { id: 'c', x: 50, y: 50, smooth: false },
+      ],
+    }
+    const erased: InpaintStroke = {
+      color: '#ffffff', size: 20, hardness: 1, erase: true,
+      points: [{ x: 20, y: 20 }],
+    }
+    let props = mocks.canvasProps[mocks.canvasProps.length - 1] as {
+      onLassoCreate: (mode: 'paint', nextShape: LassoShape) => void
+      onLassoUpdate: (mode: 'paint', nextShape: LassoShape) => void
+      onStrokeEnd: (stroke: InpaintStroke) => void
+    }
+    act(() => props.onLassoCreate('paint', shape))
+    props = mocks.canvasProps[mocks.canvasProps.length - 1] as typeof props
+    act(() => props.onStrokeEnd(erased))
+    props = mocks.canvasProps[mocks.canvasProps.length - 1] as typeof props
+    const adjusted = {
+      ...shape,
+      points: shape.points.map((point) => point.id === 'a' ? { ...point, x: 15 } : point),
+    }
+    act(() => props.onLassoUpdate('paint', adjusted))
+
+    let edits = JSON.parse(screen.getByTestId('inpaint-canvas').getAttribute('data-paint-edits') ?? '[]')
+    expect(edits).toEqual([
+      expect.objectContaining({ type: 'lasso', shape: expect.objectContaining({ points: expect.arrayContaining([expect.objectContaining({ id: 'a', x: 15 })]) }) }),
+      expect.objectContaining({ type: 'stroke', stroke: expect.objectContaining({ erase: true }) }),
+    ])
+
+    await user.click(screen.getByRole('button', { name: '撤销' }))
+    edits = JSON.parse(screen.getByTestId('inpaint-canvas').getAttribute('data-paint-edits') ?? '[]')
+    expect(edits[0].shape.points[0].x).toBe(10)
+    await user.click(screen.getByRole('button', { name: '重做' }))
+    edits = JSON.parse(screen.getByTestId('inpaint-canvas').getAttribute('data-paint-edits') ?? '[]')
+    expect(edits[0].shape.points[0].x).toBe(15)
+  })
+
+  it('saves a paint lasso and removes its editable vector state after success', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await screen.findByRole('group', { name: '涂抹工作集图片' })
+    const shape: LassoShape = {
+      id: 'paint-lasso', color: '#00ff00',
+      points: [
+        { id: 'a', x: 10, y: 10, smooth: false },
+        { id: 'b', x: 50, y: 10, smooth: true },
+        { id: 'c', x: 50, y: 50, smooth: false },
+      ],
+    }
+    const props = mocks.canvasProps[mocks.canvasProps.length - 1] as {
+      onLassoCreate: (mode: 'paint', nextShape: LassoShape) => void
+    }
+    act(() => props.onLassoCreate('paint', shape))
+    expect(screen.getByRole('button', { name: '保存当前图' })).toBeEnabled()
+
+    await user.click(screen.getByRole('button', { name: '保存当前图' }))
+    await waitFor(() => expect(api.saveInpaintTrain).toHaveBeenCalledWith(
+      1, 2, image.name, expect.any(Blob),
+    ))
+    await waitFor(() => expect(
+      JSON.parse(screen.getByTestId('inpaint-canvas').getAttribute('data-paint-edits') ?? '[]'),
+    ).toEqual([]))
+    expect(screen.getByRole('button', { name: '保存当前图' })).toBeDisabled()
   })
 
   it('opens setup to explain the save prerequisite while unsaved edits block Start', async () => {
