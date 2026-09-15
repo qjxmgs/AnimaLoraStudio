@@ -7,6 +7,7 @@ import SingleImageInpaintDialog from './SingleImageInpaintDialog'
 const mocks = vi.hoisted(() => ({
   confirm: vi.fn(async () => true),
   toast: vi.fn(),
+  resetStrokeAnchor: vi.fn(),
 }))
 
 vi.mock('../Dialog', async (importOriginal) => {
@@ -36,12 +37,14 @@ vi.mock('./InpaintCanvas', async () => {
       exportBlob: () => Promise<Blob | null>
       exportMaskBlob: () => Promise<{ blob: Blob; coverage: number } | null>
       cancelTransientEdit: () => boolean
+      resetStrokeAnchor: () => void
     }>,
   ) {
     React.useImperativeHandle(ref, () => ({
       exportBlob: async () => new Blob(['paint']),
       exportMaskBlob: async () => ({ blob: new Blob(['mask']), coverage: 0.2 }),
       cancelTransientEdit: () => false,
+      resetStrokeAnchor: mocks.resetStrokeAnchor,
     }))
     const stroke = {
       color: '#ffffff', size: 24, hardness: 1, points: [{ x: 5, y: 5 }],

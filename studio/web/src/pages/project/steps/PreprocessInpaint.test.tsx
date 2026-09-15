@@ -9,6 +9,7 @@ import PreprocessInpaintPage from './PreprocessInpaint'
 const mocks = vi.hoisted(() => ({
   toast: vi.fn(), reload: vi.fn(async () => undefined),
   canvasProps: [] as Array<Record<string, unknown>>,
+  resetStrokeAnchor: vi.fn(),
 }))
 
 vi.mock('../../../lib/SettingsData', () => ({ useSettingsData: () => ({
@@ -45,11 +46,13 @@ vi.mock('../../../components/preprocess/InpaintCanvas', async () => {
     ref: React.ForwardedRef<{
       exportBlob: () => Promise<Blob | null>
       exportMaskBlob: () => Promise<{ blob: Blob; coverage: number } | null>
+      resetStrokeAnchor: () => void
     }>,
   ) {
     React.useImperativeHandle(ref, () => ({
       exportBlob: async () => new Blob(['paint'], { type: 'image/png' }),
       exportMaskBlob: async () => ({ blob: new Blob(['mask'], { type: 'image/png' }), coverage: 0.2 }),
+      resetStrokeAnchor: mocks.resetStrokeAnchor,
     }))
     mocks.canvasProps.push(props as unknown as Record<string, unknown>)
     const stroke = { color: '#ffffff', size: 24, hardness: 1, points: [{ x: 10, y: 10 }] }

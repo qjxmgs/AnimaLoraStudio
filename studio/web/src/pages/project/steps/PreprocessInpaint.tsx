@@ -281,6 +281,7 @@ function InpaintWorkspace() {
 
   const undo = useCallback(() => {
     if (!activeName) return
+    canvasRef.current?.resetStrokeAnchor()
     setHistoryByImage((prev) => {
       const cur = prev[activeName] ?? []
       if (cur.length === 0) return prev
@@ -295,6 +296,7 @@ function InpaintWorkspace() {
 
   const redo = useCallback(() => {
     if (!activeName) return
+    canvasRef.current?.resetStrokeAnchor()
     setRedoByImage((prev) => {
       const cur = prev[activeName] ?? []
       if (cur.length === 0) return prev
@@ -309,6 +311,7 @@ function InpaintWorkspace() {
 
   const clearActive = useCallback(() => {
     if (!activeName) return
+    canvasRef.current?.resetStrokeAnchor()
     setHistoryByImage((prev) => ({ ...prev, [activeName]: [] }))
     setRedoByImage((prev) => ({ ...prev, [activeName]: [] }))
   }, [activeName])

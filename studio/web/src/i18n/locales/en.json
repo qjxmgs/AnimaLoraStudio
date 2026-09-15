@@ -2357,7 +2357,7 @@
     "goToOverview": "go to Overview",
     "canvasLoading": "Loading full-resolution image...",
     "canvasLabel": "Inpaint editing canvas",
-    "canvasHint": "Wheel to zoom · Space-drag to pan · Alt-click to pick color · Alt-right-drag to adjust brush",
+    "canvasHint": "Wheel to zoom · Space-drag to pan · Shift-click for a straight line · Alt-click to pick color · Alt-right-drag to adjust brush",
     "lassoCanvasHint": "Click to add points · Click the start to close · Drag points to adjust · Space-drag to pan · Select a point and press C to curve · Esc to cancel",
     "lassoPanelHint": "Click the start point to close the lasso. Drag closed control points to adjust them; select a point and press C to toggle straight or smooth.",
     "zoomFit": "Fit",

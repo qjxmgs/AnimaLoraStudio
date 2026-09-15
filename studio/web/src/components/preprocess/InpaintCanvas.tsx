@@ -83,6 +83,8 @@ export interface InpaintCanvasHandle {
   exportMaskBlob: () => Promise<{ blob: Blob; coverage: number } | null>
   /** Cancel an open lasso or point selection before an owning dialog closes. */
   cancelTransientEdit: () => boolean
+  /** Clear the transient endpoint used by Shift-click straight strokes. */
+  resetStrokeAnchor: () => void
 }
 
 export interface BrushAdjustment {
@@ -544,7 +546,13 @@ const InpaintCanvas = forwardRef<
   const { wrapRef, contentRef, toContentPoint } = zp
 
   // 落笔时锁定归属（paint / mask），松手按此提交 —— 不事后按 mode 猜
-  const drawingRef = useRef<{ stroke: InpaintStroke; target: InpaintMode } | null>(null)
+  const drawingRef = useRef<{
+    stroke: InpaintStroke
+    target: InpaintMode
+    /** Shift-click strokes keep the pointer-down endpoint even if the mouse moves. */
+    fixedEndpoint: boolean
+  } | null>(null)
+  const lastStrokePointRef = useRef<InpaintPoint | null>(null)
 
   const [loaded, setLoaded] = useState(false)
   const [maskBaseTick, setMaskBaseTick] = useState(0)
@@ -882,6 +890,9 @@ const InpaintCanvas = forwardRef<
       lassoDragRef.current = null
       return true
     },
+    resetStrokeAnchor: () => {
+      lastStrokePointRef.current = null
+    },
   }), [ensureLayer, lassoDraft, selectedLassoPoint])
 
   // 笔刷圆圈光标（ref 直改 style；直径 = 笔刷 × 当前 scale）
@@ -998,6 +1009,11 @@ const InpaintCanvas = forwardRef<
     setLassoPreview(null)
     lassoDragRef.current = null
   }, [mode, tool])
+
+  // A straight-stroke anchor never crosses an image, mode, or tool boundary.
+  useEffect(() => {
+    lastStrokePointRef.current = null
+  }, [imageUrl, mode, tool])
 
   useEffect(() => {
     if (tool !== 'lasso') return
@@ -1130,14 +1146,22 @@ const InpaintCanvas = forwardRef<
       }
       const b = brushRef.current
       const isMask = modeRef.current === 'mask'
+      const fixedEndpoint = e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey
+      const anchor = fixedEndpoint ? lastStrokePointRef.current : null
       const stroke: InpaintStroke = {
         color: isMask ? TRAINING_MASK_COLOR : b.color,
         size: b.size,
         hardness: b.hardness,
         ...(toolRef.current === 'eraser' ? { erase: true } : {}),
-        points: [pt],
+        points: anchor && (anchor.x !== pt.x || anchor.y !== pt.y)
+          ? [{ ...anchor }, pt]
+          : [pt],
       }
-      drawingRef.current = { stroke, target: isMask ? 'mask' : 'paint' }
+      drawingRef.current = {
+        stroke,
+        target: isMask ? 'mask' : 'paint',
+        fixedEndpoint,
+      }
       if (strokePreviewClearFrameRef.current != null) {
         window.cancelAnimationFrame(strokePreviewClearFrameRef.current)
         strokePreviewClearFrameRef.current = null
@@ -1205,6 +1229,7 @@ const InpaintCanvas = forwardRef<
       if (zp.panPointerMove(e)) return
       const drawing = drawingRef.current
       if (!drawing || !pt) return
+      if (drawing.fixedEndpoint) return
       const stroke = drawing.stroke
       const prev = stroke.points[stroke.points.length - 1]
       stroke.points.push(pt)
@@ -1217,11 +1242,17 @@ const InpaintCanvas = forwardRef<
     ],
   )
 
-  const endStroke = useCallback(() => {
+  const endStroke = useCallback((cancelled = false) => {
     zp.endPan()
     const drawing = drawingRef.current
     drawingRef.current = null
     if (!drawing) return
+    if (cancelled && drawing.fixedEndpoint) {
+      clearStrokePreview()
+      return
+    }
+    const endpoint = drawing.stroke.points[drawing.stroke.points.length - 1]
+    if (endpoint) lastStrokePointRef.current = { ...endpoint }
     if (drawing.target === 'mask') onMaskStrokeEnd(drawing.stroke)
     else onStrokeEnd(drawing.stroke)
     // The controlled edit normally rebuilds its layer before the next frame.
@@ -1255,7 +1286,7 @@ const InpaintCanvas = forwardRef<
       else scheduleContextMenuReset()
       return
     }
-    endStroke()
+    endStroke(cancelled)
   }, [endStroke, onLassoUpdate, scheduleContextMenuReset])
 
   const onContextMenu = useCallback((e: React.MouseEvent<HTMLDivElement>) => {

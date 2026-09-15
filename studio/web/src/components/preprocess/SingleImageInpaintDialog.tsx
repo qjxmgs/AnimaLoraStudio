@@ -127,6 +127,7 @@ export default function SingleImageInpaintDialog({
   }, [pushEntry])
 
   const undo = useCallback(() => {
+    canvasRef.current?.resetStrokeAnchor()
     setHistory((previous) => {
       if (previous.length === 0) return previous
       const entry = previous[previous.length - 1]
@@ -136,6 +137,7 @@ export default function SingleImageInpaintDialog({
   }, [])
 
   const redo = useCallback(() => {
+    canvasRef.current?.resetStrokeAnchor()
     setRedoHistory((previous) => {
       if (previous.length === 0) return previous
       const entry = previous[previous.length - 1]
@@ -145,6 +147,7 @@ export default function SingleImageInpaintDialog({
   }, [])
 
   const clearAll = useCallback(() => {
+    canvasRef.current?.resetStrokeAnchor()
     setHistory([])
     setRedoHistory([])
   }, [])

@@ -1,10 +1,11 @@
-import { useState } from 'react'
+import { createRef, useState, type Ref } from 'react'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import InpaintCanvas, {
   resolveBrushAdjustment,
   resolveBrushAdjustmentAxis,
   type BrushAdjustment,
+  type InpaintCanvasHandle,
   type InpaintMode,
   type InpaintTool,
   type LassoShape,
@@ -31,6 +32,7 @@ function pointerEvent(
 }
 
 function Harness({
+  imageUrl = '/image.png',
   mode = 'paint',
   tool = 'brush',
   onBrushAdjust,
@@ -39,7 +41,9 @@ function Harness({
   onLassoCreate,
   onLassoUpdate,
   onPickColor = vi.fn(),
+  inpaintRef,
 }: {
+  imageUrl?: string
   mode?: InpaintMode
   tool?: InpaintTool
   onBrushAdjust: (next: BrushAdjustment) => void
@@ -48,6 +52,7 @@ function Harness({
   onLassoCreate: ReturnType<typeof vi.fn>
   onLassoUpdate: ReturnType<typeof vi.fn>
   onPickColor?: ReturnType<typeof vi.fn>
+  inpaintRef?: Ref<InpaintCanvasHandle>
 }) {
   const [brush, setBrush] = useState({ color: '#ffffff', size: 20, hardness: 0.5 })
   const [paintEdits, setPaintEdits] = useState<PaintEdit[]>([])
@@ -68,7 +73,8 @@ function Harness({
   return (
     <div style={{ width: 500, height: 400 }}>
       <InpaintCanvas
-        imageUrl="/image.png"
+        ref={inpaintRef}
+        imageUrl={imageUrl}
         imageW={400}
         imageH={400}
         mode={mode}
@@ -192,19 +198,25 @@ describe('InpaintCanvas brush adjustment gesture', () => {
     })
   })
 
-  async function renderLoaded(options: { mode?: InpaintMode; tool?: InpaintTool } = {}) {
+  async function renderLoaded(options: {
+    imageUrl?: string
+    mode?: InpaintMode
+    tool?: InpaintTool
+    inpaintRef?: Ref<InpaintCanvasHandle>
+  } = {}) {
     const callbacks = {
       onBrushAdjust: vi.fn(),
       onStrokeEnd: vi.fn(),
       onMaskStrokeEnd: vi.fn(),
       onLassoCreate: vi.fn(),
       onLassoUpdate: vi.fn(),
+      onPickColor: vi.fn(),
     }
     const view = render(<Harness {...options} {...callbacks} />)
     await waitFor(() => expect(screen.queryByText('加载原图...')).not.toBeInTheDocument())
     const viewport = screen.getByLabelText('涂抹编辑画布') as HTMLDivElement
     fireEvent.click(screen.getByRole('button', { name: '100%' }))
-    return { ...callbacks, viewport, rerender: view.rerender }
+    return { ...callbacks, callbacks, viewport, rerender: view.rerender }
   }
 
   it.each<InpaintTool>(['brush', 'eraser', 'lasso'])(
@@ -420,6 +432,178 @@ describe('InpaintCanvas brush adjustment gesture', () => {
       button: 0, clientX: 150, clientY: 140,
     }))
     expect(onMaskStrokeEnd).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([
+    { mode: 'paint' as const, tool: 'brush' as const, color: '#ffffff', erase: false },
+    { mode: 'paint' as const, tool: 'eraser' as const, color: '#ffffff', erase: true },
+    { mode: 'mask' as const, tool: 'brush' as const, color: '#ff2d2d', erase: false },
+    { mode: 'mask' as const, tool: 'eraser' as const, color: '#ff2d2d', erase: true },
+  ])('draws a fixed Shift-click line with current $mode/$tool settings', async ({
+    mode, tool, color, erase,
+  }) => {
+    const { viewport, onStrokeEnd, onMaskStrokeEnd } = await renderLoaded({ mode, tool })
+    const callback = mode === 'mask' ? onMaskStrokeEnd : onStrokeEnd
+
+    fireEvent(viewport, pointerEvent('pointerdown', {
+      button: 0, buttons: 1, clientX: 100, clientY: 100,
+    }))
+    fireEvent(viewport, pointerEvent('pointermove', {
+      button: 0, buttons: 1, clientX: 130, clientY: 120,
+    }))
+    fireEvent(viewport, pointerEvent('pointerup', {
+      button: 0, clientX: 130, clientY: 120,
+    }))
+
+    previewStroke.mockClear()
+    fireEvent(viewport, pointerEvent('pointerdown', {
+      button: 0, buttons: 1, clientX: 200, clientY: 150, shiftKey: true,
+    }))
+    expect(previewStroke).toHaveBeenCalled()
+    fireEvent(viewport, pointerEvent('pointermove', {
+      button: 0, buttons: 1, clientX: 280, clientY: 260, shiftKey: true,
+    }))
+    fireEvent(viewport, pointerEvent('pointerup', {
+      button: 0, clientX: 280, clientY: 260, shiftKey: true,
+    }))
+
+    expect(callback).toHaveBeenCalledTimes(2)
+    expect(callback).toHaveBeenLastCalledWith({
+      color,
+      size: 20,
+      hardness: 0.5,
+      ...(erase ? { erase: true } : {}),
+      points: [{ x: 80, y: 120 }, { x: 150, y: 150 }],
+    })
+  })
+
+  it('chains Shift-click lines and treats the first Shift-click as a fixed dot', async () => {
+    const { viewport, onStrokeEnd } = await renderLoaded()
+    const shiftTap = (downX: number, downY: number, moveX: number, moveY: number) => {
+      fireEvent(viewport, pointerEvent('pointerdown', {
+        button: 0, buttons: 1, clientX: downX, clientY: downY, shiftKey: true,
+      }))
+      fireEvent(viewport, pointerEvent('pointermove', {
+        button: 0, buttons: 1, clientX: moveX, clientY: moveY, shiftKey: true,
+      }))
+      fireEvent(viewport, pointerEvent('pointerup', {
+        button: 0, clientX: moveX, clientY: moveY, shiftKey: true,
+      }))
+    }
+
+    shiftTap(100, 100, 150, 140)
+    shiftTap(200, 150, 240, 190)
+    shiftTap(250, 200, 280, 240)
+
+    expect(onStrokeEnd).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      points: [{ x: 50, y: 100 }],
+    }))
+    expect(onStrokeEnd).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      points: [{ x: 50, y: 100 }, { x: 150, y: 150 }],
+    }))
+    expect(onStrokeEnd).toHaveBeenNthCalledWith(3, expect.objectContaining({
+      points: [{ x: 150, y: 150 }, { x: 200, y: 200 }],
+    }))
+  })
+
+  it('cancels a Shift-click line without replacing the previous endpoint', async () => {
+    const { viewport, onStrokeEnd } = await renderLoaded()
+    fireEvent(viewport, pointerEvent('pointerdown', {
+      button: 0, buttons: 1, clientX: 100, clientY: 100,
+    }))
+    fireEvent(viewport, pointerEvent('pointerup', { button: 0, clientX: 100, clientY: 100 }))
+
+    fireEvent(viewport, pointerEvent('pointerdown', {
+      button: 0, buttons: 1, clientX: 180, clientY: 160, shiftKey: true,
+    }))
+    fireEvent(viewport, pointerEvent('pointercancel', {
+      button: 0, clientX: 180, clientY: 160, shiftKey: true,
+    }))
+    expect(onStrokeEnd).toHaveBeenCalledTimes(1)
+
+    fireEvent(viewport, pointerEvent('pointerdown', {
+      button: 0, buttons: 1, clientX: 220, clientY: 180, shiftKey: true,
+    }))
+    fireEvent(viewport, pointerEvent('pointerup', {
+      button: 0, clientX: 220, clientY: 180, shiftKey: true,
+    }))
+    expect(onStrokeEnd).toHaveBeenLastCalledWith(expect.objectContaining({
+      points: [{ x: 50, y: 100 }, { x: 170, y: 180 }],
+    }))
+  })
+
+  it('clears the Shift-click endpoint through the canvas handle', async () => {
+    const inpaintRef = createRef<InpaintCanvasHandle>()
+    const { viewport, onStrokeEnd } = await renderLoaded({ inpaintRef })
+    fireEvent(viewport, pointerEvent('pointerdown', {
+      button: 0, buttons: 1, clientX: 100, clientY: 100,
+    }))
+    fireEvent(viewport, pointerEvent('pointerup', { button: 0, clientX: 100, clientY: 100 }))
+
+    act(() => inpaintRef.current?.resetStrokeAnchor())
+    fireEvent(viewport, pointerEvent('pointerdown', {
+      button: 0, buttons: 1, clientX: 200, clientY: 150, shiftKey: true,
+    }))
+    fireEvent(viewport, pointerEvent('pointerup', {
+      button: 0, clientX: 200, clientY: 150, shiftKey: true,
+    }))
+    expect(onStrokeEnd).toHaveBeenLastCalledWith(expect.objectContaining({
+      points: [{ x: 150, y: 150 }],
+    }))
+  })
+
+  it('clears the Shift-click endpoint when the tool, mode, or image changes', async () => {
+    const result = await renderLoaded()
+    const tap = (viewport: HTMLElement, x: number, y: number, shiftKey = false) => {
+      fireEvent(viewport, pointerEvent('pointerdown', {
+        button: 0, buttons: 1, clientX: x, clientY: y, shiftKey,
+      }))
+      fireEvent(viewport, pointerEvent('pointerup', {
+        button: 0, clientX: x, clientY: y, shiftKey,
+      }))
+    }
+    tap(result.viewport, 100, 100)
+
+    result.rerender(<Harness {...result.callbacks} tool="eraser" />)
+    tap(result.viewport, 180, 140, true)
+    expect(result.onStrokeEnd).toHaveBeenLastCalledWith(expect.objectContaining({
+      erase: true,
+      points: [{ x: 130, y: 140 }],
+    }))
+
+    tap(result.viewport, 190, 150)
+    result.rerender(<Harness {...result.callbacks} mode="mask" tool="eraser" />)
+    tap(result.viewport, 200, 160, true)
+    expect(result.onMaskStrokeEnd).toHaveBeenLastCalledWith(expect.objectContaining({
+      erase: true,
+      points: [{ x: 150, y: 160 }],
+    }))
+
+    tap(result.viewport, 210, 170)
+    result.rerender(
+      <Harness {...result.callbacks} imageUrl="/other.png" mode="mask" tool="eraser" />,
+    )
+    await waitFor(() => expect(screen.queryByText('加载原图...')).not.toBeInTheDocument())
+    tap(result.viewport, 220, 180, true)
+    expect(result.onMaskStrokeEnd).toHaveBeenLastCalledWith(expect.objectContaining({
+      erase: true,
+      points: [expect.objectContaining({
+        x: expect.any(Number),
+        y: expect.any(Number),
+      })],
+    }))
+  })
+
+  it('keeps Alt color picking ahead of Shift-click drawing', async () => {
+    const { viewport, onPickColor, onStrokeEnd } = await renderLoaded()
+    fireEvent(viewport, pointerEvent('pointerdown', {
+      button: 0, buttons: 1, clientX: 100, clientY: 100, altKey: true, shiftKey: true,
+    }))
+    fireEvent(viewport, pointerEvent('pointerup', {
+      button: 0, clientX: 100, clientY: 100, altKey: true, shiftKey: true,
+    }))
+    expect(onPickColor).toHaveBeenCalledWith('#0a141e')
+    expect(onStrokeEnd).not.toHaveBeenCalled()
   })
 
   it('builds and closes a lasso only after three points reach the start', async () => {
