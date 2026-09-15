@@ -1,30 +1,50 @@
-import { render, screen } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+const gridMocks = vi.hoisted(() => ({
+  omitIndex: -1,
+  scrollToIndex: vi.fn(),
+}))
 
 // jsdom 没有真实 layout（getBoundingClientRect / ResizeObserver 都不工作），
 // VirtuosoGrid 会判断容器 0 高度 → 一个 cell 都不渲染。这里 mock 成「无脑全
 // 渲」：测试要的是选择 / 点击 / 空态语义，不是虚拟化本身（虚拟化属于 Virtuoso
 // 库职责，他们自己测过）。生产路径 import 真组件不受影响。
-vi.mock('react-virtuoso', () => ({
-  VirtuosoGrid: ({
-    totalCount,
-    itemContent,
-    listClassName,
-  }: {
-    totalCount: number
-    itemContent: (index: number) => React.ReactNode
-    listClassName?: string
-  }) => (
-    <div className={listClassName}>
-      {Array.from({ length: totalCount }, (_, i) => (
-        <div key={i}>{itemContent(i)}</div>
-      ))}
-    </div>
-  ),
-}))
+vi.mock('react-virtuoso', async () => {
+  const { forwardRef, useImperativeHandle } = await import('react')
+  return {
+    VirtuosoGrid: forwardRef(function MockVirtuosoGrid({
+      totalCount,
+      itemContent,
+      listClassName,
+    }: {
+      totalCount: number
+      itemContent: (index: number) => React.ReactNode
+      listClassName?: string
+    }, ref) {
+      useImperativeHandle(ref, () => ({ scrollToIndex: gridMocks.scrollToIndex }))
+      return (
+        <div className={listClassName}>
+          {Array.from({ length: totalCount }, (_, i) => (
+            i === gridMocks.omitIndex
+              ? null
+              : <div key={i} data-index={i}>{itemContent(i)}</div>
+          ))}
+        </div>
+      )
+    }),
+  }
+})
 
 import ImageGrid, { applySelection } from './ImageGrid'
+
+afterEach(() => {
+  gridMocks.omitIndex = -1
+  gridMocks.scrollToIndex.mockReset()
+  vi.restoreAllMocks()
+  vi.unstubAllGlobals()
+})
 
 const items = [
   { name: 'a.png', thumbUrl: '/a' },
@@ -105,6 +125,61 @@ describe('ImageGrid (PP3)', () => {
     expect(grid).toHaveClass('h-full', 'min-h-0', 'flex-1')
     expect(grid).not.toHaveClass('p-2', '-mr-2')
     expect(container.querySelector('.grid')).toHaveClass('p-2')
+  })
+
+  it('reports the computed responsive column count and refreshes it after resize', async () => {
+    let resizeCallback: ResizeObserverCallback = () => {}
+    class MockResizeObserver {
+      constructor(callback: ResizeObserverCallback) { resizeCallback = callback }
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+    vi.stubGlobal('ResizeObserver', MockResizeObserver)
+
+    let template = '120px 120px 120px'
+    const nativeGetComputedStyle = window.getComputedStyle.bind(window)
+    vi.spyOn(window, 'getComputedStyle').mockImplementation((element) => {
+      const style = nativeGetComputedStyle(element)
+      Object.defineProperty(style, 'gridTemplateColumns', {
+        configurable: true,
+        value: template,
+      })
+      return style
+    })
+    const onColumnCountChange = vi.fn()
+
+    render(
+      <ImageGrid
+        items={items}
+        selected={new Set()}
+        onSelect={() => {}}
+        onColumnCountChange={onColumnCountChange}
+      />
+    )
+
+    await waitFor(() => expect(onColumnCountChange).toHaveBeenLastCalledWith(3))
+    template = '120px 120px'
+    act(() => resizeCallback([], {} as ResizeObserver))
+    expect(onColumnCountChange).toHaveBeenLastCalledWith(2)
+  })
+
+  it('asks Virtuoso to reveal an active item that is outside the mounted range', async () => {
+    gridMocks.omitIndex = 2
+    render(
+      <ImageGrid
+        items={items}
+        selected={new Set()}
+        activeName="c.png"
+        onSelect={() => {}}
+      />
+    )
+
+    await waitFor(() => expect(gridMocks.scrollToIndex).toHaveBeenCalledWith({
+      index: 2,
+      align: 'center',
+      behavior: 'auto',
+    }))
   })
 
   it('clicking a cell calls onSelect with name', async () => {

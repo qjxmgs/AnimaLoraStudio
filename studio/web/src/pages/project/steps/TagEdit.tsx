@@ -50,6 +50,60 @@ interface CaptionMeta {
   format: 'txt' | 'json' | 'none'
 }
 
+type GridDirection = 'up' | 'down' | 'left' | 'right'
+
+const NON_TEXT_INPUT_TYPES = new Set([
+  'button',
+  'checkbox',
+  'color',
+  'file',
+  'hidden',
+  'image',
+  'radio',
+  'range',
+  'reset',
+  'submit',
+])
+
+function isTextEntryTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false
+  if (
+    target.isContentEditable ||
+    target.closest('[contenteditable]:not([contenteditable="false"])')
+  ) {
+    return true
+  }
+  const control = target.closest('input, textarea, select')
+  if (control instanceof HTMLTextAreaElement || control instanceof HTMLSelectElement) return true
+  return control instanceof HTMLInputElement && !NON_TEXT_INPUT_TYPES.has(control.type)
+}
+
+function hasVisibleModal(): boolean {
+  return Array.from(document.querySelectorAll<HTMLElement>('[aria-modal="true"]')).some((modal) => {
+    const style = window.getComputedStyle(modal)
+    return (
+      !modal.hidden &&
+      modal.getAttribute('aria-hidden') !== 'true' &&
+      style.display !== 'none' &&
+      style.visibility !== 'hidden'
+    )
+  })
+}
+
+function nextGridIndex(
+  current: number,
+  count: number,
+  columns: number,
+  direction: GridDirection,
+): number {
+  if (current < 0 || current >= count || count <= 0) return current
+  const safeColumns = Math.max(1, Math.floor(columns))
+  if (direction === 'left') return current > 0 ? current - 1 : current
+  if (direction === 'right') return current + 1 < count ? current + 1 : current
+  if (direction === 'up') return current - safeColumns >= 0 ? current - safeColumns : current
+  return current + safeColumns < count ? current + safeColumns : current
+}
+
 function arraysEqual(a: string[], b: string[]): boolean {
   if (a.length !== b.length) return false
   for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false
@@ -81,6 +135,7 @@ export default function TagEditPage() {
   const [activeKey, setActiveKey] = useState<string>('')
   const [sel, setSel] = useState<Set<string>>(new Set())
   const [anchor, setAnchor] = useState<string | null>(null)
+  const [gridColumnCount, setGridColumnCount] = useState(1)
   // '' = 全部；否则限定到该 folder（1_data / 2_data ...）。命名特意区分于下面
   // editing 时用的 `activeFolder`（那个是当前编辑图所在 folder，纯展示）。
   const [folderFilter, setFolderFilter] = useState<string>('')
@@ -338,6 +393,41 @@ export default function TagEditPage() {
   )
   const navKeys = activeKey && selectedKeys.includes(activeKey) ? selectedKeys : filteredKeys
   const activeIndex = activeKey ? navKeys.indexOf(activeKey) : -1
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (
+        !activeKey ||
+        event.defaultPrevented ||
+        event.isComposing ||
+        event.ctrlKey ||
+        event.altKey ||
+        event.metaKey ||
+        isTextEntryTarget(event.target) ||
+        hasVisibleModal()
+      ) {
+        return
+      }
+
+      const directionByCode: Partial<Record<string, GridDirection>> = {
+        KeyW: 'up',
+        KeyS: 'down',
+        KeyA: 'left',
+        KeyD: 'right',
+      }
+      const direction = directionByCode[event.code]
+      if (!direction) return
+
+      const current = filteredKeys.indexOf(activeKey)
+      const next = nextGridIndex(current, filteredKeys.length, gridColumnCount, direction)
+      if (next === current || next < 0) return
+      event.preventDefault()
+      setActiveKey(filteredKeys[next])
+    }
+
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [activeKey, filteredKeys, gridColumnCount])
 
   const tagSuggestions = useMemo(() => {
     const set = new Set<string>()
@@ -696,6 +786,7 @@ export default function TagEditPage() {
             items={captionItems}
             selected={sel}
             activeName={activeKey || undefined}
+            onColumnCountChange={setGridColumnCount}
             onSelect={handleClick}
             onActivate={setActiveKey}
             clickMode={sel.size > 0 ? 'select' : 'activate'}

@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   reload: vi.fn(async () => undefined),
   setVersionSwitchGuard: vi.fn(),
   onEvent: undefined as undefined | ((event: Record<string, unknown>) => void),
+  gridColumns: 2,
 }))
 
 vi.mock('react-router-dom', async (importOriginal) => {
@@ -50,18 +51,14 @@ vi.mock('../../../components/preprocess/TrainingMaskOverlay', () => ({
     <div data-testid="training-mask-overlay" data-src={src} />
   ),
 }))
-vi.mock('../../../components/ImageGrid', () => ({
-  applySelection: (selected: Set<string>, name: string) => {
-    const next = new Set(selected)
-    if (next.has(name)) next.delete(name)
-    else next.add(name)
-    return { next, anchor: name }
-  },
-  default: ({
+vi.mock('../../../components/ImageGrid', async () => {
+  const { useEffect } = await import('react')
+  function MockImageGrid({
     items,
     selected,
     onSelect,
     onActivate,
+    onColumnCountChange,
     clickMode,
     ariaLabel,
     emptyHint,
@@ -70,38 +67,51 @@ vi.mock('../../../components/ImageGrid', () => ({
     selected: Set<string>
     onSelect: (name: string, event: React.MouseEvent) => void
     onActivate?: (name: string) => void
+    onColumnCountChange?: (columns: number) => void
     clickMode?: 'select' | 'activate'
     ariaLabel?: string
     emptyHint?: string
-  }) => (
-    <div role="grid" aria-label={ariaLabel}>
-      {items.length === 0 ? <span>{emptyHint}</span> : items.map((item) => {
-        const label = item.label ?? item.name
-        return (
-          <div key={item.name}>
-            <button
-              type="button"
-              onClick={(event) => onSelect(item.name, event)}
-              aria-pressed={selected.has(item.name)}
-            >
-              选择 {label}
-            </button>
-            <button
-              type="button"
-              onClick={(event) => {
-                if (clickMode === 'select') onSelect(item.name, event)
-                else onActivate?.(item.name)
-              }}
-            >
-              打开 {label}
-            </button>
-            {item.badge && <span data-testid={`image-badge-${item.name}`}>{item.badge}</span>}
-          </div>
-        )
-      })}
-    </div>
-  ),
-}))
+  }) {
+    useEffect(() => { onColumnCountChange?.(mocks.gridColumns) }, [onColumnCountChange])
+    return (
+      <div role="grid" aria-label={ariaLabel}>
+        {items.length === 0 ? <span>{emptyHint}</span> : items.map((item) => {
+          const label = item.label ?? item.name
+          return (
+            <div key={item.name}>
+              <button
+                type="button"
+                onClick={(event) => onSelect(item.name, event)}
+                aria-pressed={selected.has(item.name)}
+              >
+                选择 {label}
+              </button>
+              <button
+                type="button"
+                onClick={(event) => {
+                  if (clickMode === 'select') onSelect(item.name, event)
+                  else onActivate?.(item.name)
+                }}
+              >
+                打开 {label}
+              </button>
+              {item.badge && <span data-testid={`image-badge-${item.name}`}>{item.badge}</span>}
+            </div>
+          )
+        })}
+      </div>
+    )
+  }
+  return {
+    applySelection: (selected: Set<string>, name: string) => {
+      const next = new Set(selected)
+      if (next.has(name)) next.delete(name)
+      else next.add(name)
+      return { next, anchor: name }
+    },
+    default: MockImageGrid,
+  }
+})
 vi.mock('../../../components/TagEditor', () => ({
   default: ({ tags, onChange }: { tags: string[]; onChange: (tags: string[]) => void }) => (
     <div>
@@ -176,6 +186,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   localStorage.clear()
   mocks.onEvent = undefined
+  mocks.gridColumns = 2
   vi.spyOn(api, 'listCaptionsFull').mockResolvedValue(captions)
   vi.spyOn(api, 'listCropWorkspaceTrain').mockResolvedValue(cropWorkspace)
   vi.spyOn(api, 'commitCaptions').mockResolvedValue({
@@ -479,6 +490,110 @@ describe('TagEdit workspace', () => {
     expect(screen.getByText('1/3')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '下一张' }))
     expect(screen.getByTestId('preview-image')).toHaveTextContent('a2.png')
+  })
+
+  it('navigates horizontally with A/D across rows without wrapping the whole list', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await ready()
+
+    await user.click(screen.getByRole('button', { name: '打开 人物 A/a1.png' }))
+    fireEvent.keyDown(window, { code: 'KeyD', key: 'd' })
+    expect(screen.getByTestId('preview-image')).toHaveTextContent('a2.png')
+    fireEvent.keyDown(window, { code: 'KeyD', key: 'd' })
+    expect(screen.getByTestId('preview-image')).toHaveTextContent('b1.png')
+    fireEvent.keyDown(window, { code: 'KeyD', key: 'd' })
+    expect(screen.getByTestId('preview-image')).toHaveTextContent('b1.png')
+
+    fireEvent.keyDown(window, { code: 'KeyA', key: 'a' })
+    expect(screen.getByTestId('preview-image')).toHaveTextContent('a2.png')
+    fireEvent.keyDown(window, { code: 'KeyA', key: 'a' })
+    fireEvent.keyDown(window, { code: 'KeyA', key: 'a' })
+    expect(screen.getByTestId('preview-image')).toHaveTextContent('a1.png')
+  })
+
+  it('uses the visible grid columns for W/S even when the active image is selected', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await ready()
+
+    await user.click(screen.getByRole('button', { name: '打开 人物 A/a1.png' }))
+    await user.click(screen.getByRole('button', { name: '选择 人物 A/a1.png' }))
+    await user.click(screen.getByRole('button', { name: '选择 人物 A/a2.png' }))
+    fireEvent.keyDown(window, { code: 'KeyS', key: 's' })
+    expect(screen.getByTestId('preview-image')).toHaveTextContent('b1.png')
+    fireEvent.keyDown(window, { code: 'KeyW', key: 'w' })
+    expect(screen.getByTestId('preview-image')).toHaveTextContent('a1.png')
+
+    fireEvent.keyDown(window, { code: 'KeyD', key: 'd' })
+    expect(screen.getByTestId('preview-image')).toHaveTextContent('a2.png')
+    fireEvent.keyDown(window, { code: 'KeyS', key: 's' })
+    expect(screen.getByTestId('preview-image')).toHaveTextContent('a2.png')
+  })
+
+  it('keeps WASD inside the current folder filter', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await ready()
+
+    await user.click(screen.getByRole('radio', { name: /人物 A/ }))
+    await user.click(screen.getByRole('button', { name: '打开 人物 A/a2.png' }))
+    fireEvent.keyDown(window, { code: 'KeyD', key: 'd' })
+    expect(screen.getByTestId('preview-image')).toHaveTextContent('a2.png')
+  })
+
+  it('ignores WASD while typing, composing, using modifiers, or showing a modal', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await ready()
+    await user.click(screen.getByRole('button', { name: '打开 人物 A/a1.png' }))
+
+    const input = screen.getByRole('textbox', { name: '以文本编辑标签' })
+    input.focus()
+    fireEvent.keyDown(input, { code: 'KeyD', key: 'd' })
+    expect(screen.getByTestId('preview-image')).toHaveTextContent('a1.png')
+
+    input.blur()
+    fireEvent.keyDown(window, { code: 'KeyD', key: 'd', isComposing: true })
+    fireEvent.keyDown(window, { code: 'KeyD', key: 'd', ctrlKey: true })
+    expect(screen.getByTestId('preview-image')).toHaveTextContent('a1.png')
+
+    const editable = document.createElement('div')
+    editable.setAttribute('contenteditable', 'true')
+    document.body.appendChild(editable)
+    fireEvent.keyDown(editable, { code: 'KeyD', key: 'd' })
+    expect(screen.getByTestId('preview-image')).toHaveTextContent('a1.png')
+    editable.remove()
+
+    const modal = document.createElement('div')
+    modal.setAttribute('aria-modal', 'true')
+    document.body.appendChild(modal)
+    fireEvent.keyDown(window, { code: 'KeyD', key: 'd' })
+    expect(screen.getByTestId('preview-image')).toHaveTextContent('a1.png')
+    modal.remove()
+  })
+
+  it('does not let a hidden persistent modal shell block WASD', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await ready()
+    await user.click(screen.getByRole('button', { name: '打开 人物 A/a1.png' }))
+
+    const hiddenModal = document.createElement('div')
+    hiddenModal.setAttribute('aria-modal', 'true')
+    hiddenModal.style.visibility = 'hidden'
+    document.body.appendChild(hiddenModal)
+    fireEvent.keyDown(window, { code: 'KeyD', key: 'd' })
+    expect(screen.getByTestId('preview-image')).toHaveTextContent('a2.png')
+    hiddenModal.remove()
+  })
+
+  it('does not open an editor when WASD is pressed without an active image', async () => {
+    renderPage()
+    await ready()
+
+    fireEvent.keyDown(window, { code: 'KeyD', key: 'd' })
+    expect(screen.queryByTestId('preview-image')).not.toBeInTheDocument()
   })
 
   it('groups the single-image editor controls in a visible panel header', async () => {

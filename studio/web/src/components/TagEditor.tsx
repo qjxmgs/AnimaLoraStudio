@@ -575,8 +575,8 @@ function SortableChip({
         <span
           aria-hidden="true"
           data-tag-insertion-edge={insertionEdge}
-          className={`pointer-events-none absolute -inset-y-0.5 z-10 w-0.5 rounded-full bg-info shadow-sm ${
-            insertionEdge === 'before' ? '-left-[3px]' : '-right-[3px]'
+          className={`pointer-events-none absolute -inset-y-0.5 z-10 w-1 rounded-full bg-info shadow-sm ${
+            insertionEdge === 'before' ? '-left-[6px]' : '-right-[6px]'
           }`}
         />
       )}

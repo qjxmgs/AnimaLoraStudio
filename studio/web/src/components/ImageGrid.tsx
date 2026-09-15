@@ -1,6 +1,6 @@
 import { memo, useEffect, useRef, useState, type SyntheticEvent } from 'react'
 import { useTranslation } from 'react-i18next'
-import { VirtuosoGrid } from 'react-virtuoso'
+import { VirtuosoGrid, type VirtuosoGridHandle } from 'react-virtuoso'
 
 export interface ImageGridItem {
   name: string
@@ -13,7 +13,7 @@ export interface ImageGridItem {
   badgeTone?: 'accent' | 'warning'
 }
 
-interface Props {
+export interface ImageGridProps {
   items: ImageGridItem[]
   selected: Set<string>
   /** Classes for the stable height-constrained grid wrapper. */
@@ -43,11 +43,14 @@ interface Props {
    * **不传**沿用旧行为：selected 同时驱动 border 和 checkbox（其他用 ImageGrid
    * 的页面，如 Curation / Download / Reg 未引入「活跃项」概念，行为不变）。 */
   activeName?: string
+  /** 当前响应式网格的实际列数发生变化时回调。 */
+  onColumnCountChange?: (columns: number) => void
 }
 
 // 默认按容器宽度自动塞满：每格最小 120px，剩余宽度均分给最后一列；
 // 容器越宽列越多，无需断点切换。
 const DEFAULT_COLUMNS = 'grid-cols-[repeat(auto-fill,minmax(120px,1fr))]'
+const GRID_LIST_MARKER = 'ui-image-grid-list'
 
 // 虚拟滚动 buffer：约 5-6 行 cell。暗主题 cell 底色是 #110f0b（接近纯黑），
 // 滚动时新 mount 的 cell 在 img decode 完成前会闪一下黑色；overscan 足够大
@@ -90,6 +93,32 @@ function extractAvgColor(img: HTMLImageElement): string | null {
   }
 }
 
+function countGridTracks(template: string): number {
+  const value = template.trim()
+  if (!value || value === 'none') return 1
+
+  // 浏览器通常会把 repeat(auto-fill, ...) 展开成逐列像素值。保留固定 repeat
+  // 的兜底，方便测试环境或未来传入未展开的计算样式。
+  const fixedRepeat = /^repeat\(\s*(\d+)\s*,/i.exec(value)
+  if (fixedRepeat) return Math.max(1, Number(fixedRepeat[1]))
+
+  let depth = 0
+  let count = 0
+  let inTrack = false
+  for (const char of value) {
+    if (char === '(') depth += 1
+    else if (char === ')') depth = Math.max(0, depth - 1)
+
+    if (/\s/.test(char) && depth === 0) {
+      inTrack = false
+    } else if (!inTrack) {
+      count += 1
+      inTrack = true
+    }
+  }
+  return Math.max(1, count)
+}
+
 export default function ImageGrid({
   items,
   selected,
@@ -102,10 +131,61 @@ export default function ImageGrid({
   ariaLabel,
   columnsClass = DEFAULT_COLUMNS,
   activeName,
+  onColumnCountChange,
   className = '',
   contentClassName = '',
-}: Props) {
+}: ImageGridProps) {
   const { t } = useTranslation()
+  const rootRef = useRef<HTMLDivElement>(null)
+  const virtuosoRef = useRef<VirtuosoGridHandle>(null)
+  const lastColumnCountRef = useRef(0)
+  const activeIndex = activeName == null
+    ? -1
+    : items.findIndex((item) => item.name === activeName)
+
+  useEffect(() => {
+    if (!onColumnCountChange || items.length === 0) return
+    const root = rootRef.current
+    const list = root?.querySelector<HTMLElement>(`.${GRID_LIST_MARKER}`)
+    if (!list) return
+
+    const reportColumnCount = () => {
+      const columns = countGridTracks(window.getComputedStyle(list).gridTemplateColumns)
+      if (columns === lastColumnCountRef.current) return
+      lastColumnCountRef.current = columns
+      onColumnCountChange(columns)
+    }
+
+    reportColumnCount()
+    if (typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(reportColumnCount)
+    observer.observe(list)
+    return () => observer.disconnect()
+  }, [columnsClass, contentClassName, items.length, onColumnCountChange])
+
+  useEffect(() => {
+    if (activeIndex < 0) return
+    const root = rootRef.current
+    const activeCell = root?.querySelector<HTMLElement>(
+      `.${GRID_LIST_MARKER} > [data-index="${activeIndex}"]`,
+    )
+    if (!root || !activeCell) {
+      virtuosoRef.current?.scrollToIndex({ index: activeIndex, align: 'center', behavior: 'auto' })
+      return
+    }
+
+    const rootRect = root.getBoundingClientRect()
+    const cellRect = activeCell.getBoundingClientRect()
+    const outsideViewport =
+      cellRect.top < rootRect.top ||
+      cellRect.bottom > rootRect.bottom ||
+      cellRect.left < rootRect.left ||
+      cellRect.right > rootRect.right
+    if (outsideViewport && typeof activeCell.scrollIntoView === 'function') {
+      activeCell.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+    }
+  }, [activeIndex])
+
   if (items.length === 0) {
     return (
       <div className={`h-full min-h-0 ${className}`.trim()}>
@@ -123,15 +203,17 @@ export default function ImageGrid({
   // Cell 上的 role="gridcell"，AT / 测试都不受影响。
   return (
     <div
+      ref={rootRef}
       role="grid"
       aria-label={ariaLabel}
       className={`h-full min-h-0 ${className}`.trim()}
     >
       <VirtuosoGrid
+        ref={activeName !== undefined ? virtuosoRef : undefined}
         style={{ height: '100%' }}
         totalCount={items.length}
         overscan={OVERSCAN_PX}
-        listClassName={`grid ${columnsClass} gap-1 ${contentClassName}`.trim()}
+        listClassName={`${GRID_LIST_MARKER} grid ${columnsClass} gap-1 ${contentClassName}`.trim()}
         itemContent={(index) => {
           const it = items[index]
           const isSel = selected.has(it.name)

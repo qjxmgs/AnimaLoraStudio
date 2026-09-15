@@ -245,6 +245,9 @@ describe('TagEditor (PP4 chip mode)', () => {
     await waitFor(() => {
       expect(container.querySelector('[data-tag-insertion-edge="after"]')).toBeInTheDocument()
     })
+    const insertionMarker = container.querySelector('[data-tag-insertion-edge="after"]')
+    expect(insertionMarker).toHaveClass('w-1', '-right-[6px]')
+    expect(insertionMarker).not.toHaveClass('w-0.5', '-right-[3px]')
     expect(Array.from(container.querySelectorAll('[data-tag-chip]'), (chip) => (
       chip.getAttribute('data-tag-chip')
     ))).toEqual(['a', 'b', 'c'])
