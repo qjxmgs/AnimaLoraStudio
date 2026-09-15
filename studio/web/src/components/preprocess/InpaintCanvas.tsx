@@ -536,7 +536,11 @@ const InpaintCanvas = forwardRef<
 
   // 视口（zoom / pan / fit / 坐标换算）走共享 hook；画笔类场景左键留给
   // 画笔（primaryButtonPans 缺省 false），pan 由空格 / 中键触发。
-  const zp = useZoomPan({ contentW: imageW, contentH: imageH })
+  const zp = useZoomPan({
+    contentW: imageW,
+    contentH: imageH,
+    spacePanScope: 'viewport',
+  })
   const { wrapRef, contentRef, toContentPoint } = zp
 
   // 落笔时锁定归属（paint / mask），松手按此提交 —— 不事后按 mode 猜
@@ -1304,7 +1308,12 @@ const InpaintCanvas = forwardRef<
       <div
         ref={wrapRef}
         className="relative flex-1 min-h-0 overflow-hidden rounded border border-subtle bg-sunken"
-        style={{ touchAction: 'none', cursor: tool === 'lasso' ? 'crosshair' : 'none' }}
+        style={{
+          touchAction: 'none',
+          cursor: zp.isPanning
+            ? 'grabbing'
+            : zp.spacePressed ? 'grab' : tool === 'lasso' ? 'crosshair' : 'none',
+        }}
         tabIndex={0}
         aria-label={t('preprocessInpaint.canvasLabel')}
         onPointerDown={onPointerDown}
@@ -1410,6 +1419,7 @@ const InpaintCanvas = forwardRef<
           className="absolute pointer-events-none rounded-full"
           style={{
             display: 'none',
+            opacity: zp.spacePressed || zp.isPanning ? 0 : 1,
             border: mode === 'mask' && !erase
               ? '1.5px solid rgba(255,45,45,0.95)'
               : `1.5px ${erase ? 'dashed' : 'solid'} rgba(255,255,255,0.9)`,

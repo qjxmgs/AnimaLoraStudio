@@ -14,6 +14,17 @@
   user-select: none;
 }
 
+/* Space-pan temporarily owns the whole crop viewport, including crop boxes
+   and resize handles whose normal cursors would otherwise override the hand. */
+.crop-editor-viewport.is-space-pan,
+.crop-editor-viewport.is-space-pan * {
+  cursor: grab !important;
+}
+.crop-editor-viewport.is-panning,
+.crop-editor-viewport.is-panning * {
+  cursor: grabbing !important;
+}
+
 .cropper-dim {
   position: absolute;
   inset: 0;

@@ -207,6 +207,48 @@ describe('InpaintCanvas brush adjustment gesture', () => {
     return { ...callbacks, viewport, rerender: view.rerender }
   }
 
+  it.each<InpaintTool>(['brush', 'eraser', 'lasso'])(
+    'uses Space-left-drag to pan in %s mode without editing',
+    async (tool) => {
+      const {
+        viewport, onStrokeEnd, onMaskStrokeEnd, onLassoCreate, onLassoUpdate,
+      } = await renderLoaded({ mode: 'mask', tool })
+      if (tool !== 'lasso') {
+        fireEvent(viewport, pointerEvent('pointermove', { clientX: 160, clientY: 150 }))
+        expect(screen.getByTestId('brush-cursor')).toHaveStyle({ display: 'block' })
+      }
+
+      fireEvent.pointerEnter(viewport)
+      fireEvent.keyDown(window, { code: 'Space' })
+      expect(viewport).toHaveStyle({ cursor: 'grab' })
+      if (tool !== 'lasso') {
+        expect(screen.getByTestId('brush-cursor')).toHaveStyle({ opacity: '0' })
+      }
+
+      fireEvent(viewport, pointerEvent('pointerdown', {
+        button: 0, buttons: 1, pointerId: 8, clientX: 180, clientY: 170,
+      }))
+      expect(viewport).toHaveStyle({ cursor: 'grabbing' })
+      fireEvent.keyUp(window, { code: 'Space' })
+      expect(viewport).toHaveStyle({ cursor: 'grabbing' })
+      fireEvent(viewport, pointerEvent('pointermove', {
+        button: 0, buttons: 1, pointerId: 8, clientX: 220, clientY: 195,
+      }))
+      fireEvent(viewport, pointerEvent('pointerup', {
+        button: 0, pointerId: 8, clientX: 220, clientY: 195,
+      }))
+
+      expect(onStrokeEnd).not.toHaveBeenCalled()
+      expect(onMaskStrokeEnd).not.toHaveBeenCalled()
+      expect(onLassoCreate).not.toHaveBeenCalled()
+      expect(onLassoUpdate).not.toHaveBeenCalled()
+      expect(viewport).toHaveStyle({ cursor: tool === 'lasso' ? 'crosshair' : 'none' })
+      if (tool !== 'lasso') {
+        expect(screen.getByTestId('brush-cursor')).toHaveStyle({ opacity: '1' })
+      }
+    },
+  )
+
   it('locks horizontal movement to diameter despite vertical jitter', async () => {
     const { viewport, onBrushAdjust, onStrokeEnd, onMaskStrokeEnd } = await renderLoaded()
 

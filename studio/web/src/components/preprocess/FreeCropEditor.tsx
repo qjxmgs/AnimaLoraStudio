@@ -191,6 +191,7 @@ export default function FreeCropEditor({
     contentW: (natural ?? { w: image.w, h: image.h }).w,
     contentH: (natural ?? { w: image.w, h: image.h }).h,
     applyMode: 'size',
+    spacePanScope: 'viewport',
   })
 
   const onPointerDown = (
@@ -322,14 +323,21 @@ export default function FreeCropEditor({
     <div className="flex flex-col w-full h-full overflow-hidden min-w-0 min-h-0 gap-1.5">
       <div
         ref={zp.wrapRef}
-        className="relative flex-1 min-h-0 overflow-hidden rounded border border-subtle bg-sunken"
+        data-testid="free-crop-viewport"
+        className={[
+          'crop-editor-viewport relative flex-1 min-h-0 overflow-hidden rounded border border-subtle bg-sunken',
+          zp.isPanning ? 'is-panning' : zp.spacePressed ? 'is-space-pan' : '',
+        ].join(' ')}
         style={{ touchAction: 'none' }}
+        tabIndex={-1}
         onPointerDown={(e) => {
+          e.currentTarget.focus({ preventScroll: true })
           if (zp.panPointerDown(e)) e.currentTarget.setPointerCapture(e.pointerId)
         }}
         onPointerMove={(e) => { zp.panPointerMove(e) }}
         onPointerUp={() => zp.endPan()}
         onPointerCancel={() => zp.endPan()}
+        onLostPointerCapture={() => zp.endPan()}
       >
       <div
         ref={(el) => {

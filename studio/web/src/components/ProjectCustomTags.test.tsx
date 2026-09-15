@@ -19,10 +19,20 @@ describe('ProjectCustomTags', () => {
     )
 
     const palette = screen.getByRole('region', { name: '项目常驻标签' })
-    expect(palette).toHaveClass('max-h-28')
+    expect(palette).toHaveClass('max-h-36')
+    const header = palette.querySelector('[data-custom-tags-header]')
+    expect(header).toHaveClass('h-10', 'shrink-0')
+    expect(header).toHaveTextContent('自定义快捷标签')
+    expect(header).toContainElement(
+      within(palette).getByRole('button', { name: '添加项目常驻标签' }),
+    )
+    expect(within(palette).getByRole('button', { name: /^already$/ })).toHaveClass(
+      'bg-transparent',
+    )
     expect(within(palette).getByRole('button', { name: /^already$/ })).toBeDisabled()
     const available = within(palette).getByRole('button', { name: /^available$/ })
     expect(available).toBeEnabled()
+    expect(available.parentElement).toHaveClass('border-info', 'bg-info-soft', 'text-info')
     await user.click(available)
     expect(onPick).toHaveBeenCalledWith('available')
   })

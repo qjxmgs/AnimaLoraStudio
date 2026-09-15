@@ -37,6 +37,10 @@ export interface UseZoomPanOptions {
   contentH: number
   /** true = 左键拖拽即 pan（纯查看器）；false = 仅空格 / 中键（画笔类）。 */
   primaryButtonPans?: boolean
+  /** 空格平移修饰键的激活范围：
+   *  - 'global'（默认）：沿用查看器的页面级行为。
+   *  - 'viewport'：只有指针位于或焦点处于视口时才接管空格。 */
+  spacePanScope?: 'global' | 'viewport'
   /** 缩放的 DOM 应用方式：
    *  - 'transform'（默认）：translate+scale，纯 composite 最快；内容整体
    *    视觉缩放（含边框 / 子元素）。
@@ -58,10 +62,19 @@ export interface UseZoomPanOptions {
   onTap?: (hitContent: boolean) => void
 }
 
+function isInteractiveSpaceTarget(target: EventTarget | null): boolean {
+  const element = target instanceof Element ? target : null
+  return Boolean(element?.closest(
+    'input, textarea, select, button, a[href], [contenteditable="true"], '
+    + '[role="button"], [role="textbox"], [role="combobox"], [role="slider"]',
+  ))
+}
+
 export function useZoomPan({
   contentW,
   contentH,
   primaryButtonPans = false,
+  spacePanScope = 'global',
   applyMode = 'transform',
   fitPadding = 0.98,
   fitMaxScale,
@@ -74,12 +87,17 @@ export function useZoomPan({
   const viewRef = useRef<ZoomPanView>({ scale: 1, tx: 0, ty: 0 })
   const interactedRef = useRef(false)
   const spaceRef = useRef(false)
+  const physicalSpaceRef = useRef(false)
+  const pointerInsideRef = useRef(false)
+  const focusInsideRef = useRef(false)
   const panRef = useRef<{ x: number; y: number } | null>(null)
   // pan 手势发生过拖动（区分「点击遮罩关闭」与「拖完松手」——查看器 modal 用）
   const draggedRef = useRef(false)
   // pointerdown 时的真实 target（capture 后 up 事件被 retarget，命中判定只能在 down 记）
   const downTargetRef = useRef<EventTarget | null>(null)
   const [zoomPct, setZoomPct] = useState(100)
+  const [spacePressed, setSpacePressed] = useState(false)
+  const [isPanning, setIsPanning] = useState(false)
 
   const applyToDom = useCallback(() => {
     const v = viewRef.current
@@ -186,41 +204,118 @@ export function useZoomPan({
     return () => wrap.removeEventListener('wheel', onWheel)
   }, [applyView, minScale, maxScale])
 
-  // 空格 = pan 修饰键（表单元素聚焦时不劫持）
+  // viewport 模式只在图片编辑区内劫持空格。原生 enter/leave/focus 监听
+  // 放在 hook 内部，避免画笔类调用方组合自己的 pointer handlers 时漏接。
   useEffect(() => {
+    if (spacePanScope !== 'viewport') return
+    const wrap = wrapRef.current
+    if (!wrap) return
+
+    const activateIfHeld = () => {
+      if (!physicalSpaceRef.current || isInteractiveSpaceTarget(document.activeElement)) return
+      spaceRef.current = true
+      setSpacePressed(true)
+    }
+    const deactivateIfOutside = () => {
+      if (pointerInsideRef.current || focusInsideRef.current || panRef.current) return
+      spaceRef.current = false
+      setSpacePressed(false)
+    }
+    const onPointerEnter = () => {
+      pointerInsideRef.current = true
+      activateIfHeld()
+    }
+    const onPointerLeave = () => {
+      pointerInsideRef.current = false
+      deactivateIfOutside()
+    }
+    const onFocusIn = () => {
+      focusInsideRef.current = true
+      activateIfHeld()
+    }
+    const onFocusOut = (event: FocusEvent) => {
+      focusInsideRef.current = Boolean(
+        event.relatedTarget instanceof Node && wrap.contains(event.relatedTarget),
+      )
+      deactivateIfOutside()
+    }
+
+    wrap.addEventListener('pointerenter', onPointerEnter)
+    wrap.addEventListener('pointerleave', onPointerLeave)
+    wrap.addEventListener('focusin', onFocusIn)
+    wrap.addEventListener('focusout', onFocusOut)
+    return () => {
+      wrap.removeEventListener('pointerenter', onPointerEnter)
+      wrap.removeEventListener('pointerleave', onPointerLeave)
+      wrap.removeEventListener('focusin', onFocusIn)
+      wrap.removeEventListener('focusout', onFocusOut)
+      pointerInsideRef.current = false
+      focusInsideRef.current = false
+    }
+  }, [spacePanScope])
+
+  // 空格 = pan 修饰键。响应式状态只用于反馈光标；高频判断仍走 ref。
+  useEffect(() => {
+    const reset = () => {
+      physicalSpaceRef.current = false
+      spaceRef.current = false
+      panRef.current = null
+      draggedRef.current = false
+      downTargetRef.current = null
+      setSpacePressed(false)
+      setIsPanning(false)
+    }
     const down = (e: KeyboardEvent) => {
       if (e.code !== 'Space') return
-      const el = e.target as HTMLElement | null
+      if (e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return
+      physicalSpaceRef.current = true
+      if (isInteractiveSpaceTarget(e.target)) return
       if (
-        el &&
-        (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)
-      ) {
-        return
-      }
+        spacePanScope === 'viewport'
+        && !pointerInsideRef.current
+        && !focusInsideRef.current
+      ) return
       spaceRef.current = true
+      setSpacePressed(true)
       e.preventDefault()
     }
     const up = (e: KeyboardEvent) => {
-      if (e.code === 'Space') spaceRef.current = false
+      if (e.code !== 'Space') return
+      physicalSpaceRef.current = false
+      const wasPressed = spaceRef.current
+      spaceRef.current = false
+      setSpacePressed(false)
+      if (wasPressed) e.preventDefault()
+    }
+    const visibility = () => {
+      if (document.visibilityState === 'hidden') reset()
     }
     window.addEventListener('keydown', down)
     window.addEventListener('keyup', up)
+    window.addEventListener('blur', reset)
+    document.addEventListener('visibilitychange', visibility)
     return () => {
       window.removeEventListener('keydown', down)
       window.removeEventListener('keyup', up)
+      window.removeEventListener('blur', reset)
+      document.removeEventListener('visibilitychange', visibility)
+      physicalSpaceRef.current = false
+      spaceRef.current = false
+      panRef.current = null
     }
-  }, [])
+  }, [spacePanScope])
 
   /** pointerdown 是否为 pan 手势；是则接管（调用方跳过自己的逻辑）。 */
   const panPointerDown = useCallback((e: React.PointerEvent): boolean => {
     const isPan =
-      spaceRef.current ||
+      (spaceRef.current && e.button === 0) ||
       e.button === 1 ||
       (primaryButtonPans && e.button === 0)
     if (!isPan) return false
     panRef.current = { x: e.clientX, y: e.clientY }
     draggedRef.current = false
     downTargetRef.current = e.target
+    setIsPanning(true)
     return true
   }, [primaryButtonPans])
 
@@ -244,6 +339,7 @@ export function useZoomPan({
   /** 结束 pan；返回本次手势是否发生过拖动（modal 据此决定是否当作点击关闭）。 */
   const endPan = useCallback((): boolean => {
     panRef.current = null
+    setIsPanning(false)
     const dragged = draggedRef.current
     draggedRef.current = false
     return dragged
@@ -275,6 +371,9 @@ export function useZoomPan({
     onPointerCancel: () => {
       endPan()
     },
+    onLostPointerCapture: () => {
+      endPan()
+    },
   }
 
   return {
@@ -282,6 +381,8 @@ export function useZoomPan({
     contentRef,
     viewRef,
     zoomPct,
+    spacePressed,
+    isPanning,
     fit,
     reset100,
     toContentPoint,

@@ -106,6 +106,29 @@ beforeEach(() => {
 })
 
 describe('SingleImageInpaintDialog', () => {
+  it('focuses the inert editor surface instead of arming the close button with Space', async () => {
+    const user = userEvent.setup()
+    const onClose = vi.fn()
+    render(
+      <SingleImageInpaintDialog
+        projectId={7}
+        versionId={11}
+        image={image}
+        onClose={onClose}
+      />,
+    )
+
+    const editorRoot = screen.getByTestId('single-image-inpaint-editor-root')
+    const close = screen.getByRole('button', { name: '关闭' })
+    await waitFor(() => expect(editorRoot).toHaveFocus())
+    expect(close).not.toHaveFocus()
+
+    await user.keyboard('{Space>}')
+    expect(close).not.toHaveFocus()
+    await user.keyboard('{/Space}')
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
   it('shows only the reusable single-image editing controls', () => {
     render(
       <SingleImageInpaintDialog

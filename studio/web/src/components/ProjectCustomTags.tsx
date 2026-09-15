@@ -84,9 +84,81 @@ export default function ProjectCustomTags({
   return (
     <section
       aria-label={t('tagEditor.customTagsLabel')}
-      className="flex max-h-28 shrink-0 gap-2 overflow-hidden rounded-[6px] border border-subtle bg-sunken p-2"
+      className="flex max-h-36 shrink-0 flex-col overflow-hidden rounded-[6px] border border-subtle bg-sunken"
     >
-      <div className="flex min-w-0 flex-1 flex-wrap content-start gap-1.5 overflow-y-auto pr-0.5">
+      <div
+        data-custom-tags-header
+        className="flex h-10 shrink-0 items-center gap-2 border-b border-subtle bg-surface px-2 py-1"
+      >
+        <span className="shrink-0 text-xs font-medium text-fg-secondary">
+          {t('tagEditor.customTagsHeading')}
+        </span>
+
+        <div className="ml-auto flex min-w-0 items-center justify-end gap-1">
+          {adding ? (
+            <>
+              <Input
+                ref={inputRef}
+                value={draft}
+                onChange={(event) => setDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Escape') {
+                    event.preventDefault()
+                    closeAdd()
+                  } else if (event.key === 'Enter' || event.key === ',' || event.key === '，') {
+                    event.preventDefault()
+                    submitAdd()
+                  }
+                }}
+                disabled={busy}
+                invalid={duplicate}
+                aria-label={t('tagEditor.customTagInputLabel')}
+                title={duplicate ? t('tagEditor.customTagDuplicate') : undefined}
+                placeholder={t('tagEditor.customTagPlaceholder')}
+                controlSize="sm"
+                mono
+                className="min-w-0 flex-1"
+              />
+              <Button
+                variant="primary"
+                size="xs"
+                iconOnly
+                disabled={!normalizedDraft || duplicate || busy}
+                onClick={submitAdd}
+                aria-label={t('tagEditor.customTagConfirm')}
+              >
+                ✓
+              </Button>
+              <Button
+                variant="ghost"
+                size="xs"
+                iconOnly
+                disabled={busy}
+                onClick={closeAdd}
+                aria-label={t('common.cancel')}
+              >
+                ×
+              </Button>
+            </>
+          ) : (
+            <Button
+              variant="secondary"
+              size="xs"
+              iconOnly
+              disabled={busy}
+              onClick={() => {
+                setArmedTag(null)
+                setAdding(true)
+              }}
+              aria-label={t('tagEditor.customTagCreate')}
+            >
+              +
+            </Button>
+          )}
+        </div>
+      </div>
+
+      <div className="flex min-h-0 min-w-0 flex-1 flex-wrap content-start gap-1.5 overflow-y-auto p-2">
         {tags.map((tag) => {
           const unavailable = activeTags.has(tag)
           const armed = armedTag === tag
@@ -95,8 +167,8 @@ export default function ProjectCustomTags({
               key={tag}
               className={`inline-flex h-7 max-w-full overflow-hidden whitespace-nowrap rounded-[5px] border font-mono text-xs ${
                 unavailable
-                  ? 'border-subtle bg-sunken text-fg-disabled'
-                  : 'border-default bg-overlay text-fg-secondary'
+                  ? 'border-subtle bg-overlay text-fg-disabled'
+                  : 'border-info bg-info-soft text-info'
               }`}
             >
               <button
@@ -137,69 +209,6 @@ export default function ProjectCustomTags({
             </span>
           )
         })}
-      </div>
-
-      <div className="flex shrink-0 items-start gap-1">
-        {adding ? (
-          <>
-            <Input
-              ref={inputRef}
-              value={draft}
-              onChange={(event) => setDraft(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === 'Escape') {
-                  event.preventDefault()
-                  closeAdd()
-                } else if (event.key === 'Enter' || event.key === ',' || event.key === '，') {
-                  event.preventDefault()
-                  submitAdd()
-                }
-              }}
-              disabled={busy}
-              invalid={duplicate}
-              aria-label={t('tagEditor.customTagInputLabel')}
-              title={duplicate ? t('tagEditor.customTagDuplicate') : undefined}
-              placeholder={t('tagEditor.customTagPlaceholder')}
-              controlSize="sm"
-              mono
-              className="w-32"
-            />
-            <Button
-              variant="primary"
-              size="xs"
-              iconOnly
-              disabled={!normalizedDraft || duplicate || busy}
-              onClick={submitAdd}
-              aria-label={t('tagEditor.customTagConfirm')}
-            >
-              ✓
-            </Button>
-            <Button
-              variant="ghost"
-              size="xs"
-              iconOnly
-              disabled={busy}
-              onClick={closeAdd}
-              aria-label={t('common.cancel')}
-            >
-              ×
-            </Button>
-          </>
-        ) : (
-          <Button
-            variant="secondary"
-            size="xs"
-            iconOnly
-            disabled={busy}
-            onClick={() => {
-              setArmedTag(null)
-              setAdding(true)
-            }}
-            aria-label={t('tagEditor.customTagCreate')}
-          >
-            +
-          </Button>
-        )}
       </div>
     </section>
   )

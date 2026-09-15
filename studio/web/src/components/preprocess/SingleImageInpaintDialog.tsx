@@ -279,6 +279,7 @@ export default function SingleImageInpaintDialog({
       onClose={() => { void requestClose() }}
       closeOnBackdrop={!busy}
       closeOnEscape={false}
+      initialFocusRef={editorRootRef}
       panelClassName="!w-[min(94vw,1600px)] !max-w-none h-[min(90dvh,1000px)]"
       bodyClassName="flex-1 !overflow-hidden"
       testId="single-image-inpaint-dialog"
@@ -312,7 +313,12 @@ export default function SingleImageInpaintDialog({
         </div>
       )}
     >
-      <div ref={editorRootRef} className="flex h-full min-h-0 flex-col gap-2">
+      <div
+        ref={editorRootRef}
+        data-testid="single-image-inpaint-editor-root"
+        className="flex h-full min-h-0 flex-col gap-2 outline-none"
+        tabIndex={-1}
+      >
         <div className="flex shrink-0 items-center justify-end gap-1 border-b border-subtle pb-2">
           <Button variant="ghost" size="sm" onClick={undo} disabled={busy || history.length === 0} title="Ctrl+Z">
             {t('preprocessInpaint.undo')}

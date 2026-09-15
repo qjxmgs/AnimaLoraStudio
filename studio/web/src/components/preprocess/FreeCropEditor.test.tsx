@@ -1,5 +1,5 @@
-import { render, screen } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import { fireEvent, render, screen } from '@testing-library/react'
+import { describe, expect, it, vi } from 'vitest'
 import FreeCropEditor, { applyResize, type CropRect } from './FreeCropEditor'
 
 const baseImage = {
@@ -11,6 +11,15 @@ const baseImage = {
 }
 
 const noop = () => {}
+
+function pointerEvent(
+  type: 'pointerdown' | 'pointermove' | 'pointerup',
+  init: MouseEventInit & { pointerId?: number } = {},
+) {
+  const event = new MouseEvent(type, { bubbles: true, cancelable: true, ...init })
+  Object.defineProperty(event, 'pointerId', { value: init.pointerId ?? 1 })
+  return event
+}
 
 describe('FreeCropEditor', () => {
   it('renders without crops (canvas only)', () => {
@@ -139,5 +148,49 @@ describe('FreeCropEditor', () => {
     )
     const handles = container.querySelectorAll('.handle')
     expect(handles.length).toBe(8)
+  })
+
+  it('uses Space-left-drag to pan without creating or changing a crop', () => {
+    Object.defineProperty(Element.prototype, 'setPointerCapture', {
+      configurable: true,
+      value: vi.fn(),
+    })
+    const onCreate = vi.fn()
+    const onChange = vi.fn()
+    const { container } = render(
+      <FreeCropEditor
+        image={baseImage}
+        crops={[{ id: 'r1', x: 0.1, y: 0.1, w: 0.5, h: 0.5, label: 'r' }]}
+        selectedId="r1"
+        arLock={null}
+        onSelect={noop}
+        onChange={onChange}
+        onCreate={onCreate}
+      />,
+    )
+    const viewport = screen.getByTestId('free-crop-viewport')
+    const canvas = container.querySelector('.cropper-canvas') as HTMLElement
+
+    fireEvent.pointerEnter(viewport)
+    fireEvent.keyDown(window, { code: 'Space' })
+    expect(viewport).toHaveClass('is-space-pan')
+
+    fireEvent(canvas, pointerEvent('pointerdown', {
+      button: 0, buttons: 1, pointerId: 3, clientX: 100, clientY: 100,
+    }))
+    fireEvent.mouseDown(canvas, { button: 0, clientX: 100, clientY: 100 })
+    expect(viewport).toHaveClass('is-panning')
+    fireEvent(viewport, pointerEvent('pointermove', {
+      pointerId: 3, clientX: 140, clientY: 125,
+    }))
+    fireEvent.mouseMove(window, { clientX: 140, clientY: 125 })
+    fireEvent.mouseUp(window)
+
+    expect(onCreate).not.toHaveBeenCalled()
+    expect(onChange).not.toHaveBeenCalled()
+    fireEvent(viewport, pointerEvent('pointerup', { button: 0, pointerId: 3 }))
+    expect(viewport).toHaveClass('is-space-pan')
+    fireEvent.keyUp(window, { code: 'Space' })
+    expect(viewport).not.toHaveClass('is-space-pan', 'is-panning')
   })
 })
