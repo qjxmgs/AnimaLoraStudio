@@ -1,5 +1,30 @@
 import { describe, expect, it } from 'vitest'
 import { applyAutoMaskRegions } from './InpaintCanvas'
+import {
+  applyTrainingMaskPreviewPixels,
+  TRAINING_MASK_COLOR,
+  TRAINING_MASK_VIEW_ALPHA,
+} from './trainingMaskPreview'
+
+describe('training mask preview', () => {
+  it('maps grayscale learning weights to the shared red ignore overlay', () => {
+    const pixels = new Uint8ClampedArray([
+      0, 0, 0, 255,
+      128, 128, 128, 255,
+      255, 255, 255, 255,
+    ])
+
+    applyTrainingMaskPreviewPixels(pixels)
+
+    expect([...pixels]).toEqual([
+      255, 45, 45, 255,
+      255, 45, 45, 127,
+      255, 45, 45, 0,
+    ])
+    expect(TRAINING_MASK_COLOR).toBe('#ff2d2d')
+    expect(TRAINING_MASK_VIEW_ALPHA).toBe(0.45)
+  })
+})
 
 describe('automatic mask rasterization', () => {
   it('uses the exact rectangular interior and independent x/y feather distances', () => {

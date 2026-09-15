@@ -8,6 +8,11 @@ import {
 } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useZoomPan } from '../../lib/useZoomPan'
+import {
+  loadTrainingMaskPreview,
+  TRAINING_MASK_COLOR,
+  TRAINING_MASK_VIEW_ALPHA,
+} from './trainingMaskPreview'
 
 /** 一笔涂抹 / mask 笔画。坐标 / 直径都是**原图像素**单位 —— 视图缩放只影响
  *  显示，笔画数据与 zoom 无关，离屏重放（保存全部）才能与画布所见一致。 */
@@ -51,10 +56,6 @@ export interface InpaintCanvasHandle {
    *  mask 为空（全学）→ null（调用方应 DELETE 而不是写全白文件）。 */
   exportMaskBlob: () => Promise<{ blob: Blob; coverage: number } | null>
 }
-
-/** mask 在画布上的显示色（导出只看 alpha，色值无所谓）。 */
-const MASK_COLOR = '#ff2d2d'
-const MASK_VIEW_ALPHA = 0.45
 
 function strokePath(ctx: CanvasRenderingContext2D, s: InpaintStroke, color?: string): void {
   const c = color ?? s.color
@@ -140,7 +141,7 @@ function drawMaskStrokes(
   strokes: InpaintStroke[],
   scratchRef: ScratchRef,
 ): void {
-  drawStrokesToLayer(ctx, strokes, scratchRef, () => MASK_COLOR)
+  drawStrokesToLayer(ctx, strokes, scratchRef, () => TRAINING_MASK_COLOR)
 }
 
 export function applyAutoMaskRegions(
@@ -210,33 +211,6 @@ function loadImage(url: string): Promise<HTMLImageElement> {
   })
 }
 
-/** 服务器灰度 mask（255=学 0=不学）→ 画布 mask 层位图（红色 + alpha=不学度）。 */
-async function loadMaskBase(url: string, w: number, h: number): Promise<HTMLCanvasElement | null> {
-  let img: HTMLImageElement
-  try {
-    img = await loadImage(url)
-  } catch {
-    return null // 404 = 无 mask
-  }
-  const c = document.createElement('canvas')
-  c.width = w
-  c.height = h
-  const ctx = c.getContext('2d')
-  if (!ctx) return null
-  ctx.drawImage(img, 0, 0, w, h)
-  const data = ctx.getImageData(0, 0, w, h)
-  const px = data.data
-  for (let i = 0; i < px.length; i += 4) {
-    const v = px[i] // 灰度值（R 通道）
-    px[i] = 255
-    px[i + 1] = 45
-    px[i + 2] = 45
-    px[i + 3] = 255 - v
-  }
-  ctx.putImageData(data, 0, 0)
-  return c
-}
-
 /** 重建 mask 层：底图（服务器已有 mask）+ 本地笔画。 */
 function rebuildMaskLayer(
   layer: HTMLCanvasElement,
@@ -294,7 +268,7 @@ export async function renderMaskBlob(
   const layer = document.createElement('canvas')
   layer.width = w
   layer.height = h
-  const base = maskBaseUrl ? await loadMaskBase(maskBaseUrl, w, h) : null
+  const base = maskBaseUrl ? await loadTrainingMaskPreview(maskBaseUrl, w, h) : null
   rebuildMaskLayer(layer, base, edits, { current: null })
   return await maskLayerToGray(layer)
 }
@@ -437,7 +411,7 @@ const InpaintCanvas = forwardRef<
     const layer = maskLayerRef.current
     if (layer) {
       ctx.save()
-      ctx.globalAlpha = MASK_VIEW_ALPHA
+      ctx.globalAlpha = TRAINING_MASK_VIEW_ALPHA
       ctx.drawImage(layer, 0, 0)
       ctx.restore()
     }
@@ -503,7 +477,7 @@ const InpaintCanvas = forwardRef<
       setMaskBaseTick((v) => v + 1)
       return
     }
-    void loadMaskBase(maskBaseUrl, imageW, imageH).then((base) => {
+    void loadTrainingMaskPreview(maskBaseUrl, imageW, imageH).then((base) => {
       if (cancelled) return
       maskBaseRef.current = base
       setMaskBaseTick((v) => v + 1)
@@ -664,7 +638,7 @@ const InpaintCanvas = forwardRef<
       const b = brushRef.current
       const isMask = modeRef.current === 'mask'
       const stroke: InpaintStroke = {
-        color: isMask ? MASK_COLOR : b.color,
+        color: isMask ? TRAINING_MASK_COLOR : b.color,
         size: b.size,
         hardness: b.hardness,
         ...(eraseRef.current ? { erase: true } : {}),
@@ -679,8 +653,8 @@ const InpaintCanvas = forwardRef<
           ctx.globalAlpha = 0.5
           strokePath(ctx, stroke, '#ffffff')
         } else if (isMask) {
-          ctx.globalAlpha = MASK_VIEW_ALPHA
-          strokePath(ctx, stroke, MASK_COLOR)
+          ctx.globalAlpha = TRAINING_MASK_VIEW_ALPHA
+          strokePath(ctx, stroke, TRAINING_MASK_COLOR)
         } else {
           strokePath(ctx, stroke)
         }
@@ -715,8 +689,8 @@ const InpaintCanvas = forwardRef<
           ctx.strokeStyle = '#ffffff'
           ctx.globalAlpha = 0.5
         } else if (isMask) {
-          ctx.strokeStyle = MASK_COLOR
-          ctx.globalAlpha = MASK_VIEW_ALPHA
+          ctx.strokeStyle = TRAINING_MASK_COLOR
+          ctx.globalAlpha = TRAINING_MASK_VIEW_ALPHA
         } else {
           ctx.strokeStyle = stroke.color
         }

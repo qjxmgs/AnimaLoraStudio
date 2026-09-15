@@ -14,6 +14,7 @@ import Button from '../../../components/Button'
 import Card from '../../../components/Card'
 import { useDialog } from '../../../components/Dialog'
 import EmptyState from '../../../components/EmptyState'
+import { Checkbox } from '../../../components/FormControl'
 import ImageGrid, { applySelection } from '../../../components/ImageGrid'
 import PaneResizer, { normalizePanePair } from '../../../components/PaneResizer'
 import SaveBar from '../../../components/SaveBar'
@@ -23,6 +24,7 @@ import TagEditor from '../../../components/TagEditor'
 import TagStatsPanel from '../../../components/TagStatsPanel'
 import { useToast } from '../../../components/Toast'
 import ZoomableImage from '../../../components/ZoomableImage'
+import TrainingMaskOverlay from '../../../components/preprocess/TrainingMaskOverlay'
 import { compareImagePath } from '../../../lib/imageSort'
 import { useEventStream } from '../../../lib/useEventStream'
 import { useLocalStorageState } from '../../../lib/useLocalStorageState'
@@ -65,6 +67,7 @@ export default function TagEditPage() {
   const dirtyRef = useRef(false)
   const editRevisionRef = useRef(0)
   const reloadRequestRef = useRef(0)
+  const maskReloadRequestRef = useRef(0)
   const saveInFlightRef = useRef(false)
   const [initial, setInitial] = useState<Map<string, string[]>>(new Map())
   const [meta, setMeta] = useState<Map<string, CaptionMeta>>(new Map())
@@ -73,6 +76,7 @@ export default function TagEditPage() {
   const [isLoading, setIsLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [externalUpdatePending, setExternalUpdatePending] = useState(false)
+  const [maskMtimes, setMaskMtimes] = useState<Map<string, number>>(new Map())
 
   const [activeKey, setActiveKey] = useState<string>('')
   const [sel, setSel] = useState<Set<string>>(new Set())
@@ -86,6 +90,10 @@ export default function TagEditPage() {
   const rowRef = useRef<HTMLDivElement>(null)
   const [gridPct, setGridPct] = useLocalStorageState('studio:tagEdit:grid_pct', 40)
   const [sidePct, setSidePct] = useLocalStorageState('studio:tagEdit:side_pct', 32)
+  const [showTrainingMask, setShowTrainingMask] = useLocalStorageState(
+    'studio:tagEdit:show_training_mask',
+    true,
+  )
   const normalizedPanes = normalizePanePair(gridPct, sidePct, {
     startMin: TAG_EDIT_GRID_MIN,
     endMin: TAG_EDIT_SIDE_MIN,
@@ -152,6 +160,22 @@ export default function TagEditPage() {
     }
   }, [project.id, versionId])
 
+  const refreshMaskMtimes = useCallback(async () => {
+    if (versionId == null) return
+    const requestId = ++maskReloadRequestRef.current
+    try {
+      const r = await api.listCropWorkspaceTrain(project.id, versionId)
+      if (requestId !== maskReloadRequestRef.current) return
+      const next = new Map<string, number>()
+      for (const image of r.images) {
+        if (image.mask_mtime != null) next.set(image.name, image.mask_mtime)
+      }
+      setMaskMtimes(next)
+    } catch {
+      // 遮罩预览是增强功能；加载失败时保留已有信息，不阻断标签编辑。
+    }
+  }, [project.id, versionId])
+
   useEffect(() => {
     setCache(new Map())
     setInitial(new Map())
@@ -168,6 +192,12 @@ export default function TagEditPage() {
     void reloadCache('initial')
   }, [reloadCache])
 
+  useEffect(() => {
+    setMaskMtimes(new Map())
+    void refreshMaskMtimes()
+    return () => { maskReloadRequestRef.current += 1 }
+  }, [refreshMaskMtimes])
+
   const dirtyKeys = useMemo(() => {
     const out: string[] = []
     for (const k of keys) {
@@ -182,6 +212,10 @@ export default function TagEditPage() {
   dirtyRef.current = dirty
 
   useEventStream((evt) => {
+    const projectChanged =
+      evt.type === 'project_state_changed' && evt.project_id === project.id
+    if (projectChanged) void refreshMaskMtimes()
+
     const relevantVersion = versionId != null && evt.version_id === versionId
     const versionChanged = evt.type === 'version_state_changed' && relevantVersion
     const tagJobFinished =
@@ -516,6 +550,11 @@ export default function TagEditPage() {
   const activeName = activeMeta?.name ?? ''
   const activeTags = activeKey ? cache.get(activeKey) ?? [] : []
   const activeDirty = activeKey ? dirtyKeySet.has(activeKey) : false
+  const activeMaskMtime = activeKey ? maskMtimes.get(activeKey) : undefined
+  const activeMaskUrl =
+    showTrainingMask && activeMaskMtime != null && versionId != null
+      ? `${api.maskUrl(project.id, versionId, activeKey)}&_=${activeMaskMtime}`
+      : null
 
   const isEditing = Boolean(activeKey)
 
@@ -688,6 +727,14 @@ export default function TagEditPage() {
               <code className="flex-1 min-w-0 text-xs font-mono text-fg-secondary truncate">
                 {activeFolder}/{activeName}
               </code>
+              <label className="shrink-0 flex items-center gap-1.5 text-xs text-fg-secondary cursor-pointer select-none">
+                <Checkbox
+                  controlSize="sm"
+                  checked={showTrainingMask}
+                  onChange={(event) => setShowTrainingMask(event.target.checked)}
+                />
+                <span className="whitespace-nowrap">{t('tagEdit.showTrainingMask')}</span>
+              </label>
             </div>
             <div className="flex-1 relative p-2 min-h-0">
               {/* 原图分辨率 + zoom/pan（核对细节 tag 需要看清局部）；
@@ -697,6 +744,9 @@ export default function TagEditPage() {
                 key={activeKey}
                 src={api.versionThumbUrl(project.id, activeVersion.id, 'train', activeName, activeFolder, 0)}
                 alt={activeName}
+                overlay={activeMaskUrl
+                  ? <TrainingMaskOverlay key={activeMaskUrl} src={activeMaskUrl} />
+                  : null}
               />
             </div>
           </Card>

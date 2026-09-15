@@ -2055,6 +2055,7 @@
     "saveThenDownloadToast": "Save tags first, then download",
     "downloadFailed": "Download failed: {{error}}",
     "singleEdit": "Single image edit",
+    "showTrainingMask": "Show mask",
     "resizeGrid": "Drag to resize the image list; arrow keys also work",
     "resizeSide": "Drag to resize the tag panel; arrow keys also work",
     "prevImage": "Previous",

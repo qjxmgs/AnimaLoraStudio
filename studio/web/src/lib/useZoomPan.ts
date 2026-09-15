@@ -263,7 +263,13 @@ export function useZoomPan({
       const wasPan = panRef.current != null
       const dragged = endPan()
       if (wasPan && !dragged && onTap) {
-        onTap(downTargetRef.current === contentRef.current)
+        const content = contentRef.current
+        const target = downTargetRef.current
+        onTap(Boolean(
+          content &&
+          target instanceof Node &&
+          content.contains(target),
+        ))
       }
     },
     onPointerCancel: () => {

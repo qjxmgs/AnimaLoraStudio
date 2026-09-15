@@ -14,9 +14,9 @@ beforeAll(() => {
   Element.prototype.releasePointerCapture = vi.fn()
 })
 
-/** 视口 wrap = ZoomableImage 里 img 的直接父元素（handlers 挂在它上面）。 */
+/** 视口 wrap = ZoomableImage 变换内容容器的父元素（handlers 挂在它上面）。 */
 function viewportOf(img: HTMLElement): HTMLElement {
-  return img.parentElement!
+  return img.closest('[data-zoomable-image-content]')!.parentElement!
 }
 
 /** jsdom 无 PointerEvent，fireEvent.pointerDown 会退化成裸 Event 丢掉 button/

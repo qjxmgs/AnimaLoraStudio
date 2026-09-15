@@ -26,6 +26,7 @@ export default function ZoomableImage({
   fitMaxScale,
   barExtra,
   onTap,
+  overlay,
 }: {
   src: string
   alt?: string
@@ -42,6 +43,8 @@ export default function ZoomableImage({
   barExtra?: React.ReactNode
   /** 视口内点击（未拖拽）回调；hitImage=false = 点在图外空白（modal 关闭用）。 */
   onTap?: (hitImage: boolean) => void
+  /** 与原图共享 zoom/pan 的非交互视觉叠层。 */
+  overlay?: React.ReactNode
 }) {
   const { t } = useTranslation()
   const [nat, setNat] = useState<{ w: number; h: number } | null>(null)
@@ -73,26 +76,37 @@ export default function ZoomableImage({
         }
         style={{ touchAction: 'none', cursor: 'grab' }}
       >
-        <img
+        <div
           ref={(el) => { zp.contentRef.current = el }}
-          src={src}
-          alt={alt}
-          draggable={false}
-          onLoad={(e) => setNat({
-            w: e.currentTarget.naturalWidth,
-            h: e.currentTarget.naturalHeight,
-          })}
-          onError={onError}
+          data-zoomable-image-content
           style={{
             position: 'absolute',
             left: 0,
             top: 0,
+            width: nat?.w ?? 0,
+            height: nat?.h ?? 0,
             transformOrigin: '0 0',
-            maxWidth: 'none',
-            maxHeight: 'none',
             visibility: nat ? 'visible' : 'hidden',
           }}
-        />
+        >
+          <img
+            src={src}
+            alt={alt}
+            draggable={false}
+            onLoad={(e) => setNat({
+              w: e.currentTarget.naturalWidth,
+              h: e.currentTarget.naturalHeight,
+            })}
+            onError={onError}
+            className="absolute inset-0 w-full h-full"
+            style={{ maxWidth: 'none', maxHeight: 'none' }}
+          />
+          {nat && overlay != null && (
+            <div className="absolute inset-0 pointer-events-none" aria-hidden="true">
+              {overlay}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* readout 细条（与涂抹 / 裁剪页统一版式）；dark 时为 lightbox 底 bar */}

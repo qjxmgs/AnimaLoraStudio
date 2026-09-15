@@ -41,7 +41,14 @@ vi.mock('../../../components/PaneResizer', async (importOriginal) => {
   }
 })
 vi.mock('../../../components/ZoomableImage', () => ({
-  default: ({ alt }: { alt: string }) => <div data-testid="preview-image">{alt}</div>,
+  default: ({ alt, overlay }: { alt: string; overlay?: React.ReactNode }) => (
+    <div data-testid="preview-image">{alt}{overlay}</div>
+  ),
+}))
+vi.mock('../../../components/preprocess/TrainingMaskOverlay', () => ({
+  default: ({ src }: { src: string }) => (
+    <div data-testid="training-mask-overlay" data-src={src} />
+  ),
 }))
 vi.mock('../../../components/ImageGrid', () => ({
   applySelection: (selected: Set<string>, name: string) => {
@@ -131,6 +138,14 @@ const captions = {
   ],
 }
 
+const cropWorkspace = {
+  images: [
+    { name: '人物 A/a1.png', source: 'a1.png', w: 640, h: 480, mtime: 1, size: 10, processed: false, mask_mtime: 123 },
+    { name: '人物 A/a2.png', source: 'a2.png', w: 640, h: 480, mtime: 1, size: 10, processed: false, mask_mtime: null },
+    { name: '人物 B/b1.png', source: 'b1.png', w: 480, h: 640, mtime: 1, size: 10, processed: false, mask_mtime: 456 },
+  ],
+}
+
 function renderPage() {
   const project = { id: 7 } as ProjectDetail
   const activeVersion = {
@@ -162,6 +177,7 @@ beforeEach(() => {
   localStorage.clear()
   mocks.onEvent = undefined
   vi.spyOn(api, 'listCaptionsFull').mockResolvedValue(captions)
+  vi.spyOn(api, 'listCropWorkspaceTrain').mockResolvedValue(cropWorkspace)
   vi.spyOn(api, 'commitCaptions').mockResolvedValue({
     written: 1,
     skipped: [],
@@ -478,6 +494,85 @@ describe('TagEdit workspace', () => {
     expect(closeButton.querySelector('svg')).toHaveAttribute('stroke', 'currentColor')
     await user.click(closeButton)
     expect(screen.queryByTestId('preview-image')).not.toBeInTheDocument()
+  })
+
+  it('shows a persisted training-mask toggle that defaults on and survives navigation and remount', async () => {
+    const user = userEvent.setup()
+    const view = renderPage()
+    await ready()
+
+    await user.click(screen.getByRole('button', { name: '打开 人物 A/a1.png' }))
+    const toggle = screen.getByRole('checkbox', { name: '显示遮罩' })
+    expect(toggle).toBeChecked()
+    expect(await screen.findByTestId('training-mask-overlay')).toHaveAttribute(
+      'data-src',
+      `${api.maskUrl(7, 11, '人物 A/a1.png')}&_=123`,
+    )
+
+    await user.click(toggle)
+    expect(toggle).not.toBeChecked()
+    expect(screen.queryByTestId('training-mask-overlay')).not.toBeInTheDocument()
+    expect(localStorage.getItem('studio:tagEdit:show_training_mask')).toBe('false')
+
+    await user.click(screen.getByRole('button', { name: '打开 人物 A/a2.png' }))
+    expect(screen.getByRole('checkbox', { name: '显示遮罩' })).not.toBeChecked()
+
+    view.unmount()
+    renderPage()
+    await ready()
+    await user.click(screen.getByRole('button', { name: '打开 人物 A/a1.png' }))
+    expect(screen.getByRole('checkbox', { name: '显示遮罩' })).not.toBeChecked()
+  })
+
+  it('removes the old overlay immediately when navigating to an image without a mask', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await ready()
+
+    await user.click(screen.getByRole('button', { name: '打开 人物 A/a1.png' }))
+    expect(await screen.findByTestId('training-mask-overlay')).toHaveAttribute(
+      'data-src',
+      `${api.maskUrl(7, 11, '人物 A/a1.png')}&_=123`,
+    )
+
+    await user.click(screen.getByRole('button', { name: '打开 人物 A/a2.png' }))
+    expect(screen.getByTestId('preview-image')).toHaveTextContent('a2.png')
+    expect(screen.getByRole('checkbox', { name: '显示遮罩' })).toBeChecked()
+    expect(screen.queryByTestId('training-mask-overlay')).not.toBeInTheDocument()
+  })
+
+  it('refreshes the active mask cache-buster on project changes without disturbing captions', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await ready()
+    await user.click(screen.getByRole('button', { name: '打开 人物 A/a1.png' }))
+    await screen.findByTestId('training-mask-overlay')
+
+    vi.mocked(api.listCropWorkspaceTrain).mockResolvedValueOnce({
+      images: cropWorkspace.images.map((image) => (
+        image.name === '人物 A/a1.png' ? { ...image, mask_mtime: 999 } : image
+      )),
+    })
+    act(() => mocks.onEvent?.({ type: 'project_state_changed', project_id: 7 }))
+
+    await waitFor(() => expect(screen.getByTestId('training-mask-overlay')).toHaveAttribute(
+      'data-src',
+      `${api.maskUrl(7, 11, '人物 A/a1.png')}&_=999`,
+    ))
+    expect(api.listCaptionsFull).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps tag editing usable when mask metadata cannot be loaded', async () => {
+    vi.mocked(api.listCropWorkspaceTrain).mockRejectedValueOnce(new Error('offline'))
+    const user = userEvent.setup()
+    renderPage()
+    await ready()
+
+    await user.click(screen.getByRole('button', { name: '打开 人物 A/a1.png' }))
+    expect(screen.getByTestId('preview-image')).toHaveTextContent('a1.png')
+    expect(screen.getByRole('checkbox', { name: '显示遮罩' })).toBeChecked()
+    expect(screen.queryByTestId('training-mask-overlay')).not.toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
   it('saves the latest text edit with one dataset-level save action', async () => {
