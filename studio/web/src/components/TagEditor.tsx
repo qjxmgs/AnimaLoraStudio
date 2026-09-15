@@ -59,9 +59,6 @@ const parseLine = (raw: string): string[] => {
 const tagsEqual = (a: string[], b: string[]): boolean =>
   a.length === b.length && a.every((tag, index) => tag === b[index])
 
-const setsEqual = (a: ReadonlySet<string>, b: ReadonlySet<string>): boolean =>
-  a.size === b.size && Array.from(a).every((tag) => b.has(tag))
-
 const EMPTY_INACTIVE_TAGS: ReadonlySet<string> = new Set()
 
 /**
@@ -403,16 +400,10 @@ export default function TagEditor({
 
   const updateText = (raw: string) => {
     setTextBuf(raw)
-    const nextSelected = parseLine(raw)
-    const selectedSet = new Set(nextSelected)
-    const nextTags = [
-      ...nextSelected,
-      ...tags.filter((tag) => !selectedSet.has(tag)),
-    ]
-    const nextInactive = new Set(nextTags.filter((tag) => !selectedSet.has(tag)))
-    textTagsRef.current = nextSelected
-    if (!tagsEqual(nextTags, tags) || !setsEqual(nextInactive, inactiveTags)) {
-      onChange(nextTags, nextInactive)
+    const nextTags = parseLine(raw)
+    textTagsRef.current = nextTags
+    if (!tagsEqual(nextTags, tags) || inactiveTags.size > 0) {
+      onChange(nextTags, EMPTY_INACTIVE_TAGS)
     }
   }
 
@@ -532,6 +523,11 @@ export default function TagEditor({
 
   const switchToChip = () => {
     if (mode === 'chip') return
+    const nextTags = parseLine(textBuf)
+    textTagsRef.current = nextTags
+    if (!tagsEqual(nextTags, tags) || inactiveTags.size > 0) {
+      onChange(nextTags, EMPTY_INACTIVE_TAGS)
+    }
     setMode('chip')
   }
 

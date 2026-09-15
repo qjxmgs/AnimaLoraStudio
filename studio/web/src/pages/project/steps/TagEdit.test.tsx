@@ -175,9 +175,7 @@ vi.mock('../../../components/TagEditor', () => ({
           value={activeTags.join(', ')}
           onChange={(event) => {
             const nextActive = event.target.value.split(',').map((tag) => tag.trim()).filter(Boolean)
-            const nextActiveSet = new Set(nextActive)
-            const nextTags = [...nextActive, ...tags.filter((tag) => !nextActiveSet.has(tag))]
-            onChange(nextTags, new Set(nextTags.filter((tag) => !nextActiveSet.has(tag))))
+            onChange(nextActive, new Set())
           }}
         />
         <button

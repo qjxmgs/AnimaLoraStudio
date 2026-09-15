@@ -357,26 +357,112 @@ describe('TagEditor (PP4 chip mode)', () => {
     expect(container.querySelectorAll('[data-tag-chip="b"]')).toHaveLength(1)
   })
 
-  it('shows only selected tags in text mode and retains omitted tags as inactive chips', async () => {
+  it('keeps only the latest parsed token while typing in text mode', async () => {
     const user = userEvent.setup()
     const onChange = vi.fn()
-    const { rerender } = render(
-      <TagEditor tags={['a', 'b', 'c']} inactiveTags={new Set(['b'])} onChange={onChange} />,
-    )
+    function ControlledEditor() {
+      const [tags, setTags] = useState(['day'])
+      return (
+        <TagEditor
+          tags={tags}
+          onChange={(nextTags, nextInactive) => {
+            onChange(nextTags, nextInactive)
+            setTags(nextTags)
+          }}
+        />
+      )
+    }
+    const { container } = render(<ControlledEditor />)
+
     await user.click(screen.getByText('文本'))
     const input = screen.getByRole('textbox', { name: '以文本编辑标签' })
-    expect(input).toHaveValue('a, c')
+    fireEvent.change(input, { target: { value: 'a' } })
+    fireEvent.change(input, { target: { value: 'as' } })
+    fireEvent.change(input, { target: { value: 'asd' } })
 
-    fireEvent.change(input, { target: { value: 'c, b' } })
-    expect(onChange).toHaveBeenLastCalledWith(['c', 'b', 'a'], expect.any(Set))
+    expect(onChange).toHaveBeenCalledTimes(3)
+    expect(onChange.mock.calls.map(([nextTags]) => nextTags)).toEqual([
+      ['a'],
+      ['as'],
+      ['asd'],
+    ])
+    for (const [, nextInactive] of onChange.mock.calls) {
+      expect(Array.from(nextInactive as Set<string>)).toEqual([])
+    }
+
+    await user.click(screen.getByText('标签块'))
+    expect(container.querySelector('[data-tag-chip="asd"]')).toBeInTheDocument()
+    expect(container.querySelector('[data-tag-chip="day"]')).not.toBeInTheDocument()
+    expect(container.querySelector('[data-tag-chip="a"]')).not.toBeInTheDocument()
+    expect(container.querySelector('[data-tag-chip="as"]')).not.toBeInTheDocument()
+  })
+
+  it('drops pre-existing inactive tags when returning from text mode without edits', async () => {
+    const user = userEvent.setup()
+    const onChange = vi.fn()
+    function ControlledEditor() {
+      const [tags, setTags] = useState(['a', 'b', 'c'])
+      const [inactive, setInactive] = useState<Set<string>>(new Set(['b']))
+      return (
+        <TagEditor
+          tags={tags}
+          inactiveTags={inactive}
+          onChange={(nextTags, nextInactive) => {
+            onChange(nextTags, nextInactive)
+            setTags(nextTags)
+            setInactive(new Set(nextInactive))
+          }}
+        />
+      )
+    }
+    const { container } = render(<ControlledEditor />)
+
+    await user.click(screen.getByText('文本'))
+    expect(screen.getByRole('textbox', { name: '以文本编辑标签' })).toHaveValue('a, c')
+    await user.click(screen.getByText('标签块'))
+
+    expect(onChange).toHaveBeenLastCalledWith(['a', 'c'], expect.any(Set))
     expect(Array.from(
       onChange.mock.calls[onChange.mock.calls.length - 1]?.[1] as Set<string>,
-    )).toEqual(['a'])
+    )).toEqual([])
+    expect(container.querySelector('[data-tag-chip="a"]')).toBeInTheDocument()
+    expect(container.querySelector('[data-tag-chip="c"]')).toBeInTheDocument()
+    expect(container.querySelector('[data-tag-chip="b"]')).not.toBeInTheDocument()
+  })
 
-    rerender(
-      <TagEditor tags={['c', 'b', 'a']} inactiveTags={new Set(['a'])} onChange={onChange} />,
-    )
-    expect(input).toHaveValue('c, b')
+  it('uses the final text order and removes omitted tags when returning to chips', async () => {
+    const user = userEvent.setup()
+    const onChange = vi.fn()
+    function ControlledEditor() {
+      const [tags, setTags] = useState(['a', 'b', 'c'])
+      const [inactive, setInactive] = useState<Set<string>>(new Set(['b']))
+      return (
+        <TagEditor
+          tags={tags}
+          inactiveTags={inactive}
+          onChange={(nextTags, nextInactive) => {
+            onChange(nextTags, nextInactive)
+            setTags(nextTags)
+            setInactive(new Set(nextInactive))
+          }}
+        />
+      )
+    }
+    const { container } = render(<ControlledEditor />)
+
+    await user.click(screen.getByText('文本'))
+    const input = screen.getByRole('textbox', { name: '以文本编辑标签' })
+    fireEvent.change(input, { target: { value: 'c, b' } })
+    expect(onChange).toHaveBeenLastCalledWith(['c', 'b'], expect.any(Set))
+    expect(Array.from(
+      onChange.mock.calls[onChange.mock.calls.length - 1]?.[1] as Set<string>,
+    )).toEqual([])
+
+    await user.click(screen.getByText('标签块'))
+
+    expect(Array.from(container.querySelectorAll('[data-tag-chip]')).map((chip) => (
+      chip.getAttribute('data-tag-chip')
+    ))).toEqual(['c', 'b'])
   })
 
   it('refuses duplicates silently', async () => {
