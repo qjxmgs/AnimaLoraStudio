@@ -1,17 +1,20 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   DndContext,
+  DragOverlay,
   PointerSensor,
-  closestCenter,
+  pointerWithin,
   useSensor,
   useSensors,
   type DragEndEvent,
+  type DragOverEvent,
+  type DragStartEvent,
 } from '@dnd-kit/core'
 import {
   SortableContext,
   arrayMove,
-  rectSortingStrategy,
   useSortable,
+  type SortingStrategy,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { useTranslation } from 'react-i18next'
@@ -51,6 +54,28 @@ const parseLine = (raw: string): string[] => {
 const tagsEqual = (a: string[], b: string[]): boolean =>
   a.length === b.length && a.every((tag, index) => tag === b[index])
 
+/**
+ * Tags are variable-width items in a wrapping flex row. rectSortingStrategy
+ * maps every displaced item into another item's rectangle, including scaleX /
+ * scaleY. That distorts text and makes differently sized chips overlap.
+ *
+ * Keep the strategy itself transform-free. The DOM order is updated on
+ * DragOver, so useSortable can animate each same-sized chip from its previous
+ * layout position to its new one. SortableChip applies translation only and
+ * deliberately drops any scale component.
+ */
+export const tagFlowSortingStrategy: SortingStrategy = () => null
+
+export const reorderTagFlow = (order: string[], activeId: string, overId: string): string[] => {
+  const oldIndex = order.indexOf(activeId)
+  const newIndex = order.indexOf(overId)
+  if (oldIndex < 0 || newIndex < 0 || oldIndex === newIndex) return order
+  return arrayMove(order, oldIndex, newIndex)
+}
+
+const TAG_CHIP_CLASS =
+  'inline-flex shrink-0 items-center gap-1 whitespace-nowrap px-2 py-0.5 rounded-full bg-overlay border border-subtle text-sm font-mono text-fg-primary select-none touch-none'
+
 export default function TagEditor({
   tags, natural, onChange, onSave, saving, dirty, showTagCount = true, resetKey,
 }: Props) {
@@ -59,6 +84,9 @@ export default function TagEditor({
   const tagsJoined = useMemo(() => tags.join(', '), [tags])
   const [mode, setMode] = useState<Mode>(natural ? 'text' : 'chip')
   const [textBuf, setTextBuf] = useState(() => tagsJoined)
+  const [activeTag, setActiveTag] = useState<string | null>(null)
+  const [dragOrder, setDragOrder] = useState<string[] | null>(null)
+  const dragOrderRef = useRef<string[] | null>(null)
   const textTagsRef = useRef([...tags])
   const previousResetKeyRef = useRef(resetKey)
   const draftInputRef = useRef<HTMLInputElement>(null)
@@ -140,13 +168,35 @@ export default function TagEditor({
     onChange(tags.filter((x) => x !== t))
   }
 
-  const handleDragEnd = (event: DragEndEvent) => {
+  const handleDragStart = (event: DragStartEvent) => {
+    const next = [...tags]
+    dragOrderRef.current = next
+    setDragOrder(next)
+    setActiveTag(String(event.active.id))
+  }
+
+  const handleDragOver = (event: DragOverEvent) => {
     const { active, over } = event
-    if (!over || active.id === over.id) return
-    const oldIndex = tags.indexOf(String(active.id))
-    const newIndex = tags.indexOf(String(over.id))
-    if (oldIndex < 0 || newIndex < 0) return
-    onChange(arrayMove(tags, oldIndex, newIndex))
+    const current = dragOrderRef.current
+    if (!current || !over || active.id === over.id) return
+    const next = reorderTagFlow(current, String(active.id), String(over.id))
+    if (next === current) return
+    dragOrderRef.current = next
+    setDragOrder(next)
+  }
+
+  const clearDragState = () => {
+    setActiveTag(null)
+    setDragOrder(null)
+    dragOrderRef.current = null
+  }
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { over } = event
+    const next = dragOrderRef.current ?? tags
+    clearDragState()
+    if (!over || tagsEqual(next, tags)) return
+    onChange(next)
   }
 
   const switchToText = () => {
@@ -215,19 +265,33 @@ export default function TagEditor({
         <>
           <DndContext
             sensors={sensors}
-            collisionDetection={closestCenter}
+            collisionDetection={pointerWithin}
+            onDragStart={handleDragStart}
+            onDragOver={handleDragOver}
             onDragEnd={handleDragEnd}
+            onDragCancel={clearDragState}
           >
-            <SortableContext items={tags} strategy={rectSortingStrategy}>
+            <SortableContext items={dragOrder ?? tags} strategy={tagFlowSortingStrategy}>
               <div className="flex flex-wrap gap-1 overflow-y-auto flex-1 min-h-0 content-start py-1">
                 {tags.length === 0 && (
                   <span className="text-xs text-fg-tertiary">{t('tagEditor.empty')}</span>
                 )}
-                {tags.map((t) => (
+                {(dragOrder ?? tags).map((t) => (
                   <SortableChip key={t} id={t} onRemove={() => removeTag(t)} />
                 ))}
               </div>
             </SortableContext>
+            <DragOverlay adjustScale={false} dropAnimation={null}>
+              {activeTag ? (
+                <span
+                  aria-hidden="true"
+                  className={`${TAG_CHIP_CLASS} border-accent bg-surface shadow-lg cursor-grabbing pointer-events-none`}
+                >
+                  <TranslatedTag tag={activeTag} />
+                  <span className="text-fg-tertiary text-sm leading-none">×</span>
+                </span>
+              ) : null}
+            </DragOverlay>
           </DndContext>
           <div className="flex items-center gap-1.5 shrink-0">
             <div className="relative flex-1">
@@ -322,9 +386,7 @@ export default function TagEditor({
   )
 }
 
-/** 单个可拖拽 chip。dnd-kit 用 useSortable 给我们 setNodeRef / 拖拽 listeners /
- * transform / transition;CSS.Transform.toString 把 dnd-kit 算出的 (x,y,scale)
- * 翻译成 CSS transform 字符串。
+/** 单个可拖拽 chip。
  *
  * × 删除按钮要 stopPropagation onPointerDown —— 否则 6px 移动阈值过后 × 也成了
  * 拖拽起点,点 × 反而触发拖拽。
@@ -332,13 +394,13 @@ export default function TagEditor({
 function SortableChip({ id, onRemove }: { id: string; onRemove: () => void }) {
   const { t } = useTranslation()
   const {
-    attributes, listeners, setNodeRef, transform, transition, isDragging,
+    attributes, listeners, setNodeRef, transform, transition, isDragging, isOver,
   } = useSortable({ id })
   const style: React.CSSProperties = {
-    transform: CSS.Transform.toString(transform),
+    // FLIP movement is useful here; rect-based scale is not. Keeping translation
+    // only prevents variable-width tags from stretching each other's text.
+    transform: CSS.Translate.toString(transform),
     transition,
-    opacity: isDragging ? 0.5 : 1,
-    zIndex: isDragging ? 1 : undefined,
   }
   return (
     <span
@@ -346,7 +408,13 @@ function SortableChip({ id, onRemove }: { id: string; onRemove: () => void }) {
       style={style}
       {...attributes}
       {...listeners}
-      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-overlay border border-subtle text-sm font-mono text-fg-primary cursor-grab active:cursor-grabbing select-none touch-none"
+      className={`${TAG_CHIP_CLASS} cursor-grab active:cursor-grabbing transition-[background-color,border-color,box-shadow,opacity] ${
+        isDragging
+          ? 'opacity-25'
+          : isOver
+            ? 'border-accent ring-2 ring-accent-soft'
+            : 'opacity-100'
+      }`}
     >
       <TranslatedTag tag={id} />
       <button

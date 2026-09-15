@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
-import TagEditor from './TagEditor'
+import TagEditor, { reorderTagFlow, tagFlowSortingStrategy } from './TagEditor'
 
 describe('TagEditor (PP4 chip mode)', () => {
   it('renders chips for each tag', () => {
@@ -10,6 +10,24 @@ describe('TagEditor (PP4 chip mode)', () => {
     expect(screen.getByText('a')).toBeInTheDocument()
     expect(screen.getByText('b')).toBeInTheDocument()
     expect(screen.getByText('2 个标签')).toBeInTheDocument()
+  })
+
+  it('reorders variable-width chips without strategy-level scaling', () => {
+    expect(tagFlowSortingStrategy({
+      activeNodeRect: null,
+      activeIndex: 0,
+      index: 1,
+      overIndex: 1,
+      rects: [],
+    })).toBeNull()
+    expect(reorderTagFlow(
+      ['short', 'a much longer translated tag', 'third'],
+      'short',
+      'third',
+    )).toEqual(['a much longer translated tag', 'third', 'short'])
+
+    render(<TagEditor tags={['short', 'a much longer translated tag']} onChange={() => {}} />)
+    expect(screen.getByText('short').parentElement).toHaveClass('shrink-0', 'whitespace-nowrap')
   })
 
   it('can delegate the tag count to a parent panel header', () => {
