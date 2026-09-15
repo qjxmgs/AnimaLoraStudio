@@ -119,6 +119,24 @@ describe('Preprocess inpaint contracts', () => {
     expect(screen.getByRole('button', { name: '保存当前图' })).toBeDisabled()
   })
 
+  it('syncs canvas brush adjustments to the controls and persisted preference', async () => {
+    renderPage()
+    await screen.findByRole('group', { name: '涂抹工作集图片' })
+    const props = mocks.canvasProps[mocks.canvasProps.length - 1] as {
+      onBrushAdjust: (next: { size: number; hardness: number }) => void
+    }
+
+    act(() => props.onBrushAdjust({ size: 96, hardness: 0.35 }))
+
+    expect(screen.getByLabelText('画笔大小数值')).toHaveValue(96)
+    expect(screen.getByLabelText('画笔硬度数值')).toHaveValue(35)
+    expect(JSON.parse(window.localStorage.getItem('studio:inpaint:brush') ?? '{}')).toMatchObject({
+      size: 96,
+      hardness: 0.35,
+    })
+    expect(screen.getByRole('button', { name: '保存当前图' })).toBeDisabled()
+  })
+
   it('opens setup to explain the save prerequisite while unsaved edits block Start', async () => {
     let finishWorkspace!: (value: { images: CropWorkspaceItem[] }) => void
     vi.mocked(api.listCropWorkspaceTrain).mockReturnValue(new Promise((resolve) => {

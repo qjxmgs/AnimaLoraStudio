@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
 } from 'react'
+import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import { useZoomPan } from '../../lib/useZoomPan'
 import {
@@ -55,6 +56,66 @@ export interface InpaintCanvasHandle {
   /** mask 层导出灰度 PNG（255=学 0=不学）+ 覆盖率。
    *  mask 为空（全学）→ null（调用方应 DELETE 而不是写全白文件）。 */
   exportMaskBlob: () => Promise<{ blob: Blob; coverage: number } | null>
+}
+
+export interface BrushAdjustment {
+  size: number
+  hardness: number
+}
+
+export type BrushAdjustmentAxis = 'pending' | 'size' | 'hardness'
+
+const MIN_BRUSH_SIZE = 1
+const MAX_BRUSH_SIZE = 400
+const BRUSH_ADJUST_DEAD_ZONE = 6
+const BRUSH_ADJUST_AXIS_DOMINANCE = 1.25
+const BRUSH_HUD_GAP = 8
+const BRUSH_HUD_WIDTH = 132
+const BRUSH_HUD_HEIGHT = 44
+
+/** Wait for a deliberate dominant direction before locking the whole gesture
+ * to one parameter. Near-diagonal movement remains pending. */
+export function resolveBrushAdjustmentAxis(
+  deltaX: number,
+  deltaY: number,
+): BrushAdjustmentAxis {
+  const absX = Math.abs(deltaX)
+  const absY = Math.abs(deltaY)
+  if (Math.max(absX, absY) < BRUSH_ADJUST_DEAD_ZONE) return 'pending'
+  if (absX >= absY * BRUSH_ADJUST_AXIS_DOMINANCE) return 'size'
+  if (absY >= absX * BRUSH_ADJUST_AXIS_DOMINANCE) return 'hardness'
+  return 'pending'
+}
+
+function removeBrushAdjustDeadZone(delta: number): number {
+  return Math.sign(delta) * Math.max(0, Math.abs(delta) - BRUSH_ADJUST_DEAD_ZONE)
+}
+
+/** Apply only the locked axis. The startup dead zone is subtracted so the
+ * value does not jump when the direction first becomes clear. */
+export function resolveBrushAdjustment(
+  initial: BrushAdjustment,
+  deltaX: number,
+  deltaY: number,
+  scale: number,
+  axis: BrushAdjustmentAxis,
+): BrushAdjustment {
+  const safeScale = Number.isFinite(scale) && scale > 0 ? scale : 1
+  if (axis === 'pending') return initial
+  return {
+    size: axis === 'size'
+      ? Math.max(MIN_BRUSH_SIZE, Math.min(
+        MAX_BRUSH_SIZE,
+        Math.round(initial.size + removeBrushAdjustDeadZone(deltaX) / safeScale),
+      ))
+      : initial.size,
+    hardness: axis === 'hardness'
+      ? Math.max(0, Math.min(
+        1,
+        Math.round(initial.hardness * 100 - removeBrushAdjustDeadZone(deltaY)) / 100,
+      ))
+      : initial.hardness,
+  }
 }
 
 function strokePath(ctx: CanvasRenderingContext2D, s: InpaintStroke, color?: string): void {
@@ -329,6 +390,8 @@ const InpaintCanvas = forwardRef<
     /** 服务器已有 mask 的 URL；null = 无底图。 */
     maskBaseUrl: string | null
     brush: { color: string; size: number; hardness: number }
+    /** Alt + right-drag updates the shared, controlled brush preferences. */
+    onBrushAdjust: (next: BrushAdjustment) => void
     /** 当前工具是否橡皮擦（涂抹 / 遮罩两模式共用）。 */
     erase: boolean
     onStrokeEnd: (s: InpaintStroke) => void
@@ -341,7 +404,7 @@ const InpaintCanvas = forwardRef<
 >(function InpaintCanvas(
   {
     imageUrl, imageW, imageH, mode, strokes, maskEdits, maskBaseUrl,
-    brush, erase, onStrokeEnd, onMaskStrokeEnd, onPickColor,
+    brush, onBrushAdjust, erase, onStrokeEnd, onMaskStrokeEnd, onPickColor,
     proposalRegions = [],
     onProposalPreviewState,
   },
@@ -355,6 +418,7 @@ const InpaintCanvas = forwardRef<
   const paintLayerRef = useRef<HTMLCanvasElement | null>(null)
   const maskLayerRef = useRef<HTMLCanvasElement | null>(null)
   const maskBaseRef = useRef<HTMLCanvasElement | null>(null)
+  const contextMenuResetRef = useRef<number | null>(null)
 
   // 视口（zoom / pan / fit / 坐标换算）走共享 hook；画笔类场景左键留给
   // 画笔（primaryButtonPans 缺省 false），pan 由空格 / 中键触发。
@@ -367,6 +431,9 @@ const InpaintCanvas = forwardRef<
   const [loaded, setLoaded] = useState(false)
   const [maskBaseTick, setMaskBaseTick] = useState(0)
   const [cursorPos, setCursorPos] = useState<{ x: number; y: number } | null>(null)
+  const [brushHud, setBrushHud] = useState<(
+    BrushAdjustment & { left: number; top: number; axis: BrushAdjustmentAxis }
+  ) | null>(null)
 
   const strokesRef = useRef(strokes)
   strokesRef.current = strokes
@@ -381,6 +448,15 @@ const InpaintCanvas = forwardRef<
   const proposalRegionsRef = useRef(proposalRegions)
   const proposalBitmaps = useRef(new Map<string, HTMLCanvasElement>())
   proposalRegionsRef.current = proposalRegions
+  const brushAdjustRef = useRef<{
+    pointerId: number
+    startX: number
+    startY: number
+    initial: BrushAdjustment
+    axis: BrushAdjustmentAxis
+    lastPublished: BrushAdjustment
+  } | null>(null)
+  const suppressContextMenuRef = useRef(false)
 
   const ensureLayer = useCallback((
     holder: React.MutableRefObject<HTMLCanvasElement | null>,
@@ -585,17 +661,61 @@ const InpaintCanvas = forwardRef<
 
   // 笔刷圆圈光标（ref 直改 style；直径 = 笔刷 × 当前 scale）
   const lastPointerRef = useRef<{ x: number; y: number } | null>(null)
-  const updateCursor = useCallback((clientX: number, clientY: number) => {
+  const updateCursor = useCallback((
+    clientX: number,
+    clientY: number,
+    size = brushRef.current.size,
+  ) => {
     const cur = cursorRef.current
     const wrap = wrapRef.current
     if (!cur || !wrap) return
     lastPointerRef.current = { x: clientX, y: clientY }
     const rect = wrap.getBoundingClientRect()
-    const d = brushRef.current.size * zp.viewRef.current.scale
+    const d = size * zp.viewRef.current.scale
     cur.style.left = `${clientX - rect.left - d / 2}px`
     cur.style.top = `${clientY - rect.top - d / 2}px`
     cur.style.width = `${d}px`
     cur.style.height = `${d}px`
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const updateBrushHud = useCallback((
+    clientX: number,
+    clientY: number,
+    next: BrushAdjustment,
+    axis: BrushAdjustmentAxis,
+  ) => {
+    const wrap = wrapRef.current
+    if (!wrap) return
+    const diameter = next.size * zp.viewRef.current.scale
+    const viewportWidth = window.innerWidth
+    const viewportHeight = window.innerHeight
+
+    let left = clientX + diameter / 2 + BRUSH_HUD_GAP
+    if (left + BRUSH_HUD_WIDTH > viewportWidth - BRUSH_HUD_GAP) {
+      left = clientX - diameter / 2 - BRUSH_HUD_GAP - BRUSH_HUD_WIDTH
+    }
+    left = Math.max(
+      BRUSH_HUD_GAP,
+      Math.min(
+        Math.max(BRUSH_HUD_GAP, viewportWidth - BRUSH_HUD_WIDTH - BRUSH_HUD_GAP),
+        left,
+      ),
+    )
+
+    let top = clientY - diameter / 2
+    if (top < BRUSH_HUD_GAP) {
+      top = clientY + diameter / 2 + BRUSH_HUD_GAP
+    }
+    top = Math.max(
+      BRUSH_HUD_GAP,
+      Math.min(
+        Math.max(BRUSH_HUD_GAP, viewportHeight - BRUSH_HUD_HEIGHT - BRUSH_HUD_GAP),
+        top,
+      ),
+    )
+
+    setBrushHud({ ...next, left, top, axis })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -622,9 +742,50 @@ const InpaintCanvas = forwardRef<
     [toContentPoint, onPickColor],
   )
 
+  const scheduleContextMenuReset = useCallback(() => {
+    if (contextMenuResetRef.current != null) {
+      window.clearTimeout(contextMenuResetRef.current)
+    }
+    contextMenuResetRef.current = window.setTimeout(() => {
+      suppressContextMenuRef.current = false
+      contextMenuResetRef.current = null
+    }, 0)
+  }, [])
+
+  useEffect(() => () => {
+    brushAdjustRef.current = null
+    if (contextMenuResetRef.current != null) {
+      window.clearTimeout(contextMenuResetRef.current)
+    }
+  }, [])
+
   const onPointerDown = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
       if (!loaded) return
+      if (e.pointerType === 'mouse' && e.button === 2 && e.altKey) {
+        e.preventDefault()
+        if (contextMenuResetRef.current != null) {
+          window.clearTimeout(contextMenuResetRef.current)
+          contextMenuResetRef.current = null
+        }
+        suppressContextMenuRef.current = true
+        e.currentTarget.setPointerCapture(e.pointerId)
+        const initial = {
+          size: brushRef.current.size,
+          hardness: brushRef.current.hardness,
+        }
+        brushAdjustRef.current = {
+          pointerId: e.pointerId,
+          startX: e.clientX,
+          startY: e.clientY,
+          initial,
+          axis: 'pending',
+          lastPublished: initial,
+        }
+        updateCursor(e.clientX, e.clientY, initial.size)
+        updateBrushHud(e.clientX, e.clientY, initial, 'pending')
+        return
+      }
       e.currentTarget.setPointerCapture(e.pointerId)
       // pan 手势（空格 / 中键）交给视口 hook；本组件只管画笔
       if (zp.panPointerDown(e)) return
@@ -662,7 +823,7 @@ const InpaintCanvas = forwardRef<
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [loaded, pickColor, toContentPoint, zp.panPointerDown],
+    [loaded, pickColor, toContentPoint, updateBrushHud, updateCursor, zp.panPointerDown],
   )
 
   const onPointerMove = useCallback(
@@ -674,6 +835,32 @@ const InpaintCanvas = forwardRef<
           x: Math.max(0, Math.min(imageW, Math.round(pt.x))),
           y: Math.max(0, Math.min(imageH, Math.round(pt.y))),
         })
+      }
+      const adjusting = brushAdjustRef.current
+      if (adjusting && adjusting.pointerId === e.pointerId) {
+        const deltaX = e.clientX - adjusting.startX
+        const deltaY = e.clientY - adjusting.startY
+        if (adjusting.axis === 'pending') {
+          adjusting.axis = resolveBrushAdjustmentAxis(deltaX, deltaY)
+        }
+        const next = resolveBrushAdjustment(
+          adjusting.initial,
+          deltaX,
+          deltaY,
+          zp.viewRef.current.scale,
+          adjusting.axis,
+        )
+        if (
+          next.size !== adjusting.lastPublished.size ||
+          next.hardness !== adjusting.lastPublished.hardness
+        ) {
+          adjusting.lastPublished = next
+          brushRef.current = { ...brushRef.current, ...next }
+          onBrushAdjust(next)
+        }
+        updateCursor(e.clientX, e.clientY, next.size)
+        updateBrushHud(e.clientX, e.clientY, next, adjusting.axis)
+        return
       }
       if (zp.panPointerMove(e)) return
       const drawing = drawingRef.current
@@ -705,7 +892,7 @@ const InpaintCanvas = forwardRef<
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [updateCursor, toContentPoint, imageW, imageH, zp.panPointerMove],
+    [updateCursor, updateBrushHud, toContentPoint, imageW, imageH, onBrushAdjust, zp.panPointerMove],
   )
 
   const endStroke = useCallback(() => {
@@ -718,6 +905,31 @@ const InpaintCanvas = forwardRef<
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [onStrokeEnd, onMaskStrokeEnd, zp.endPan])
 
+  const endInteraction = useCallback((
+    e: React.PointerEvent<HTMLDivElement>,
+    cancelled = false,
+  ) => {
+    const adjusting = brushAdjustRef.current
+    if (adjusting && adjusting.pointerId === e.pointerId) {
+      brushAdjustRef.current = null
+      setBrushHud(null)
+      if (cancelled) suppressContextMenuRef.current = false
+      else scheduleContextMenuReset()
+      return
+    }
+    endStroke()
+  }, [endStroke, scheduleContextMenuReset])
+
+  const onContextMenu = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    if (!suppressContextMenuRef.current && !(e.altKey && e.button === 2)) return
+    e.preventDefault()
+    suppressContextMenuRef.current = false
+    if (contextMenuResetRef.current != null) {
+      window.clearTimeout(contextMenuResetRef.current)
+      contextMenuResetRef.current = null
+    }
+  }, [])
+
   return (
     <div className="flex flex-col h-full min-h-0 gap-1.5">
       <div
@@ -726,8 +938,10 @@ const InpaintCanvas = forwardRef<
         style={{ touchAction: 'none', cursor: 'none' }}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
-        onPointerUp={endStroke}
-        onPointerCancel={endStroke}
+        onPointerUp={(e) => endInteraction(e)}
+        onPointerCancel={(e) => endInteraction(e, true)}
+        onLostPointerCapture={(e) => endInteraction(e, true)}
+        onContextMenu={onContextMenu}
         onPointerLeave={() => {
           const cur = cursorRef.current
           if (cur) {
@@ -749,6 +963,7 @@ const InpaintCanvas = forwardRef<
         {/* 笔刷圆圈光标（遮罩画笔描红 / 橡皮虚线白） */}
         <div
           ref={cursorRef}
+          data-testid="brush-cursor"
           className="absolute pointer-events-none rounded-full"
           style={{
             border: mode === 'mask' && !erase
@@ -757,6 +972,26 @@ const InpaintCanvas = forwardRef<
             outline: '1px solid rgba(0,0,0,0.6)',
           }}
         />
+        {brushHud && createPortal(
+          <div
+            data-testid="brush-adjust-hud"
+            aria-hidden="true"
+            className="fixed z-[80] pointer-events-none rounded border border-strong bg-elevated px-2 py-1 text-[11px] font-mono leading-4 text-fg-primary shadow-lg whitespace-nowrap"
+            style={{ left: brushHud.left, top: brushHud.top, minWidth: BRUSH_HUD_WIDTH }}
+          >
+            <div className={brushHud.axis === 'size'
+              ? 'font-semibold text-accent'
+              : brushHud.axis === 'hardness' ? 'text-fg-disabled' : undefined}
+            >{t('preprocessInpaint.brushDiameterHud', { size: brushHud.size })}</div>
+            <div className={brushHud.axis === 'hardness'
+              ? 'font-semibold text-accent'
+              : brushHud.axis === 'size' ? 'text-fg-disabled' : undefined}
+            >{t('preprocessInpaint.brushHardnessHud', {
+              hardness: Math.round(brushHud.hardness * 100),
+            })}</div>
+          </div>,
+          document.body,
+        )}
         {!loaded && (
           <div className="absolute inset-0 flex items-center justify-center text-fg-tertiary text-sm">
             {t('preprocessInpaint.canvasLoading')}

@@ -617,6 +617,7 @@ function InpaintWorkspace() {
                     maskEdits={activeMaskEdits}
                     maskBaseUrl={maskBaseUrlFor(activeImage)}
                     brush={brush}
+                    onBrushAdjust={(next) => setBrush((prev) => ({ ...prev, ...next }))}
                     erase={erase}
                     onStrokeEnd={onStrokeEnd}
                     onMaskStrokeEnd={onMaskStrokeEnd}
