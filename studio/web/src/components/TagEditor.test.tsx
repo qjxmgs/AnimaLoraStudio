@@ -64,6 +64,7 @@ describe('TagEditor (PP4 chip mode)', () => {
         onChange={() => {}}
         onAddCustomTag={() => {}}
         onDeleteCustomTag={() => {}}
+        onReplaceCustomTags={() => {}}
       />,
     )
 
@@ -86,6 +87,7 @@ describe('TagEditor (PP4 chip mode)', () => {
       onChange,
       onAddCustomTag: vi.fn(),
       onDeleteCustomTag: vi.fn(),
+      onReplaceCustomTags: vi.fn(),
     }
     render(<TagEditor {...props} />)
 
@@ -94,9 +96,21 @@ describe('TagEditor (PP4 chip mode)', () => {
     await user.click(within(palette).getByRole('button', { name: /^pending$/ }))
     expect(onChange).toHaveBeenLastCalledWith(['pending'], new Set())
 
+    let quickTextMode = within(palette).getByRole('button', {
+      name: '以文本编辑自定义快捷标签',
+    })
+    await user.click(quickTextMode)
+    expect(palette).toHaveClass('basis-1/2')
+    await user.click(quickTextMode)
+    expect(palette).toHaveClass('max-h-36')
+
     await user.click(screen.getByText('文本'))
     palette = screen.getByRole('region', { name: '项目常驻标签' })
-    expect(palette).toBeInTheDocument()
+    quickTextMode = within(palette).getByRole('button', {
+      name: '以文本编辑自定义快捷标签',
+    })
+    await user.click(quickTextMode)
+    expect(palette).toHaveClass('basis-1/2')
   })
 
   it('reorders variable-width chips without strategy-level scaling', () => {

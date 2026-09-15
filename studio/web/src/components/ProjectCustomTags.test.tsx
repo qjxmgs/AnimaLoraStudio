@@ -15,6 +15,7 @@ describe('ProjectCustomTags', () => {
         onPick={onPick}
         onAdd={() => {}}
         onDelete={() => {}}
+        onReplace={() => {}}
       />,
     )
 
@@ -47,6 +48,7 @@ describe('ProjectCustomTags', () => {
         onPick={() => {}}
         onAdd={onAdd}
         onDelete={() => {}}
+        onReplace={() => {}}
       />,
     )
 
@@ -72,6 +74,7 @@ describe('ProjectCustomTags', () => {
         onPick={() => {}}
         onAdd={() => {}}
         onDelete={onDelete}
+        onReplace={() => {}}
       />,
     )
 
@@ -100,6 +103,7 @@ describe('ProjectCustomTags', () => {
         onPick={() => {}}
         onAdd={() => {}}
         onDelete={() => {}}
+        onReplace={() => {}}
       />,
     )
 
@@ -110,5 +114,49 @@ describe('ProjectCustomTags', () => {
     await user.click(screen.getByRole('button', { name: '添加项目常驻标签' }))
     await user.keyboard('{Escape}')
     expect(screen.queryByRole('textbox', { name: '输入新的项目常驻标签' })).not.toBeInTheDocument()
+  })
+
+  it('edits all quick tags as newline text and create exits text mode', async () => {
+    const user = userEvent.setup()
+    const onReplace = vi.fn()
+    render(
+      <ProjectCustomTags
+        tags={['alpha', 'tag, with comma']}
+        activeTags={new Set()}
+        onPick={() => {}}
+        onAdd={() => {}}
+        onDelete={() => {}}
+        onReplace={onReplace}
+      />,
+    )
+
+    const textMode = screen.getByRole('button', { name: '以文本编辑自定义快捷标签' })
+    await user.click(textMode)
+    expect(textMode).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('region', { name: '项目常驻标签' })).toHaveClass(
+      'min-h-0',
+      'max-h-none',
+      'basis-1/2',
+    )
+    expect(screen.getByRole('region', { name: '项目常驻标签' })).not.toHaveClass('max-h-36')
+    expect(screen.getByRole('textbox', { name: '文本编辑自定义快捷标签' })).toBeInTheDocument()
+    await user.click(textMode)
+    expect(textMode).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.getByRole('region', { name: '项目常驻标签' })).toHaveClass('max-h-36')
+    expect(screen.getByRole('region', { name: '项目常驻标签' })).not.toHaveClass('basis-1/2')
+    expect(screen.queryByRole('textbox', { name: '文本编辑自定义快捷标签' })).not.toBeInTheDocument()
+
+    await user.click(textMode)
+    const textarea = screen.getByRole('textbox', { name: '文本编辑自定义快捷标签' })
+    expect(textarea).toHaveValue('alpha\ntag, with comma')
+
+    await user.clear(textarea)
+    await user.type(textarea, 'alpha{Enter}gamma{Enter}alpha')
+    await user.click(screen.getByRole('button', { name: '添加项目常驻标签' }))
+
+    expect(onReplace).toHaveBeenCalledWith(['alpha', 'gamma'])
+    expect(screen.queryByRole('button', { name: '以文本编辑自定义快捷标签' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('textbox', { name: '文本编辑自定义快捷标签' })).not.toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: '输入新的项目常驻标签' })).toBeInTheDocument()
   })
 })

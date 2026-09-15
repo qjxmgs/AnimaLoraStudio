@@ -1162,6 +1162,7 @@ export default function TagEditPage() {
                   customTagsBusy={customTagsBusy}
                   onAddCustomTag={addCustomTag}
                   onDeleteCustomTag={deleteCustomTag}
+                  onReplaceCustomTags={persistCustomTags}
                 />
               </div>
             </Card>

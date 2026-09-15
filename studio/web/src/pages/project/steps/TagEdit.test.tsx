@@ -155,6 +155,7 @@ vi.mock('../../../components/TagEditor', () => ({
     customTagsBusy = false,
     onAddCustomTag,
     onDeleteCustomTag,
+    onReplaceCustomTags,
   }: {
     tags: string[]
     inactiveTags?: ReadonlySet<string>
@@ -163,6 +164,7 @@ vi.mock('../../../components/TagEditor', () => ({
     customTagsBusy?: boolean
     onAddCustomTag?: (tag: string) => void | Promise<void>
     onDeleteCustomTag?: (tag: string) => void | Promise<void>
+    onReplaceCustomTags?: (tags: string[]) => void | Promise<void>
   }) => {
     const activeTags = tags.filter((tag) => !inactiveTags.has(tag))
     return (
@@ -232,6 +234,13 @@ vi.mock('../../../components/TagEditor', () => ({
             onClick={() => onAddCustomTag?.('project_new')}
           >
             添加测试常驻标签
+          </button>
+          <button
+            type="button"
+            disabled={customTagsBusy}
+            onClick={() => onReplaceCustomTags?.(['replaced', 'quick'])}
+          >
+            文本更新常驻标签
           </button>
         </section>
       </div>
@@ -779,6 +788,12 @@ describe('TagEdit workspace', () => {
     await waitFor(() => expect(api.updateProject).toHaveBeenLastCalledWith(7, {
       custom_tags: ['cat', 'project_new'],
     }))
+
+    await user.click(screen.getByRole('button', { name: '文本更新常驻标签' }))
+    await waitFor(() => expect(api.updateProject).toHaveBeenLastCalledWith(7, {
+      custom_tags: ['replaced', 'quick'],
+    }))
+    expect(api.commitCaptions).not.toHaveBeenCalled()
   })
 
   it('keeps project quick tags unchanged and reports an immediate-save failure', async () => {

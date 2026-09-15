@@ -40,6 +40,7 @@ interface Props {
   customTagsBusy?: boolean
   onAddCustomTag?: (tag: string) => void | Promise<void>
   onDeleteCustomTag?: (tag: string) => void | Promise<void>
+  onReplaceCustomTags?: (tags: string[]) => void | Promise<void>
 }
 
 type Mode = 'chip' | 'text'
@@ -268,6 +269,7 @@ export default function TagEditor({
   customTagsBusy = false,
   onAddCustomTag,
   onDeleteCustomTag,
+  onReplaceCustomTags,
 }: Props) {
   const { t } = useTranslation()
   const [draft, setDraft] = useState('')
@@ -533,7 +535,7 @@ export default function TagEditor({
     setMode('chip')
   }
 
-  const customTagPalette = onAddCustomTag && onDeleteCustomTag ? (
+  const customTagPalette = onAddCustomTag && onDeleteCustomTag && onReplaceCustomTags ? (
     <ProjectCustomTags
       tags={customTags}
       activeTags={new Set(selectedTags)}
@@ -542,6 +544,7 @@ export default function TagEditor({
       onPick={addTag}
       onAdd={onAddCustomTag}
       onDelete={onDeleteCustomTag}
+      onReplace={onReplaceCustomTags}
     />
   ) : null
 
