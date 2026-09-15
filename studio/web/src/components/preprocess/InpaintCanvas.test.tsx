@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import InpaintCanvas, {
   resolveBrushAdjustment,
   resolveBrushAdjustmentAxis,
+  resolveStraightStrokeGuide,
   type BrushAdjustment,
   type InpaintCanvasHandle,
   type InpaintMode,
@@ -40,6 +41,7 @@ function Harness({
   onMaskStrokeEnd,
   onLassoCreate,
   onLassoUpdate,
+  onLassoDelete,
   onPickColor = vi.fn(),
   inpaintRef,
 }: {
@@ -51,6 +53,7 @@ function Harness({
   onMaskStrokeEnd: ReturnType<typeof vi.fn>
   onLassoCreate: ReturnType<typeof vi.fn>
   onLassoUpdate: ReturnType<typeof vi.fn>
+  onLassoDelete: ReturnType<typeof vi.fn>
   onPickColor?: ReturnType<typeof vi.fn>
   inpaintRef?: Ref<InpaintCanvasHandle>
 }) {
@@ -69,6 +72,14 @@ function Harness({
     )) as T[]
     if (target === 'paint') setPaintEdits((prev) => replace(prev))
     else setMaskEdits((prev) => replace(prev))
+  }
+  const deleteLasso = (target: InpaintMode, shapeId: string) => {
+    onLassoDelete(target, shapeId)
+    const remove = <T extends PaintEdit | MaskEdit>(edits: T[]): T[] => edits.filter((edit) => (
+      edit.type !== 'lasso' || edit.shape.id !== shapeId
+    ))
+    if (target === 'paint') setPaintEdits((prev) => remove(prev))
+    else setMaskEdits((prev) => remove(prev))
   }
   return (
     <div style={{ width: 500, height: 400 }}>
@@ -91,6 +102,7 @@ function Harness({
         onMaskStrokeEnd={onMaskStrokeEnd}
         onLassoCreate={createLasso}
         onLassoUpdate={updateLasso}
+        onLassoDelete={deleteLasso}
         onPickColor={onPickColor}
       />
     </div>
@@ -127,6 +139,51 @@ describe('resolveBrushAdjustment', () => {
       size: 2,
       hardness: 0,
     })
+  })
+})
+
+describe('resolveStraightStrokeGuide', () => {
+  it('offsets horizontal and vertical guide sides by the brush radius', () => {
+    expect(resolveStraightStrokeGuide(
+      { x: 10, y: 20 }, { x: 110, y: 20 }, 20, 1,
+    )).toEqual({
+      radius: 10,
+      sides: [
+        { x1: 10, y1: 30, x2: 110, y2: 30 },
+        { x1: 10, y1: 10, x2: 110, y2: 10 },
+      ],
+    })
+    expect(resolveStraightStrokeGuide(
+      { x: 10, y: 20 }, { x: 10, y: 120 }, 20, 1,
+    )).toEqual({
+      radius: 10,
+      sides: [
+        { x1: 0, y1: 20, x2: 0, y2: 120 },
+        { x1: 20, y1: 20, x2: 20, y2: 120 },
+      ],
+    })
+  })
+
+  it('keeps diagonal guide width equal to the brush diameter', () => {
+    const guide = resolveStraightStrokeGuide(
+      { x: 10, y: 10 }, { x: 110, y: 110 }, 30, 1,
+    )
+    expect(guide).not.toBeNull()
+    const [first, second] = guide!.sides
+    expect(Math.hypot(first.x1 - second.x1, first.y1 - second.y1)).toBeCloseTo(30)
+    expect(Math.hypot(first.x2 - second.x2, first.y2 - second.y2)).toBeCloseTo(30)
+  })
+
+  it('hides a channel shorter than one screen pixel', () => {
+    expect(resolveStraightStrokeGuide(
+      { x: 10, y: 10 }, { x: 10.5, y: 10 }, 20, 1,
+    )).toBeNull()
+    expect(resolveStraightStrokeGuide(
+      { x: 10, y: 10 }, { x: 11, y: 10 }, 20, 1,
+    )).not.toBeNull()
+    expect(resolveStraightStrokeGuide(
+      { x: 10, y: 10 }, { x: 11, y: 10 }, 20, 0.5,
+    )).toBeNull()
   })
 })
 
@@ -210,6 +267,7 @@ describe('InpaintCanvas brush adjustment gesture', () => {
       onMaskStrokeEnd: vi.fn(),
       onLassoCreate: vi.fn(),
       onLassoUpdate: vi.fn(),
+      onLassoDelete: vi.fn(),
       onPickColor: vi.fn(),
     }
     const view = render(<Harness {...options} {...callbacks} />)
@@ -606,6 +664,109 @@ describe('InpaintCanvas brush adjustment gesture', () => {
     expect(onStrokeEnd).not.toHaveBeenCalled()
   })
 
+  it('shows a live double-sided Shift guide and start circle before clicking', async () => {
+    const { viewport } = await renderLoaded()
+    fireEvent(viewport, pointerEvent('pointermove', { clientX: 100, clientY: 100 }))
+    fireEvent(viewport, pointerEvent('pointerdown', {
+      button: 0, buttons: 1, clientX: 100, clientY: 100,
+    }))
+    fireEvent(viewport, pointerEvent('pointerup', { button: 0, clientX: 100, clientY: 100 }))
+    fireEvent(viewport, pointerEvent('pointermove', { clientX: 200, clientY: 100 }))
+
+    fireEvent.keyDown(window, { code: 'ShiftLeft', key: 'Shift', shiftKey: true })
+    const guide = screen.getByTestId('straight-stroke-guide')
+    const start = screen.getByTestId('straight-stroke-guide-start')
+    const sides = guide.querySelectorAll('[data-guide-side]')
+    expect(start).toHaveAttribute('cx', '50')
+    expect(start).toHaveAttribute('cy', '100')
+    expect(start).toHaveAttribute('r', '10')
+    expect(sides).toHaveLength(2)
+    expect(sides[0]).toHaveAttribute('x1', '50')
+    expect(sides[0]).toHaveAttribute('x2', '150')
+    expect([sides[0].getAttribute('y1'), sides[1].getAttribute('y1')].sort())
+      .toEqual(['110', '90'])
+    expect(sides[0]).toHaveAttribute('stroke', '#ffffff')
+    expect(guide.querySelector('g')).toHaveAttribute('stroke-dasharray', '6 4')
+
+    fireEvent(viewport, pointerEvent('pointermove', { clientX: 220, clientY: 120 }))
+    const movedSide = screen.getByTestId('straight-stroke-guide')
+      .querySelector('[data-guide-side="0"]')
+    expect(Number(movedSide?.getAttribute('x2'))).toBeGreaterThan(160)
+
+    fireEvent.keyUp(window, { code: 'ShiftLeft', key: 'Shift' })
+    expect(screen.queryByTestId('straight-stroke-guide')).not.toBeInTheDocument()
+  })
+
+  it('freezes the Shift guide and brush circle at pointer-down until release', async () => {
+    const { viewport, onStrokeEnd } = await renderLoaded()
+    fireEvent(viewport, pointerEvent('pointermove', { clientX: 100, clientY: 100 }))
+    fireEvent(viewport, pointerEvent('pointerdown', {
+      button: 0, buttons: 1, clientX: 100, clientY: 100,
+    }))
+    fireEvent(viewport, pointerEvent('pointerup', { button: 0, clientX: 100, clientY: 100 }))
+    fireEvent(viewport, pointerEvent('pointermove', { clientX: 200, clientY: 100 }))
+    fireEvent.keyDown(window, { code: 'ShiftLeft', key: 'Shift', shiftKey: true })
+
+    fireEvent(viewport, pointerEvent('pointerdown', {
+      button: 0, buttons: 1, clientX: 200, clientY: 100, shiftKey: true,
+    }))
+    fireEvent(viewport, pointerEvent('pointermove', {
+      button: 0, buttons: 1, clientX: 280, clientY: 100, shiftKey: true,
+    }))
+    expect(screen.getByTestId('straight-stroke-guide').querySelector('[data-guide-side="0"]'))
+      .toHaveAttribute('x2', '150')
+    expect(screen.getByTestId('brush-cursor')).toHaveStyle({ left: '190px' })
+
+    fireEvent(viewport, pointerEvent('pointerup', {
+      button: 0, clientX: 280, clientY: 100, shiftKey: true,
+    }))
+    expect(onStrokeEnd).toHaveBeenLastCalledWith(expect.objectContaining({
+      points: [{ x: 50, y: 100 }, { x: 150, y: 100 }],
+    }))
+    expect(screen.getByTestId('straight-stroke-guide').querySelector('[data-guide-side="0"]'))
+      .toHaveAttribute('x2', '230')
+    expect(screen.getByTestId('brush-cursor')).toHaveStyle({ left: '270px' })
+  })
+
+  it.each([
+    { mode: 'paint' as const, tool: 'eraser' as const, color: '#ffffff' },
+    { mode: 'mask' as const, tool: 'brush' as const, color: '#ff2d2d' },
+    { mode: 'mask' as const, tool: 'eraser' as const, color: '#ffffff' },
+  ])('uses the expected $mode/$tool guide color', async ({ mode, tool, color }) => {
+    const { viewport } = await renderLoaded({ mode, tool })
+    fireEvent(viewport, pointerEvent('pointermove', { clientX: 100, clientY: 100 }))
+    fireEvent(viewport, pointerEvent('pointerdown', {
+      button: 0, buttons: 1, clientX: 100, clientY: 100,
+    }))
+    fireEvent(viewport, pointerEvent('pointerup', { button: 0, clientX: 100, clientY: 100 }))
+    fireEvent(viewport, pointerEvent('pointermove', { clientX: 200, clientY: 100 }))
+    fireEvent.keyDown(window, { code: 'ShiftLeft', key: 'Shift', shiftKey: true })
+    expect(screen.getByTestId('straight-stroke-guide').querySelector('[data-guide-side="0"]'))
+      .toHaveAttribute('stroke', color)
+  })
+
+  it('hides the Shift guide for conflicting modifiers and window blur', async () => {
+    const { viewport } = await renderLoaded()
+    fireEvent(viewport, pointerEvent('pointermove', { clientX: 100, clientY: 100 }))
+    fireEvent(viewport, pointerEvent('pointerdown', {
+      button: 0, buttons: 1, clientX: 100, clientY: 100,
+    }))
+    fireEvent(viewport, pointerEvent('pointerup', { button: 0, clientX: 100, clientY: 100 }))
+    fireEvent(viewport, pointerEvent('pointermove', { clientX: 200, clientY: 100 }))
+    fireEvent.keyDown(window, { code: 'ShiftLeft', key: 'Shift', shiftKey: true })
+    expect(screen.getByTestId('straight-stroke-guide')).toBeInTheDocument()
+
+    fireEvent.keyDown(window, {
+      code: 'AltLeft', key: 'Alt', shiftKey: true, altKey: true,
+    })
+    expect(screen.queryByTestId('straight-stroke-guide')).not.toBeInTheDocument()
+    fireEvent.keyUp(window, { code: 'AltLeft', key: 'Alt', shiftKey: true })
+    expect(screen.getByTestId('straight-stroke-guide')).toBeInTheDocument()
+
+    fireEvent(window, new Event('blur'))
+    expect(screen.queryByTestId('straight-stroke-guide')).not.toBeInTheDocument()
+  })
+
   it('builds and closes a lasso only after three points reach the start', async () => {
     const { viewport, onLassoCreate } = await renderLoaded({ tool: 'lasso' })
     const tap = (x: number, y: number) => {
@@ -677,6 +838,49 @@ describe('InpaintCanvas brush adjustment gesture', () => {
     }))
   })
 
+  it('deletes the selected closed lasso with Delete and ignores modified keys', async () => {
+    const { viewport, onLassoCreate, onLassoDelete, onLassoUpdate } = await renderLoaded({
+      mode: 'mask', tool: 'lasso',
+    })
+    const tap = (x: number, y: number) => {
+      fireEvent(viewport, pointerEvent('pointerdown', { button: 0, clientX: x, clientY: y }))
+      fireEvent(viewport, pointerEvent('pointerup', { button: 0, clientX: x, clientY: y }))
+    }
+    tap(100, 100); tap(200, 100); tap(200, 200); tap(100, 100)
+    const shape = onLassoCreate.mock.calls[0][1] as LassoShape
+    expect(screen.getByTestId('lasso-overlay').querySelectorAll('[data-lasso-point-id]'))
+      .toHaveLength(3)
+
+    fireEvent.keyDown(window, { code: 'Backspace', key: 'Backspace' })
+    fireEvent.keyDown(window, { code: 'Delete', key: 'Delete', ctrlKey: true })
+    fireEvent.keyDown(window, { code: 'Delete', key: 'Delete', repeat: true })
+    expect(onLassoDelete).not.toHaveBeenCalled()
+
+    expect(fireEvent.keyDown(window, { code: 'Delete', key: 'Delete' })).toBe(false)
+    expect(onLassoDelete).toHaveBeenCalledTimes(1)
+    expect(onLassoDelete).toHaveBeenCalledWith('mask', shape.id)
+    expect(screen.getByTestId('lasso-overlay').querySelectorAll('[data-lasso-point-id]'))
+      .toHaveLength(0)
+
+    fireEvent.keyDown(window, { code: 'KeyC', key: 'c' })
+    expect(onLassoUpdate).not.toHaveBeenCalled()
+  })
+
+  it('does not delete an open lasso draft without a selected closed shape', async () => {
+    const { viewport, onLassoDelete } = await renderLoaded({ tool: 'lasso' })
+    fireEvent(viewport, pointerEvent('pointerdown', {
+      button: 0, clientX: 100, clientY: 100,
+    }))
+    fireEvent(viewport, pointerEvent('pointerup', {
+      button: 0, clientX: 100, clientY: 100,
+    }))
+    expect(screen.getByTestId('lasso-draft')).toBeInTheDocument()
+
+    expect(fireEvent.keyDown(window, { code: 'Delete', key: 'Delete' })).toBe(true)
+    expect(onLassoDelete).not.toHaveBeenCalled()
+    expect(screen.getByTestId('lasso-draft')).toBeInTheDocument()
+  })
+
   it('cancels an open lasso with Escape and disables Alt-right brush adjustment', async () => {
     const { viewport, onBrushAdjust, onLassoCreate } = await renderLoaded({ tool: 'lasso' })
     fireEvent(viewport, pointerEvent('pointerdown', {
@@ -700,7 +904,7 @@ describe('InpaintCanvas brush adjustment gesture', () => {
   it('removes the circular cursor in lasso mode and keeps it hidden until pointer movement', async () => {
     const {
       viewport, rerender, onBrushAdjust, onStrokeEnd, onMaskStrokeEnd,
-      onLassoCreate, onLassoUpdate,
+      onLassoCreate, onLassoUpdate, onLassoDelete,
     } = await renderLoaded()
 
     fireEvent(viewport, pointerEvent('pointermove', { clientX: 180, clientY: 160 }))
@@ -713,6 +917,7 @@ describe('InpaintCanvas brush adjustment gesture', () => {
       onMaskStrokeEnd={onMaskStrokeEnd}
       onLassoCreate={onLassoCreate}
       onLassoUpdate={onLassoUpdate}
+      onLassoDelete={onLassoDelete}
     />)
     expect(screen.queryByTestId('brush-cursor')).not.toBeInTheDocument()
 
@@ -723,6 +928,7 @@ describe('InpaintCanvas brush adjustment gesture', () => {
       onMaskStrokeEnd={onMaskStrokeEnd}
       onLassoCreate={onLassoCreate}
       onLassoUpdate={onLassoUpdate}
+      onLassoDelete={onLassoDelete}
     />)
     expect(screen.getByTestId('brush-cursor')).toHaveStyle({ display: 'none' })
     fireEvent(viewport, pointerEvent('pointermove', { clientX: 190, clientY: 170 }))

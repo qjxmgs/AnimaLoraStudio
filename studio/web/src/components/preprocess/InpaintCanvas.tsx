@@ -94,6 +94,14 @@ export interface BrushAdjustment {
 
 export type BrushAdjustmentAxis = 'pending' | 'size' | 'hardness'
 
+export interface StraightStrokeGuideGeometry {
+  radius: number
+  sides: [
+    { x1: number; y1: number; x2: number; y2: number },
+    { x1: number; y1: number; x2: number; y2: number },
+  ]
+}
+
 const MIN_BRUSH_SIZE = 1
 const MAX_BRUSH_SIZE = 400
 const BRUSH_ADJUST_DEAD_ZONE = 6
@@ -101,6 +109,10 @@ const BRUSH_ADJUST_AXIS_DOMINANCE = 1.25
 const BRUSH_HUD_GAP = 8
 const BRUSH_HUD_WIDTH = 132
 const BRUSH_HUD_HEIGHT = 44
+const STRAIGHT_GUIDE_DASH = 6
+const STRAIGHT_GUIDE_GAP = 4
+const STRAIGHT_GUIDE_OUTLINE_WIDTH = 3.5
+const STRAIGHT_GUIDE_FOREGROUND_WIDTH = 1.5
 const LASSO_CLOSE_RADIUS = 10
 const LASSO_POINT_RADIUS = 5
 
@@ -152,6 +164,39 @@ export function resolveBrushAdjustment(
         Math.round(initial.hardness * 100 - removeBrushAdjustDeadZone(deltaY)) / 100,
       ))
       : initial.hardness,
+  }
+}
+
+export function resolveStraightStrokeGuide(
+  start: { x: number; y: number },
+  end: { x: number; y: number },
+  brushSize: number,
+  scale: number,
+): StraightStrokeGuideGeometry | null {
+  const dx = end.x - start.x
+  const dy = end.y - start.y
+  const length = Math.hypot(dx, dy)
+  const safeScale = Number.isFinite(scale) && scale > 0 ? scale : 1
+  if (!Number.isFinite(length) || length * safeScale < 1 || brushSize <= 0) return null
+  const radius = brushSize / 2
+  const offsetX = (-dy / length) * radius
+  const offsetY = (dx / length) * radius
+  return {
+    radius,
+    sides: [
+      {
+        x1: start.x + offsetX,
+        y1: start.y + offsetY,
+        x2: end.x + offsetX,
+        y2: end.y + offsetY,
+      },
+      {
+        x1: start.x - offsetX,
+        y1: start.y - offsetY,
+        x2: end.x - offsetX,
+        y2: end.y - offsetY,
+      },
+    ],
   }
 }
 
@@ -505,6 +550,7 @@ const InpaintCanvas = forwardRef<
     onMaskStrokeEnd: (s: InpaintStroke) => void
     onLassoCreate: (mode: InpaintMode, shape: LassoShape) => void
     onLassoUpdate: (mode: InpaintMode, shape: LassoShape) => void
+    onLassoDelete: (mode: InpaintMode, shapeId: string) => void
     onPickColor: (hex: string) => void
     /** Proposal-only overlay. It is never included in image or mask exports. */
     proposalRegions?: HeadMaskOverlayRegion[]
@@ -517,7 +563,7 @@ const InpaintCanvas = forwardRef<
   {
     imageUrl, imageW, imageH, mode, paintEdits, maskEdits, maskBaseUrl,
     brush, onBrushAdjust, tool, onStrokeEnd, onMaskStrokeEnd,
-    onLassoCreate, onLassoUpdate, onPickColor,
+    onLassoCreate, onLassoUpdate, onLassoDelete, onPickColor,
     proposalRegions = [],
     onProposalPreviewState,
     statusBarPortalTarget,
@@ -557,6 +603,8 @@ const InpaintCanvas = forwardRef<
   const [loaded, setLoaded] = useState(false)
   const [maskBaseTick, setMaskBaseTick] = useState(0)
   const [cursorPos, setCursorPos] = useState<{ x: number; y: number } | null>(null)
+  const [straightGuidePoint, setStraightGuidePoint] = useState<InpaintPoint | null>(null)
+  const [straightGuideActive, setStraightGuideActive] = useState(false)
   const [brushHud, setBrushHud] = useState<(
     BrushAdjustment & { left: number; top: number; axis: BrushAdjustmentAxis }
   ) | null>(null)
@@ -593,6 +641,7 @@ const InpaintCanvas = forwardRef<
     lastPublished: BrushAdjustment
   } | null>(null)
   const suppressContextMenuRef = useRef(false)
+  const pressedShiftKeysRef = useRef(new Set<string>())
   const lassoDragRef = useRef<{
     pointerId: number
     mode: InpaintMode
@@ -892,6 +941,7 @@ const InpaintCanvas = forwardRef<
     },
     resetStrokeAnchor: () => {
       lastStrokePointRef.current = null
+      setStraightGuidePoint(null)
     },
   }), [ensureLayer, lassoDraft, selectedLassoPoint])
 
@@ -1013,7 +1063,57 @@ const InpaintCanvas = forwardRef<
   // A straight-stroke anchor never crosses an image, mode, or tool boundary.
   useEffect(() => {
     lastStrokePointRef.current = null
+    setStraightGuidePoint(null)
   }, [imageUrl, mode, tool])
+
+  useEffect(() => {
+    const pressedShiftKeys = pressedShiftKeysRef.current
+    const isModifierCode = (code: string) => (
+      code === 'ShiftLeft' || code === 'ShiftRight' ||
+      code === 'ControlLeft' || code === 'ControlRight' ||
+      code === 'AltLeft' || code === 'AltRight' ||
+      code === 'MetaLeft' || code === 'MetaRight'
+    )
+    const sync = (event: KeyboardEvent) => {
+      setStraightGuideActive(
+        pressedShiftKeys.size > 0 &&
+        !event.ctrlKey && !event.altKey && !event.metaKey,
+      )
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!isModifierCode(event.code) || event.isComposing) return
+      if (event.code === 'ShiftLeft' || event.code === 'ShiftRight') {
+        pressedShiftKeys.add(event.code)
+      }
+      sync(event)
+    }
+    const onKeyUp = (event: KeyboardEvent) => {
+      if (!isModifierCode(event.code)) return
+      if (event.code === 'ShiftLeft' || event.code === 'ShiftRight') {
+        pressedShiftKeys.delete(event.code)
+      }
+      sync(event)
+    }
+    const reset = () => {
+      pressedShiftKeys.clear()
+      setStraightGuideActive(false)
+      setStraightGuidePoint(null)
+    }
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') reset()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    window.addEventListener('keyup', onKeyUp)
+    window.addEventListener('blur', reset)
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('keyup', onKeyUp)
+      window.removeEventListener('blur', reset)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+      pressedShiftKeys.clear()
+    }
+  }, [])
 
   useEffect(() => {
     if (tool !== 'lasso') return
@@ -1039,9 +1139,18 @@ const InpaintCanvas = forwardRef<
         setSelectedLassoPoint(null)
         return
       }
-      if (event.code !== 'KeyC' || event.repeat || !selectedLassoPoint) return
+      if (event.repeat || !selectedLassoPoint) return
       const shape = editableLassos.find((item) => item.id === selectedLassoPoint.shapeId)
       if (!shape) return
+      if (event.code === 'Delete') {
+        event.preventDefault()
+        lassoDragRef.current = null
+        setLassoPreview(null)
+        setSelectedLassoPoint(null)
+        onLassoDelete(selectedLassoPoint.mode, shape.id)
+        return
+      }
+      if (event.code !== 'KeyC') return
       const pointIndex = shape.points.findIndex((point) => point.id === selectedLassoPoint.pointId)
       if (pointIndex < 0) return
       const points = shape.points.map((point, index) => index === pointIndex
@@ -1053,7 +1162,7 @@ const InpaintCanvas = forwardRef<
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [
-    editableLassos, lassoDraft, onLassoUpdate, selectedLassoPoint,
+    editableLassos, lassoDraft, onLassoDelete, onLassoUpdate, selectedLassoPoint,
     tool, wrapRef,
   ])
 
@@ -1162,6 +1271,11 @@ const InpaintCanvas = forwardRef<
         target: isMask ? 'mask' : 'paint',
         fixedEndpoint,
       }
+      if (fixedEndpoint) {
+        setStraightGuideActive(true)
+        setStraightGuidePoint(pt)
+        updateCursor(e.clientX, e.clientY)
+      }
       if (strokePreviewClearFrameRef.current != null) {
         window.cancelAnimationFrame(strokePreviewClearFrameRef.current)
         strokePreviewClearFrameRef.current = null
@@ -1178,8 +1292,15 @@ const InpaintCanvas = forwardRef<
 
   const onPointerMove = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
-      if (toolRef.current !== 'lasso') updateCursor(e.clientX, e.clientY)
+      const fixedEndpoint = drawingRef.current?.fixedEndpoint === true
+      if (toolRef.current !== 'lasso' && !fixedEndpoint) {
+        updateCursor(e.clientX, e.clientY)
+      }
       const pt = toContentPoint(e.clientX, e.clientY)
+      const pointInsideImage = Boolean(
+        pt && pt.x >= 0 && pt.y >= 0 && pt.x <= imageW && pt.y <= imageH,
+      )
+      if (!fixedEndpoint) setStraightGuidePoint(pointInsideImage && pt ? pt : null)
       if (pt) {
         setCursorPos({
           x: Math.max(0, Math.min(imageW, Math.round(pt.x))),
@@ -1226,7 +1347,10 @@ const InpaintCanvas = forwardRef<
         updateBrushHud(e.clientX, e.clientY, next, adjusting.axis)
         return
       }
-      if (zp.panPointerMove(e)) return
+      if (zp.panPointerMove(e)) {
+        setStraightGuidePoint(null)
+        return
+      }
       const drawing = drawingRef.current
       if (!drawing || !pt) return
       if (drawing.fixedEndpoint) return
@@ -1286,8 +1410,24 @@ const InpaintCanvas = forwardRef<
       else scheduleContextMenuReset()
       return
     }
+    const fixedEndpoint = drawingRef.current?.fixedEndpoint === true
     endStroke(cancelled)
-  }, [endStroke, onLassoUpdate, scheduleContextMenuReset])
+    if (fixedEndpoint) {
+      if (cancelled) {
+        setStraightGuidePoint(null)
+      } else {
+        const point = toContentPoint(e.clientX, e.clientY)
+        const pointInsideImage = Boolean(
+          point && point.x >= 0 && point.y >= 0 && point.x <= imageW && point.y <= imageH,
+        )
+        setStraightGuidePoint(pointInsideImage && point ? point : null)
+        updateCursor(e.clientX, e.clientY)
+      }
+    }
+  }, [
+    endStroke, imageH, imageW, onLassoUpdate, scheduleContextMenuReset,
+    toContentPoint, updateCursor,
+  ])
 
   const onContextMenu = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     if (toolRef.current === 'lasso') return
@@ -1305,6 +1445,21 @@ const InpaintCanvas = forwardRef<
     ? [...lassoDraft.points, ...(cursorPos ? [{ ...cursorPos, id: 'cursor', smooth: false }] : [])]
     : []
   const erase = tool === 'eraser'
+  const straightGuideStart = lastStrokePointRef.current
+  const straightGuide = (
+    straightGuideActive && loaded && tool !== 'lasso' && straightGuideStart &&
+    straightGuidePoint && !zp.spacePressed && !zp.isPanning && !brushHud &&
+    (!drawingRef.current || drawingRef.current.fixedEndpoint)
+  ) ? resolveStraightStrokeGuide(
+      straightGuideStart,
+      straightGuidePoint,
+      brush.size,
+      lassoScale,
+    ) : null
+  const straightGuideColor = mode === 'mask' && !erase
+    ? TRAINING_MASK_COLOR
+    : '#ffffff'
+  const straightGuideDash = `${STRAIGHT_GUIDE_DASH / lassoScale} ${STRAIGHT_GUIDE_GAP / lassoScale}`
   const statusBar = (
     <div
       data-testid="inpaint-canvas-status"
@@ -1359,6 +1514,7 @@ const InpaintCanvas = forwardRef<
             cur.style.display = 'none'
           }
           setCursorPos(null)
+          setStraightGuidePoint(null)
         }}
       >
         <div
@@ -1382,6 +1538,63 @@ const InpaintCanvas = forwardRef<
             className="pointer-events-none absolute inset-0"
             aria-hidden="true"
           />
+          {straightGuide && straightGuideStart && (
+            <svg
+              data-testid="straight-stroke-guide"
+              width={imageW}
+              height={imageH}
+              viewBox={`0 0 ${imageW} ${imageH}`}
+              className="pointer-events-none absolute inset-0"
+              aria-hidden="true"
+            >
+              <g
+                fill="none"
+                strokeLinecap="round"
+                strokeDasharray={straightGuideDash}
+              >
+                <circle
+                  cx={straightGuideStart.x}
+                  cy={straightGuideStart.y}
+                  r={straightGuide.radius}
+                  stroke="rgba(0,0,0,0.78)"
+                  strokeWidth={STRAIGHT_GUIDE_OUTLINE_WIDTH / lassoScale}
+                />
+                {straightGuide.sides.map((side, index) => (
+                  <line
+                    key={`outline-${index}`}
+                    x1={side.x1}
+                    y1={side.y1}
+                    x2={side.x2}
+                    y2={side.y2}
+                    stroke="rgba(0,0,0,0.78)"
+                    strokeWidth={STRAIGHT_GUIDE_OUTLINE_WIDTH / lassoScale}
+                  />
+                ))}
+                <circle
+                  data-testid="straight-stroke-guide-start"
+                  cx={straightGuideStart.x}
+                  cy={straightGuideStart.y}
+                  r={straightGuide.radius}
+                  stroke={straightGuideColor}
+                  strokeOpacity={0.85}
+                  strokeWidth={STRAIGHT_GUIDE_FOREGROUND_WIDTH / lassoScale}
+                />
+                {straightGuide.sides.map((side, index) => (
+                  <line
+                    key={`foreground-${index}`}
+                    data-guide-side={index}
+                    x1={side.x1}
+                    y1={side.y1}
+                    x2={side.x2}
+                    y2={side.y2}
+                    stroke={straightGuideColor}
+                    strokeOpacity={0.9}
+                    strokeWidth={STRAIGHT_GUIDE_FOREGROUND_WIDTH / lassoScale}
+                  />
+                ))}
+              </g>
+            </svg>
+          )}
           {tool === 'lasso' && (
             <svg
               data-testid="lasso-overlay"

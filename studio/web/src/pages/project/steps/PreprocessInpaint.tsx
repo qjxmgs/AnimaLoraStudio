@@ -279,6 +279,10 @@ function InpaintWorkspace() {
     pushEntry({ kind: 'lasso-update', target, shape })
   }, [pushEntry])
 
+  const onLassoDelete = useCallback((target: InpaintMode, shapeId: string) => {
+    pushEntry({ kind: 'lasso-delete', target, shapeId })
+  }, [pushEntry])
+
   const undo = useCallback(() => {
     if (!activeName) return
     canvasRef.current?.resetStrokeAnchor()
@@ -360,7 +364,10 @@ function InpaintWorkspace() {
     setHistoryByImage((prev) => ({
       ...prev,
       [name]: (prev[name] ?? []).filter((h) => (
-        h.kind !== kind && !(h.kind === 'lasso-update' && h.target === kind)
+        h.kind !== kind && !(
+          (h.kind === 'lasso-update' || h.kind === 'lasso-delete') &&
+          h.target === kind
+        )
       )),
     }))
     setRedoByImage((prev) => ({ ...prev, [name]: [] }))
@@ -630,6 +637,7 @@ function InpaintWorkspace() {
                     onMaskStrokeEnd={onMaskStrokeEnd}
                     onLassoCreate={onLassoCreate}
                     onLassoUpdate={onLassoUpdate}
+                    onLassoDelete={onLassoDelete}
                     onPickColor={onPickColor}
                     proposalRegions={activeProposalRegions}
                     onProposalPreviewState={setPreviewState}

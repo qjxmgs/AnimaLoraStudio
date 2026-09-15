@@ -126,6 +126,10 @@ export default function SingleImageInpaintDialog({
     pushEntry({ kind: 'lasso-update', target, shape })
   }, [pushEntry])
 
+  const onLassoDelete = useCallback((target: InpaintMode, shapeId: string) => {
+    pushEntry({ kind: 'lasso-delete', target, shapeId })
+  }, [pushEntry])
+
   const undo = useCallback(() => {
     canvasRef.current?.resetStrokeAnchor()
     setHistory((previous) => {
@@ -154,7 +158,10 @@ export default function SingleImageInpaintDialog({
 
   const clearSavedKind = useCallback((kind: InpaintMode) => {
     setHistory((previous) => previous.filter((entry) => (
-      entry.kind !== kind && !(entry.kind === 'lasso-update' && entry.target === kind)
+      entry.kind !== kind && !(
+        (entry.kind === 'lasso-update' || entry.kind === 'lasso-delete') &&
+        entry.target === kind
+      )
     )))
     setRedoHistory([])
   }, [])
@@ -355,6 +362,7 @@ export default function SingleImageInpaintDialog({
               onMaskStrokeEnd={onMaskStrokeEnd}
               onLassoCreate={onLassoCreate}
               onLassoUpdate={onLassoUpdate}
+              onLassoDelete={onLassoDelete}
               onPickColor={(color) => {
                 setBrush((previous) => ({ ...previous, color }))
                 pushRecentColor(color)
