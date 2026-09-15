@@ -1,0 +1,72 @@
+/*
+ * Selected-image frame.
+ *
+ * Every supported thumbnail already reserves a 1px border. This 3px overlay
+ * covers that edge and reaches exactly 2px into the image without affecting
+ * layout or hit testing. The solid inset shadow is a safe fallback for browsers
+ * without composite mask support.
+ */
+.ui-image-selection-frame {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: block;
+  overflow: hidden;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 3px var(--accent);
+  pointer-events: none;
+}
+
+.ui-image-selection-frame-gradient {
+  display: none;
+}
+
+@supports ((mask-composite: exclude) or (-webkit-mask-composite: xor)) {
+  .ui-image-selection-frame {
+    padding: 3px;
+    box-shadow: none;
+    -webkit-mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    mask-composite: exclude;
+  }
+
+  .ui-image-selection-frame-gradient {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    display: block;
+    width: 300%;
+    height: 300%;
+    background: conic-gradient(
+      #ff3040 0deg,
+      #ffd500 60deg,
+      #34d058 120deg,
+      #22d3ee 180deg,
+      #3b82f6 240deg,
+      #d946ef 300deg,
+      #ff3040 360deg
+    );
+    transform: translate(-50%, -50%) rotate(0turn);
+    animation: ui-image-selection-chase 2.2s linear infinite;
+    will-change: transform;
+  }
+}
+
+@keyframes ui-image-selection-chase {
+  to {
+    transform: translate(-50%, -50%) rotate(1turn);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-image-selection-frame-gradient {
+    animation: none;
+    transform: translate(-50%, -50%) rotate(0.125turn);
+    will-change: auto;
+  }
+}

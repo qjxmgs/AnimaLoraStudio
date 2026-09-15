@@ -1,5 +1,6 @@
 import { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import ImageSelectionFrame from '../../../components/ImageSelectionFrame'
 import { api, type GalleryItem, type GalleryRating, type GallerySource, type GalleryTagger } from '../../../api/client'
 import { TagSuggestList } from '../../../components/tagSuggest/TagSuggestList'
 import { useTagSuggest } from '../../../components/tagSuggest/useTagSuggest'
@@ -566,11 +567,7 @@ const GalleryPickerDrawer = forwardRef<GalleryPickerDrawerHandle, GalleryPickerD
               <button
                 type="button"
                 key={`${item.source}:${item.post_id}`}
-                className="gallery-waterfall-card relative mb-2 block w-full overflow-hidden rounded-md border bg-overlay p-0 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-                style={{
-                  borderColor: active ? 'var(--accent)' : 'var(--border-subtle)',
-                  boxShadow: active ? '0 0 0 1px var(--accent)' : undefined,
-                }}
+                className="gallery-waterfall-card relative mb-2 block w-full overflow-hidden rounded-md border border-subtle bg-overlay p-0 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
                 aria-pressed={active}
                 disabled={loading || tagging}
                 aria-label={t('generate.galleryImageAria', { id: item.post_id })}
@@ -591,6 +588,7 @@ const GalleryPickerDrawer = forwardRef<GalleryPickerDrawerHandle, GalleryPickerD
                       <span className="grid h-9 w-9 place-items-center rounded-full bg-accent text-lg font-bold text-white shadow-lg">✓</span>
                     </span>
                   )}
+                  {active && <ImageSelectionFrame />}
                 </div>
                 <span className="block truncate px-2 py-1 text-2xs text-fg-tertiary">#{item.post_id}</span>
               </button>

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import ImageSelectionFrame from '../../../components/ImageSelectionFrame'
 import { api } from '../../../api/client'
 import ImagePreviewModal from '../../../components/ImagePreviewModal'
 import { exportXYMatrix } from './exportXY'
@@ -443,8 +444,8 @@ function GridCell({
         if (e.ctrlKey || e.metaKey) onClick?.(sampleIdx)
       }}
       onDoubleClick={() => sampleIdx != null && onDoubleClick?.(sampleIdx)}
-      className={`block p-0 overflow-hidden rounded-sm border-2 bg-sunken ${
-        isSelected ? 'border-accent' : 'border-transparent hover:border-dim'
+      className={`relative block p-0 overflow-hidden rounded-sm border bg-sunken ${
+        isSelected ? 'border-subtle' : 'border-transparent hover:border-dim'
       }`}
       title={tooltip}
       style={{ minHeight: 80 }}
@@ -461,6 +462,7 @@ function GridCell({
         onError={() => setErrored(true)}
         onLoad={() => setErrored(false)}
       />
+      {isSelected && <ImageSelectionFrame />}
     </button>
   )
 }

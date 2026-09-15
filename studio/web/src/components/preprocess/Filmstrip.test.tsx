@@ -25,6 +25,8 @@ describe('Filmstrip', () => {
     expect(group).toContainElement(active)
     expect(active).toHaveAttribute('aria-pressed', 'true')
     expect(next).toHaveAttribute('aria-pressed', 'false')
+    expect(active.querySelector('.ui-image-selection-frame')).toBeInTheDocument()
+    expect(next.querySelector('.ui-image-selection-frame')).not.toBeInTheDocument()
 
     await user.click(next)
     expect(onSelect).toHaveBeenCalledWith('1_data/b.png')

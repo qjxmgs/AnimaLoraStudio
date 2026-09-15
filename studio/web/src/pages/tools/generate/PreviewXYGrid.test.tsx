@@ -111,8 +111,8 @@ describe('PreviewXYGrid', () => {
       />
     )
     const buttons = screen.getAllByRole('img').map((img) => img.closest('button'))
-    expect(buttons[0]?.className).toContain('border-accent')
-    expect(buttons[1]?.className).not.toContain('border-accent')
+    expect(buttons[0]?.querySelector('.ui-image-selection-frame')).toBeInTheDocument()
+    expect(buttons[1]?.querySelector('.ui-image-selection-frame')).not.toBeInTheDocument()
   })
 
   it('navigates fullscreen cells with arrow keys', async () => {

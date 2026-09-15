@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import ImageSelectionFrame from '../ImageSelectionFrame'
 
 /** Filmstrip 只依赖 name（选中键 + tooltip）；缩略图 URL 由调用方闭包提供。 */
 export interface FilmstripItemBase {
@@ -60,7 +61,7 @@ export default function Filmstrip<T extends FilmstripItemBase>({
                 <button
                   type="button"
                   onClick={() => onSelect(im.name)}
-                  className={'fs-thumb-sq ' + (isActive ? 'is-active' : '')}
+                  className="fs-thumb-sq"
                   title={im.name}
                   aria-label={itemLabel?.(im) ?? im.name}
                   aria-pressed={isActive}
@@ -84,6 +85,7 @@ export default function Filmstrip<T extends FilmstripItemBase>({
                       pointerEvents: 'none',
                     }}
                   />
+                  {isActive && <ImageSelectionFrame />}
                   {renderOverlay?.(im)}
                 </button>
               </div>

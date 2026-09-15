@@ -1,6 +1,7 @@
 import { memo, useEffect, useRef, useState, type SyntheticEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { VirtuosoGrid, type VirtuosoGridHandle } from 'react-virtuoso'
+import ImageSelectionFrame from './ImageSelectionFrame'
 
 export interface ImageGridItem {
   name: string
@@ -242,9 +243,9 @@ export default function ImageGrid({
  * cell 的 selected / onSelect / item 引用都没变，能跳过重渲，避免 N 张缩略图
  * 全部重新创建 DOM。
  *
- * `borderHighlight` 控制 accent border + ring（"高亮"视觉），跟 `selected`
- * （checkbox 状态）解耦：旧路径上两者一致，TagEdit 解耦模式下 border 跟
- * activeName 走，checkbox 跟多选走。 */
+ * `borderHighlight` 标识当前活跃项，跟 `selected`（checkbox 状态）解耦。
+ * RGB frame 对两种状态取并集：TagEdit 等解耦路径上，当前图和批量选中图都
+ * 清晰可见，两者重合时仍只渲染一层。 */
 const Cell = memo(function Cell({
   item,
   selected,
@@ -321,11 +322,8 @@ const Cell = memo(function Cell({
       title={item.meta ? `${item.name}\n${item.meta}` : item.name}
       style={bg ? { background: bg } : undefined}
       className={
-        'group relative aspect-square overflow-hidden rounded border cursor-pointer select-none ' +
-        (borderHighlight
-          ? 'border-accent ring-2 ring-accent-soft'
-          : 'border-subtle hover:border-dim') +
-        ' bg-sunken'
+        'group relative aspect-square overflow-hidden rounded border border-subtle cursor-pointer select-none bg-sunken' +
+        (selected || borderHighlight ? '' : ' hover:border-dim')
       }
     >
       {/* 虚拟化场景不能用 loading="lazy"：cell 进入 DOM（包括 overscan 区）
@@ -348,6 +346,7 @@ const Cell = memo(function Cell({
           (loaded ? 'opacity-100' : 'opacity-0')
         }
       />
+      {(selected || borderHighlight) && <ImageSelectionFrame />}
       <button
         type="button"
         onClick={handleSelectionClick}

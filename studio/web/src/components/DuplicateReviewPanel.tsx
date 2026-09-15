@@ -8,6 +8,7 @@ import {
   type DuplicateScanResult,
 } from '../api/client'
 import Button from './Button'
+import ImageSelectionFrame from './ImageSelectionFrame'
 
 export const DEFAULT_DUPLICATE_OPTIONS: DuplicateScanOptions = {
   match_scope: 'both',
@@ -210,7 +211,7 @@ function DuplicateItemCell({
       <button
         type="button"
         onClick={onPreview}
-        className="block w-full aspect-square bg-sunken"
+        className="relative block w-full aspect-square overflow-hidden bg-sunken"
         title={item.name}
         aria-label={t('duplicates.previewCandidate', { name: item.name })}
       >
@@ -226,6 +227,7 @@ function DuplicateItemCell({
             />
           )
         })()}
+        {selected && <ImageSelectionFrame />}
       </button>
       <div className="p-1.5 flex flex-col gap-1 text-[11px]">
         <div className="flex items-center gap-1 min-w-0 flex-wrap">

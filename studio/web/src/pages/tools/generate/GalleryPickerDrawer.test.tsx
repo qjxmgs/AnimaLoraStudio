@@ -60,6 +60,7 @@ describe('GalleryPickerDrawer', () => {
 
     const card = await screen.findByRole('button', { name: '选择图片 #42' })
     expect(card).toHaveAttribute('aria-pressed', 'false')
+    expect(card.querySelector('.ui-image-selection-frame')).not.toBeInTheDocument()
     expect(card.querySelector('img')).toHaveAttribute('width', '800')
     expect(card.querySelector('img')).toHaveAttribute('height', '1200')
     expect(screen.getByRole('button', { name: '打标' })).toBeDisabled()
@@ -67,6 +68,7 @@ describe('GalleryPickerDrawer', () => {
     await user.click(card)
     expect(card).toHaveAttribute('aria-pressed', 'true')
     expect(card).toHaveTextContent('✓')
+    expect(card.querySelector('.ui-image-selection-frame')).toBeInTheDocument()
     await user.selectOptions(screen.getByRole('combobox', { name: '打标方式' }), 'llm')
     const autoTag = screen.getByRole('switch', { name: '自动打标' })
     const tagButton = screen.getByRole('button', { name: '打标' })

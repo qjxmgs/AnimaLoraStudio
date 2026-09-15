@@ -110,6 +110,35 @@ describe('ImageGrid (PP3)', () => {
     expect(cells[1]).toHaveAttribute('aria-selected', 'true')
   })
 
+  it('shows one RGB frame for selected and active images without merging their semantics', () => {
+    const { rerender } = render(
+      <ImageGrid
+        items={items}
+        selected={new Set(['b.png'])}
+        activeName="a.png"
+        onSelect={() => {}}
+      />
+    )
+
+    let cells = screen.getAllByRole('gridcell')
+    expect(cells[0].querySelectorAll('.ui-image-selection-frame')).toHaveLength(1)
+    expect(cells[0]).toHaveAttribute('aria-selected', 'false')
+    expect(cells[1].querySelectorAll('.ui-image-selection-frame')).toHaveLength(1)
+    expect(cells[1]).toHaveAttribute('aria-selected', 'true')
+    expect(cells[2].querySelector('.ui-image-selection-frame')).toBeNull()
+
+    rerender(
+      <ImageGrid
+        items={items}
+        selected={new Set(['b.png'])}
+        activeName="b.png"
+        onSelect={() => {}}
+      />
+    )
+    cells = screen.getAllByRole('gridcell')
+    expect(cells[1].querySelectorAll('.ui-image-selection-frame')).toHaveLength(1)
+  })
+
   it('keeps the height chain on the grid while applying inset inside the Virtuoso scrollport', () => {
     const { container } = render(
       <ImageGrid
