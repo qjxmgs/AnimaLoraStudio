@@ -1,15 +1,12 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
-  closestCenter,
   DndContext,
   DragOverlay,
   PointerSensor,
-  pointerWithin,
   useSensor,
   useSensors,
-  type CollisionDetection,
   type DragEndEvent,
-  type DragOverEvent,
+  type DragMoveEvent,
   type DragStartEvent,
 } from '@dnd-kit/core'
 import {
@@ -67,11 +64,13 @@ export const tagFlowSortingStrategy: SortingStrategy = () => null
 
 export type TagDropEdge = 'before' | 'after'
 
-export const getTagDropEdge = (
-  pointerX: number,
-  targetLeft: number,
-  targetWidth: number,
-): TagDropEdge => pointerX < targetLeft + targetWidth / 2 ? 'before' : 'after'
+export type TagLayoutRect = Pick<DOMRect,
+  'left' | 'right' | 'top' | 'bottom' | 'width' | 'height'>
+
+export interface TagDropTarget {
+  id: string
+  edge: TagDropEdge
+}
 
 export const reorderTagFlow = (
   order: string[],
@@ -110,10 +109,123 @@ const tagToneStyle = (index: number): TagToneStyle => ({
   borderColor: 'var(--tag-tone)',
 })
 
-interface DropTarget {
+interface TagGeometry {
   id: string
-  edge: TagDropEdge
+  rect: TagLayoutRect
 }
+
+interface TagVisualRow {
+  top: number
+  bottom: number
+  centerY: number
+  items: TagGeometry[]
+}
+
+const rectCenterX = (rect: TagLayoutRect): number => rect.left + rect.width / 2
+const rectCenterY = (rect: TagLayoutRect): number => rect.top + rect.height / 2
+
+const buildTagVisualRows = (
+  order: string[],
+  rects: ReadonlyMap<string, TagLayoutRect>,
+): TagVisualRow[] => {
+  const geometries = order.map((id) => {
+    const rect = rects.get(id)
+    return rect ? { id, rect } : null
+  })
+  if (geometries.some((item) => item === null)) return []
+
+  const rows: TagVisualRow[] = []
+  for (const geometry of (geometries as TagGeometry[]).sort((a, b) => (
+    a.rect.top - b.rect.top || a.rect.left - b.rect.left
+  ))) {
+    const row = rows.find((candidate) => (
+      Math.min(candidate.bottom, geometry.rect.bottom)
+        > Math.max(candidate.top, geometry.rect.top)
+    ))
+    if (row) {
+      row.items.push(geometry)
+      row.top = Math.min(row.top, geometry.rect.top)
+      row.bottom = Math.max(row.bottom, geometry.rect.bottom)
+      row.centerY = (row.top + row.bottom) / 2
+    } else {
+      rows.push({
+        top: geometry.rect.top,
+        bottom: geometry.rect.bottom,
+        centerY: rectCenterY(geometry.rect),
+        items: [geometry],
+      })
+    }
+  }
+  rows.sort((a, b) => a.top - b.top)
+  rows.forEach((row) => row.items.sort((a, b) => a.rect.left - b.rect.left))
+  return rows
+}
+
+/**
+ * Resolve a wrapped tag flow using the dragged chip's centre, not the pointer.
+ * A horizontal insertion changes only after crossing another chip's centre;
+ * another visual row becomes eligible only after crossing that row's centre.
+ */
+export const resolveTagCenterDrop = (
+  order: string[],
+  activeId: string,
+  draggedRect: TagLayoutRect,
+  listRect: TagLayoutRect,
+  rects: ReadonlyMap<string, TagLayoutRect>,
+): TagDropTarget | null => {
+  if (order.length < 2 || !order.includes(activeId)) return null
+  const centerX = rectCenterX(draggedRect)
+  const centerY = rectCenterY(draggedRect)
+  if (centerX < listRect.left || centerX > listRect.right
+    || centerY < listRect.top || centerY > listRect.bottom) return null
+
+  const rows = buildTagVisualRows(order, rects)
+  const originRowIndex = rows.findIndex((row) => row.items.some(({ id }) => id === activeId))
+  const activeRect = rects.get(activeId)
+  if (originRowIndex < 0 || !activeRect) return null
+
+  let targetRowIndex = originRowIndex
+  const originCenterY = rectCenterY(activeRect)
+  if (centerY > originCenterY) {
+    for (let index = originRowIndex + 1; index < rows.length; index += 1) {
+      if (centerY <= rows[index].centerY) break
+      targetRowIndex = index
+    }
+  } else if (centerY < originCenterY) {
+    for (let index = originRowIndex - 1; index >= 0; index -= 1) {
+      if (centerY >= rows[index].centerY) break
+      targetRowIndex = index
+    }
+  }
+
+  const targetItems = rows[targetRowIndex].items.filter(({ id }) => id !== activeId)
+  if (targetItems.length === 0) return null
+  const itemsBeforeRow = rows.slice(0, targetRowIndex).reduce((count, row) => (
+    count + row.items.filter(({ id }) => id !== activeId).length
+  ), 0)
+  const itemsBeforeCenter = targetItems.filter(({ rect }) => rectCenterX(rect) < centerX).length
+  const insertionIndex = itemsBeforeRow + itemsBeforeCenter
+  const remaining = order.filter((id) => id !== activeId)
+  const next = [...remaining]
+  next.splice(insertionIndex, 0, activeId)
+  if (tagsEqual(next, order)) return null
+
+  return insertionIndex < remaining.length
+    ? { id: remaining[insertionIndex], edge: 'before' }
+    : { id: remaining[remaining.length - 1], edge: 'after' }
+}
+
+const translateRect = (
+  rect: TagLayoutRect,
+  delta: { x: number; y: number },
+): TagLayoutRect => ({
+  left: rect.left + delta.x,
+  right: rect.right + delta.x,
+  top: rect.top + delta.y,
+  bottom: rect.bottom + delta.y,
+  width: rect.width,
+  height: rect.height,
+})
 
 interface PendingFlip {
   order: string[]
@@ -129,9 +241,8 @@ export default function TagEditor({
   const [mode, setMode] = useState<Mode>(natural ? 'text' : 'chip')
   const [textBuf, setTextBuf] = useState(() => tagsJoined)
   const [activeTag, setActiveTag] = useState<string | null>(null)
-  const [dropTarget, setDropTarget] = useState<DropTarget | null>(null)
-  const dropTargetRef = useRef<DropTarget | null>(null)
-  const pointerCoordinatesRef = useRef<{ x: number; y: number } | null>(null)
+  const [dropTarget, setDropTarget] = useState<TagDropTarget | null>(null)
+  const dropTargetRef = useRef<TagDropTarget | null>(null)
   const chipListRef = useRef<HTMLDivElement>(null)
   const chipNodesRef = useRef(new Map<string, HTMLSpanElement>())
   const pendingFlipRef = useRef<PendingFlip | null>(null)
@@ -146,27 +257,7 @@ export default function TagEditor({
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
   )
 
-  const collisionDetection = useCallback<CollisionDetection>((args) => {
-    const pointer = args.pointerCoordinates
-    pointerCoordinatesRef.current = pointer
-    const listRect = chipListRef.current?.getBoundingClientRect()
-    if (!pointer || !listRect
-      || pointer.x < listRect.left || pointer.x > listRect.right
-      || pointer.y < listRect.top || pointer.y > listRect.bottom) {
-      return []
-    }
-
-    // The original chip stays in place as a placeholder and must not become a
-    // drop target. In a flex gap, fall back to the nearest neighbouring chip.
-    const filteredArgs = {
-      ...args,
-      droppableContainers: args.droppableContainers.filter(({ id }) => id !== args.active.id),
-    }
-    const direct = pointerWithin(filteredArgs)
-    return direct.length > 0 ? direct : closestCenter(filteredArgs)
-  }, [])
-
-  const setPendingDrop = (next: DropTarget | null) => {
+  const setPendingDrop = (next: TagDropTarget | null) => {
     dropTargetRef.current = next
     setDropTarget((current) => (
       current?.id === next?.id && current?.edge === next?.edge ? current : next
@@ -290,27 +381,43 @@ export default function TagEditor({
     setActiveTag(String(event.active.id))
   }
 
-  const handleDragOver = (event: DragOverEvent) => {
-    const { active, over } = event
-    const pointer = pointerCoordinatesRef.current
-    if (!over || !pointer || active.id === over.id) {
+  const handleDragMove = (event: DragMoveEvent) => {
+    const activeId = String(event.active.id)
+    const listRect = chipListRef.current?.getBoundingClientRect()
+    if (!listRect) {
       setPendingDrop(null)
       return
     }
-    const edge = getTagDropEdge(pointer.x, over.rect.left, over.rect.width)
-    const next: DropTarget = { id: String(over.id), edge }
-    // Do not advertise the gap that would leave the order unchanged.
-    setPendingDrop(reorderTagFlow(tags, String(active.id), next.id, edge) === tags ? null : next)
+    const rects = new Map<string, TagLayoutRect>()
+    for (const tag of tags) {
+      const node = chipNodesRef.current.get(tag)
+      if (!node) {
+        setPendingDrop(null)
+        return
+      }
+      rects.set(tag, node.getBoundingClientRect())
+    }
+    const measuredInitialRect = event.active.rect.current.initial
+    const initialRect = measuredInitialRect?.width && measuredInitialRect.height
+      ? measuredInitialRect
+      : rects.get(activeId)
+    // delta is scroll-adjusted and belongs to this exact move event, while the
+    // translated ref may still describe the previous render for one frame.
+    const draggedRect = initialRect
+      ? translateRect(initialRect, event.delta)
+      : event.active.rect.current.translated
+    setPendingDrop(draggedRect
+      ? resolveTagCenterDrop(tags, activeId, draggedRect, listRect, rects)
+      : null)
   }
 
   const clearDragState = () => {
     setActiveTag(null)
     setPendingDrop(null)
-    pointerCoordinatesRef.current = null
   }
 
   const handleDragEnd = (event: DragEndEvent) => {
-    const target = event.over ? dropTargetRef.current : null
+    const target = dropTargetRef.current
     const next = target
       ? reorderTagFlow(tags, String(event.active.id), target.id, target.edge)
       : tags
@@ -398,10 +505,8 @@ export default function TagEditor({
         <>
           <DndContext
             sensors={sensors}
-            collisionDetection={collisionDetection}
             onDragStart={handleDragStart}
-            onDragMove={handleDragOver}
-            onDragOver={handleDragOver}
+            onDragMove={handleDragMove}
             onDragEnd={handleDragEnd}
             onDragCancel={clearDragState}
           >

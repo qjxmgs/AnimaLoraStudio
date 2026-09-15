@@ -5,8 +5,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { __setTagPrefsForTest } from '../tagDict/prefs'
 import { __setStateForTest } from '../tagDict/store'
 import TagEditor, {
-  getTagDropEdge,
   reorderTagFlow,
+  resolveTagCenterDrop,
   TAG_TONES,
   tagFlowSortingStrategy,
 } from './TagEditor'
@@ -68,9 +68,6 @@ describe('TagEditor (PP4 chip mode)', () => {
       'third',
       'after',
     )).toEqual(['a much longer translated tag', 'third', 'short'])
-    expect(getTagDropEdge(19, 10, 20)).toBe('before')
-    expect(getTagDropEdge(20, 10, 20)).toBe('after')
-
     render(<TagEditor tags={['short', 'a much longer translated tag']} onChange={() => {}} />)
     expect(screen.getByText('short').closest('[data-tag-chip]')).toHaveClass(
       'shrink-0',
@@ -124,6 +121,59 @@ describe('TagEditor (PP4 chip mode)', () => {
     expect(reorderTagFlow(order, 'a', 'c', 'after')).toEqual(['b', 'c', 'a', 'd'])
     expect(reorderTagFlow(order, 'b', 'a', 'after')).toBe(order)
     expect(order).toEqual(['a', 'b', 'c', 'd'])
+  })
+
+  it('requires the dragged centre to cross a neighbouring tag centre in the same row', () => {
+    const order = ['a', 'b', 'c']
+    const rects = new Map([
+      ['a', rect(10, 10, 80, 40)],
+      ['b', rect(100, 10, 80, 40)],
+      ['c', rect(190, 10, 80, 40)],
+    ])
+    const listRect = rect(0, 0, 400, 160)
+
+    expect(resolveTagCenterDrop(order, 'a', rect(99, 10, 80, 40), listRect, rects)).toBeNull()
+    expect(resolveTagCenterDrop(order, 'a', rect(101, 10, 80, 40), listRect, rects)).toEqual({
+      id: 'c', edge: 'before',
+    })
+    expect(resolveTagCenterDrop(order, 'c', rect(101, 10, 80, 40), listRect, rects)).toBeNull()
+    expect(resolveTagCenterDrop(order, 'c', rect(99, 10, 80, 40), listRect, rects)).toEqual({
+      id: 'b', edge: 'before',
+    })
+  })
+
+  it('requires the dragged centre to cross another visual row centre before moving rows', () => {
+    const order = ['a', 'b', 'c', 'd', 'e']
+    const rects = new Map([
+      ['a', rect(10, 10, 80, 40)],
+      ['b', rect(100, 10, 80, 40)],
+      ['c', rect(190, 10, 80, 40)],
+      ['d', rect(10, 60, 80, 40)],
+      ['e', rect(100, 60, 80, 40)],
+    ])
+    const listRect = rect(0, 0, 400, 160)
+
+    expect(resolveTagCenterDrop(order, 'b', rect(11, 39, 80, 40), listRect, rects)).toBeNull()
+    expect(resolveTagCenterDrop(order, 'b', rect(11, 61, 80, 40), listRect, rects)).toEqual({
+      id: 'e', edge: 'before',
+    })
+  })
+
+  it('fails closed for incomplete geometry or when the dragged centre leaves the list', () => {
+    const order = ['a', 'b']
+    const listRect = rect(0, 0, 240, 100)
+    const rects = new Map([
+      ['a', rect(10, 10, 80, 40)],
+      ['b', rect(100, 10, 80, 40)],
+    ])
+
+    expect(resolveTagCenterDrop(order, 'a', rect(101, 10, 80, 40), listRect, new Map([
+      ['a', rect(10, 10, 80, 40)],
+    ]))).toBeNull()
+    expect(resolveTagCenterDrop(order, 'a', rect(241, 10, 80, 40), listRect, rects)).toBeNull()
+    expect(resolveTagCenterDrop(['a'], 'a', rect(10, 10, 80, 40), listRect, new Map([
+      ['a', rect(10, 10, 80, 40)],
+    ]))).toBeNull()
   })
 
   it('can delegate the tag count to a parent panel header', () => {
@@ -238,23 +288,40 @@ describe('TagEditor (PP4 chip mode)', () => {
     fireEvent.pointerMove(document, {
       button: 0, buttons: 1, clientX: 30, clientY: 20, pointerId: 1, isPrimary: true,
     })
+    expect(container.querySelector('[data-tag-insertion-edge]')).not.toBeInTheDocument()
     fireEvent.pointerMove(document, {
-      button: 0, buttons: 1, clientX: 265, clientY: 20, pointerId: 1, isPrimary: true,
+      button: 0, buttons: 1, clientX: 109, clientY: 20, pointerId: 1, isPrimary: true,
+    })
+    expect(container.querySelector('[data-tag-insertion-edge]')).not.toBeInTheDocument()
+    fireEvent.pointerMove(document, {
+      button: 0, buttons: 1, clientX: 111, clientY: 20, pointerId: 1, isPrimary: true,
     })
 
     await waitFor(() => {
-      expect(container.querySelector('[data-tag-insertion-edge="after"]')).toBeInTheDocument()
+      expect(container.querySelector('[data-tag-insertion-edge="before"]')).toBeInTheDocument()
     })
-    const insertionMarker = container.querySelector('[data-tag-insertion-edge="after"]')
-    expect(insertionMarker).toHaveClass('w-1', '-right-[6px]')
-    expect(insertionMarker).not.toHaveClass('w-0.5', '-right-[3px]')
+    const insertionMarker = container.querySelector('[data-tag-insertion-edge="before"]')
+    expect(insertionMarker).toHaveClass('w-1', '-left-[6px]')
+    expect(insertionMarker).not.toHaveClass('w-0.5', '-left-[3px]')
     expect(Array.from(container.querySelectorAll('[data-tag-chip]'), (chip) => (
       chip.getAttribute('data-tag-chip')
     ))).toEqual(['a', 'b', 'c'])
     expect(onChange).not.toHaveBeenCalled()
 
+    fireEvent.pointerMove(document, {
+      button: 0, buttons: 1, clientX: 109, clientY: 20, pointerId: 1, isPrimary: true,
+    })
+    await waitFor(() => {
+      expect(container.querySelector('[data-tag-insertion-edge]')).not.toBeInTheDocument()
+    })
+    fireEvent.pointerMove(document, {
+      button: 0, buttons: 1, clientX: 201, clientY: 20, pointerId: 1, isPrimary: true,
+    })
+    await waitFor(() => {
+      expect(container.querySelector('[data-tag-insertion-edge="after"]')).toBeInTheDocument()
+    })
     fireEvent.pointerUp(document, {
-      button: 0, clientX: 265, clientY: 20, pointerId: 1, isPrimary: true,
+      button: 0, clientX: 201, clientY: 20, pointerId: 1, isPrimary: true,
     })
     await waitFor(() => expect(onChange).toHaveBeenCalledWith(['b', 'c', 'a']))
     expect(onChange).toHaveBeenCalledTimes(1)
