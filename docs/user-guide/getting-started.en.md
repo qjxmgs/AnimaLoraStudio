@@ -28,6 +28,8 @@ studio.bat
 
 On first run, the launcher automatically: creates `venv/` → installs the matching CUDA torch (cu118 through cu130) based on the detected GPU driver → installs `requirements.txt` → builds the frontend → starts the backend → opens the browser to <http://127.0.0.1:8765/>. A first-run onboarding modal then walks through installing base models, ONNX Runtime, and training acceleration with one click.
 
+Use `Ctrl / Cmd+K` to open and close global command search. It will not open search over an active task modal or Settings drawer; finish or close that task before opening search again.
+
 > If GPU detection falls back to CPU torch, reinstall the CUDA build from Settings → System → PyTorch with one click, or specify it explicitly via `studio.bat --torch cu128` (or `studio.sh --torch cu128`).
 
 ### Alternative launch
@@ -46,6 +48,8 @@ python -m studio test         # pytest + vitest
 Read [Upgrading to v0.27](upgrading-v0.27.en.md) first: stop jobs and back up data before updating dependencies. First startup automatically separates legacy settings and LLM preset storage.
 
 ## Download models
+
+While Settings is open, transient success and error messages remain above it and accessible to assistive technology. They do not move keyboard focus or unlock the page behind the drawer.
 
 After launch, go to the model download center under **Settings → Training**. Downloads are grouped by model family (Anima / Krea 2) — grab only the family you plan to train (defaults to `./models/`); Anima-only users can skip the large Krea 2 files:
 
@@ -92,6 +96,10 @@ Open <http://127.0.0.1:8765/>, click "+ New project" on the projects page, and t
 8. **Test** — single-image / XY matrix / inference daemon.
 
 View tasks on the **Queue** page; open **task detail** for logs / monitoring / output (with one-click full zip download).
+
+Settings and Tagging open the same LLM preset editor. Focus enters the editor and Tab / Shift+Tab stay inside. Escape exits like Done or the close button, triggering the active field's existing blur commit; it does not undo instantly saved changes. Deleting or resetting a built-in preset uses a confirmation view in the same dialog. Cancel or Escape returns to the editor content and initiating action without closing Settings behind it. While the confirmed request runs, it cannot be submitted twice; failures let you retry or return to editing from the same confirmation view. If deletion removes the original edit action, focus returns to the still-open Settings drawer.
+
+Opening a full-screen image preview focuses its image surface. Use arrow keys to browse and Tab / Shift+Tab to cycle through the image surface and its Close, zoom and navigation controls; Escape closes the preview and returns to its opener. Enter / Space on a focused button performs only that button's action, never an additional image add/remove action. Curation's add/remove shortcuts apply only to the focused preview surface, and holding a key does not repeatedly submit changes. Ctrl / Cmd+K does not open global search while the preview is open.
 
 The preprocessing overview's **Processed dataset / Deleted** views support arrow keys and Home/End; switching views clears the current selection. Images scroll independently so selection and undo controls stay visible. Select all in the processed view selects only processed images. Failed loads offer Retry; failed refreshes retain existing images instead of showing an empty dataset.
 

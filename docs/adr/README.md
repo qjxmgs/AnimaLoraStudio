@@ -26,6 +26,8 @@
 | 0018 | [用提案式 ONNX 检测生成可撤销的头部空间遮罩](0018-proposal-based-auto-head-mask.md) | Accepted | 2026-09-06 |
 | Local 0017 | [用提案式 ONNX 检测生成可撤销的头部空间遮罩](0017-proposal-based-auto-head-mask.md) | Accepted | 2026-09-06 |
 | Local 0018 | [Use instance segmentation for face-only loss masks](0018-face-contour-masks.md) | Accepted | 2026-09-07 |
+| 0019 | [在 stable 升级前开放受限的 Triton 实验通道](0019-restricted-triton-opt-in.md) | Accepted | 2026-09-12 |
+| 0020 | [在任务边界解析随机种子并冻结比较组](0020-task-scoped-random-seeds.md) | Accepted | 2026-09-12 |
 
 ## 状态值
 

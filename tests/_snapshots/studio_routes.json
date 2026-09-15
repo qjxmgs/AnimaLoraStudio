@@ -1852,6 +1852,30 @@
       "type": "APIRoute"
     },
     {
+      "path": "/api/triton/install",
+      "methods": [
+        "DELETE"
+      ],
+      "name": "triton_uninstall",
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/triton/install",
+      "methods": [
+        "POST"
+      ],
+      "name": "triton_install",
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/triton/status",
+      "methods": [
+        "GET"
+      ],
+      "name": "triton_status",
+      "type": "APIRoute"
+    },
+    {
       "path": "/api/upscalers/select",
       "methods": [
         "POST"

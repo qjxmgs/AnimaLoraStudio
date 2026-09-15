@@ -280,7 +280,10 @@ under individual settings.
 
 Use `Alert` for persistent, in-flow information, success confirmation, warnings, and
 errors. `Toast` remains the transient notification pattern and reuses Alert's visual
-tones without changing its timer or invocation API.
+tones without changing its timer or invocation API. Its notification host is portalled
+to `document.body`, outside the inert application root, so Drawer background protection
+does not hide live feedback from assistive technology. Notifications do not move focus
+or create a second live copy inside the active dialog.
 
 | Tone | Meaning | Typical use |
 | --- | --- | --- |
@@ -390,6 +393,49 @@ and the single primary action last. Keep validation near the relevant control; a
 Toast must not duplicate an error already announced inside the modal. Toast feedback remains
 above the modal layer when an operation keeps the dialog open. Do not recreate modal
 backdrops, panel geometry, focus listeners, or title linkage in feature code.
+
+### Confirmation inside an instant-save editor
+
+When a modal editor needs confirmation for deleting or resetting its current object,
+use a confirmation view in the same Modal, not a second stacked dialog. Keep the editor's
+input state and scroll context mounted but non-interactive during confirmation. Cancel,
+Escape, and backdrop return to editing and its initiating action without closing the
+underlying Drawer. While the confirmed destructive request runs, prevent duplicate
+execution and unsafe dismissal; failure keeps a recoverable view in the same task.
+
+The LLM preset editor is the first adoption. Its parameter and prompt-message panes are
+a specialist side-by-side workspace: retain the `1fr / 2fr` desktop ratio and independent
+column scrolling within a viewport-bounded `wide` Modal, with existing footer action
+groups kept together. This is not permission to widen ordinary forms. The shared shell
+still owns title linkage, focus trapping, scroll protection and opener restoration.
+If confirmed deletion removes the original edit action, return focus to its still-active
+Drawer or main task surface rather than the inert background.
+
+Instant-save editors do not acquire a whole-form draft through this migration. Closing
+by Escape is equivalent to Done or the close control: first blur the active editor field
+so its existing commit path can run, then close. It does not undo applied changes; Enter
+inside a message textarea remains a newline. Preset/credential APIs, ETags and the serial
+mutation queue remain feature-owned. Other editor consumers migrate only in their own
+bounded slices, not by changing the behavior of every Modal.
+
+### Full-screen image preview
+
+`ImagePreviewModal` is a specialized protected dialog, not an ordinary modal card.
+Keep its black media plane, zoom/pan, compare layout, caption/count bar and directional
+navigation. Portal it outside the AppShell stacking context, above workspace content
+but below ordinary confirmations and Toast feedback; a local workspace z-index must
+not turn it into a layer above every global message.
+
+Opening focuses the preview surface so its documented image shortcuts are immediately
+available. Tab and Shift+Tab cycle through the image surface and its controls, so a
+keyboard user can return from zoom controls to the image's accept/delete shortcuts.
+Escape closes it and restores
+the still-connected opener without scrolling the underlying workspace. Changing the
+image does not reset focus. Enter/Space on Close, zoom or navigation buttons retains
+that button's native action, never the image's accept/delete action. Image shortcuts
+belong only to non-interactive preview content, ignore composing/modified input, and
+do not repeat data mutations while a key is held. Do not use window-level business
+key handlers that can act on a background page.
 
 ### Background model prerequisites and direct-edit task setup
 
@@ -635,6 +681,14 @@ Geometry and scroll responsibility are fixed:
   and restores the invoking search control after Escape or backdrop close.
   Drawers may inert the app root; overlays must not alter shell width or
   introduce a second body scrollbar.
+
+Global command search must not interrupt an already blocking task surface. While an
+overlay Drawer, Modal or full-screen image preview is active, Ctrl/Cmd+K does not open
+another command palette. When the palette itself is active, the same shortcut may
+still close it. ImagePreviewModal is the first bounded adoption of this rule; the
+existing Topbar/Modal/Drawer entry paths remain explicit migration debt until their
+separate interaction-coordination slice. Do not silently allow overlapping focus traps
+or solve keyboard ownership by continually raising z-index values.
 
 App-shell responsiveness belongs to `styles/responsive.css` and uses the shared
 1280px breakpoint. Route-specific workbench restructuring is a later Layout
