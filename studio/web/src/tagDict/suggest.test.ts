@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import {
+  buildTagSearchIndex,
   extractCurrentToken,
   extractWhitespaceToken,
+  findTagMatches,
   findSuggestions,
   hasCjk,
+  TAG_SUGGESTION_LIMIT,
   type SuggestStore,
 } from './suggest'
 import type { ReverseEntry } from './types'
@@ -108,7 +111,11 @@ function buildStore(entries: Record<string, string[]>): SuggestStore {
   // 与生产 store.fetchDict 一致：tagKeys 保持词典行序（热度序），不重排
   const tagKeys = Array.from(map.keys())
   const compactedKeys = tagKeys.map((t) => t.replace(/[\s_]/g, ''))
-  return { entries: map, tagKeys, compactedKeys, reverse }
+  return {
+    entries: map,
+    searchIndex: buildTagSearchIndex(tagKeys, compactedKeys),
+    reverse,
+  }
 }
 
 describe('findSuggestions — English path', () => {
@@ -191,6 +198,96 @@ describe('findSuggestions — English path', () => {
       Array.from({ length: 20 }, (_, i) => [`xtag${i}`, []]),
     ))
     expect(findSuggestions('xtag', big, 3)).toHaveLength(3)
+  })
+
+  it('puts prefix matches before cross-word fuzzy matches', () => {
+    const matches = findTagMatches('ho', buildTagSearchIndex([
+      'hair ornament',
+      'holding hands',
+      'hood',
+    ]))
+    expect(matches).toEqual([
+      { tag: 'holding hands', matchType: 'prefix' },
+      { tag: 'hood', matchType: 'prefix' },
+      { tag: 'hair ornament', matchType: 'fuzzy' },
+    ])
+  })
+
+  it('orders word initials, contiguous substring, then ordered subsequence', () => {
+    const matches = findTagMatches('ho', buildTagSearchIndex([
+      'high collar',
+      'school uniform',
+      'hair ornament',
+    ]))
+    expect(matches).toEqual([
+      { tag: 'hair ornament', matchType: 'fuzzy' },
+      { tag: 'school uniform', matchType: 'substring' },
+      { tag: 'high collar', matchType: 'fuzzy' },
+    ])
+  })
+
+  it('supports general ordered-subsequence matching', () => {
+    expect(findTagMatches('hcl', buildTagSearchIndex(['high collar']))).toEqual([
+      { tag: 'high collar', matchType: 'fuzzy' },
+    ])
+  })
+
+  it('uses the default 30 prefix + 20 fuzzy quota and deduplicates tags', () => {
+    const prefix = Array.from({ length: 40 }, (_, i) => `holding prefix ${i}`)
+    const fuzzy = Array.from({ length: 40 }, (_, i) => `hair ornament ${i}`)
+    const matches = findTagMatches('ho', buildTagSearchIndex([
+      ...fuzzy, ...prefix, fuzzy[0],
+    ]))
+
+    expect(matches).toHaveLength(TAG_SUGGESTION_LIMIT)
+    expect(matches.slice(0, 30).map(({ tag }) => tag)).toEqual(prefix.slice(0, 30))
+    expect(matches.slice(30).map(({ tag }) => tag)).toEqual(fuzzy.slice(0, 20))
+    expect(new Set(matches.map(({ tag }) => tag)).size).toBe(TAG_SUGGESTION_LIMIT)
+  })
+
+  it('backfills unused prefix slots with fuzzy matches', () => {
+    const prefix = ['holding', 'hood']
+    const fuzzy = Array.from({ length: 12 }, (_, i) => `hair ornament ${i}`)
+    const matches = findTagMatches('ho', buildTagSearchIndex([...fuzzy, ...prefix]), 10)
+
+    expect(matches.slice(0, 2).map(({ tag }) => tag)).toEqual(prefix)
+    expect(matches.slice(2)).toHaveLength(8)
+  })
+
+  it('precomputes normalized forms and stops after both reserved groups are full', () => {
+    const prefix = Array.from({ length: 30 }, (_, i) => `holding prefix ${i}`)
+    const fuzzy = Array.from({ length: 20 }, (_, i) => `hair ornament ${i}`)
+    const base = buildTagSearchIndex([...prefix, ...fuzzy, 'school uniform'])
+    const guardedKeys = new Proxy(base.tagKeys, {
+      get(target, property, receiver) {
+        if (property === '50') throw new Error('matcher scanned past completed quotas')
+        return Reflect.get(target, property, receiver)
+      },
+    })
+
+    const matches = findTagMatches('ho', { ...base, tagKeys: guardedKeys })
+    expect(matches).toHaveLength(50)
+    expect(base.compactedKeys[0]).toBe('holdingprefix0')
+    expect(base.wordInitialKeys[30]).toBe('ho0')
+  })
+
+  it('keeps a 32-entry LRU per index and rebuilding invalidates it', () => {
+    const index = buildTagSearchIndex(Array.from({ length: 40 }, (_, i) => `tag ${i}`))
+    for (let i = 0; i < 33; i++) findTagMatches(`tag${i}`, index)
+    expect(index.cache.size).toBe(32)
+
+    const rebuilt = buildTagSearchIndex(index.tagKeys)
+    expect(rebuilt.cache.size).toBe(0)
+    expect(rebuilt).not.toBe(index)
+  })
+
+  it('caches repeated queries and can exclude the exact bulk-input value', () => {
+    const index = buildTagSearchIndex(['holding hands', 'hood', 'hair ornament'])
+    const first = findTagMatches('ho', index, 50, 'hood')
+    const second = findTagMatches('ho', index, 50, 'hood')
+
+    expect(second).toBe(first)
+    expect(second.map(({ tag }) => tag)).toEqual(['holding hands', 'hair ornament'])
   })
 })
 

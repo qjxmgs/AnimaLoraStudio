@@ -29,7 +29,7 @@ export interface TagDictMetaResponse {
 export interface TagSuggestion {
   tag: string
   zh: string[]
-  matchType: 'prefix' | 'substring'
+  matchType: 'prefix' | 'substring' | 'fuzzy'
 }
 
 export type TagDictStatus = 'idle' | 'loading' | 'ready' | 'error' | 'empty'

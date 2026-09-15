@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import userEvent, { type UserEvent } from '@testing-library/user-event'
 import type { ComponentProps } from 'react'
 import { describe, expect, it, vi } from 'vitest'
@@ -136,5 +136,52 @@ describe('BulkActionBar (with confirm modal)', () => {
   it('select-all-images button uses image-specific label', () => {
     renderBar()
     expect(screen.getByRole('button', { name: '全选图片' })).toBeInTheDocument()
+  })
+
+  it('ranks 30 prefix matches before 20 fuzzy matches in dataset suggestions', async () => {
+    const user = userEvent.setup()
+    const prefix = Array.from({ length: 40 }, (_, i) => `holding prefix ${i}`)
+    const fuzzy = Array.from({ length: 40 }, (_, i) => `hair ornament ${i}`)
+    renderBar({ tagSuggestions: [...fuzzy, ...prefix] })
+
+    await user.type(screen.getByLabelText('要添加的 tag'), 'ho')
+    const listbox = await screen.findByRole('listbox')
+    const options = Array.from(listbox.querySelectorAll('li')).map((item) => item.textContent)
+
+    expect(options).toHaveLength(50)
+    expect(options.slice(0, 30)).toEqual(prefix.slice(0, 30))
+    expect(options.slice(30)).toEqual(fuzzy.slice(0, 20))
+  })
+
+  it('can pick a cross-word fuzzy dataset suggestion', async () => {
+    const user = userEvent.setup()
+    renderBar({ tagSuggestions: ['holding hands', 'hair ornament'] })
+
+    const input = screen.getByLabelText('要添加的 tag')
+    await user.type(input, 'ho')
+    await user.click(await screen.findByText('hair ornament'))
+
+    expect(input).toHaveValue('hair ornament')
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
+  })
+
+  it('debounces dataset matching for 40 ms and hides stale candidates immediately', () => {
+    vi.useFakeTimers()
+    try {
+      renderBar({ tagSuggestions: ['holding hands', 'hair ornament'] })
+      const input = screen.getByLabelText('要添加的 tag')
+
+      fireEvent.change(input, { target: { value: 'ho' } })
+      act(() => { vi.advanceTimersByTime(39) })
+      expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
+      act(() => { vi.advanceTimersByTime(1) })
+      expect(screen.getByRole('listbox')).toBeInTheDocument()
+
+      fireEvent.change(input, { target: { value: 'hx' } })
+      expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
+    } finally {
+      vi.clearAllTimers()
+      vi.useRealTimers()
+    }
   })
 })

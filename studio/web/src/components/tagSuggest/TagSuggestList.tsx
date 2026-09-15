@@ -5,7 +5,7 @@
  * 内的像素坐标，portal 到 body 后用 fixed 定位到光标正下方；视口底部不够时
  * 自动翻到光标上方。
  */
-import { useLayoutEffect, useState } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import type { RefObject } from 'react'
 import { createPortal } from 'react-dom'
 
@@ -38,6 +38,7 @@ export function TagSuggestList({
   open, suggestions, activeIdx, onPick, onHover, inputRef, cursor, positionDeps = [], id,
 }: Props) {
   const [pos, setPos] = useState<Position | null>(null)
+  const listRef = useRef<HTMLUListElement>(null)
 
   useLayoutEffect(() => {
     if (!open || !inputRef.current || suggestions.length === 0) {
@@ -68,10 +69,20 @@ export function TagSuggestList({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, suggestions.length, cursor, ...positionDeps])
 
+  useLayoutEffect(() => {
+    if (!open) return
+    const activeOption = listRef.current
+      ?.querySelector<HTMLElement>('[aria-selected="true"]')
+    if (typeof activeOption?.scrollIntoView === 'function') {
+      activeOption.scrollIntoView({ block: 'nearest' })
+    }
+  }, [activeIdx, open, suggestions])
+
   if (!open || !pos || suggestions.length === 0) return null
 
   return createPortal(
     <ul
+      ref={listRef}
       id={id}
       className="bg-elevated border border-subtle rounded-sm shadow-lg max-h-[260px] overflow-y-auto min-w-[220px] list-none p-1 m-0"
       role="listbox"

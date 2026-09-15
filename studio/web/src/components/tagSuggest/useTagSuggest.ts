@@ -14,12 +14,18 @@
  *   - `tokenMode: 'whitespace'`：根据空白边界算当前 token，供 Booru 查询等使用。
  *     后两者 commit 时都给 caller `range`，由 caller 切片替换。
  */
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type React from 'react'
 
 import { useTagAutocompleteEnabled } from '../../tagDict/prefs'
 import { useTagDict } from '../../tagDict/store'
-import { extractCurrentToken, extractWhitespaceToken, findSuggestions } from '../../tagDict/suggest'
+import {
+  extractCurrentToken,
+  extractWhitespaceToken,
+  findSuggestions,
+  TAG_SUGGESTION_DEBOUNCE_MS,
+  type ExtractedToken,
+} from '../../tagDict/suggest'
 import type { TagSuggestion } from '../../tagDict/types'
 
 export interface TagSuggestPick {
@@ -74,33 +80,46 @@ export function useTagSuggest({
   const [activeIdx, setActiveIdx] = useState(0)
   const [cursor, setCursor] = useState(0)
   const blurTimersRef = useRef(new Set<ReturnType<typeof setTimeout>>())
+  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const latestValueRef = useRef(value)
+  const [readyQuery, setReadyQuery] = useState<(ExtractedToken & { value: string }) | null>(null)
+  latestValueRef.current = value
+
+  const cancelPendingSearch = useCallback(() => {
+    if (searchTimerRef.current === null) return
+    clearTimeout(searchTimerRef.current)
+    searchTimerRef.current = null
+  }, [])
 
   useEffect(() => {
     const timers = blurTimersRef.current
     return () => {
       for (const timer of timers) clearTimeout(timer)
       timers.clear()
+      cancelPendingSearch()
     }
-  }, [])
+  }, [cancelPendingSearch])
 
-  const tokenInfo = useMemo(() => {
-    if (wholeAsToken) return { token: value.trim(), start: 0, end: value.length }
-    return tokenMode === 'whitespace'
-      ? extractWhitespaceToken(value, cursor)
-      : extractCurrentToken(value, cursor)
-  }, [value, cursor, wholeAsToken, tokenMode])
+  useEffect(() => {
+    if (!off) return
+    cancelPendingSearch()
+    setReadyQuery(null)
+    setOpen(false)
+  }, [off, cancelPendingSearch])
 
   const suggestions = useMemo(() => {
-    if (off || !open || dict.status !== 'ready' || !tokenInfo.token) return []
-    return findSuggestions(tokenInfo.token, {
+    if (
+      off || !open || dict.status !== 'ready' || !readyQuery?.token
+      || readyQuery.value !== value
+    ) return []
+    return findSuggestions(readyQuery.token, {
       entries: dict.entries,
-      tagKeys: dict.tagKeys,
-      compactedKeys: dict.compactedKeys,
+      searchIndex: dict.searchIndex,
       reverse: dict.reverse,
     })
   }, [
-    off, open, tokenInfo.token,
-    dict.status, dict.entries, dict.tagKeys, dict.compactedKeys, dict.reverse,
+    off, open, readyQuery, value,
+    dict.status, dict.entries, dict.searchIndex, dict.reverse,
   ])
 
   // suggestions 列表变化时重置 active
@@ -115,8 +134,10 @@ export function useTagSuggest({
 
   const pickAt = (i: number) => {
     const s = suggestions[i]
-    if (!s) return
-    onPick({ suggestion: s, range: { start: tokenInfo.start, end: tokenInfo.end } })
+    if (!s || !readyQuery) return
+    onPick({ suggestion: s, range: { start: readyQuery.start, end: readyQuery.end } })
+    cancelPendingSearch()
+    setReadyQuery(null)
     setOpen(false)
   }
 
@@ -134,20 +155,52 @@ export function useTagSuggest({
       e.preventDefault(); pickAt(activeIdx); return true
     }
     if (e.key === 'Escape') {
-      e.preventDefault(); e.stopPropagation(); setOpen(false); return true
+      e.preventDefault(); e.stopPropagation()
+      cancelPendingSearch(); setReadyQuery(null); setOpen(false); return true
     }
     return false
   }
 
   return {
-    open, suggestions, activeIdx, setActiveIdx, setOpen,
+    open, suggestions, activeIdx, setActiveIdx,
+    setOpen: (nextOpen) => {
+      if (!nextOpen) {
+        cancelPendingSearch()
+        setReadyQuery(null)
+      }
+      setOpen(nextOpen)
+    },
     cursor,
     handleKeyDown,
-    notifyChange: () => { syncCursor(); if (!off) setOpen(true) },
+    notifyChange: () => {
+      syncCursor()
+      cancelPendingSearch()
+      setReadyQuery(null)
+      if (off) {
+        setOpen(false)
+        return
+      }
+      // 旧候选立即失效；仅在用户停止输入 40ms 后搜索最后一个 token。
+      setOpen(true)
+      searchTimerRef.current = setTimeout(() => {
+        searchTimerRef.current = null
+        const el = inputRef.current
+        const currentValue = el?.value ?? latestValueRef.current
+        const currentCursor = el?.selectionStart ?? currentValue.length
+        const nextToken = wholeAsToken
+          ? { token: currentValue.trim(), start: 0, end: currentValue.length }
+          : tokenMode === 'whitespace'
+            ? extractWhitespaceToken(currentValue, currentCursor)
+            : extractCurrentToken(currentValue, currentCursor)
+        setReadyQuery({ ...nextToken, value: currentValue })
+        if (!nextToken.token) setOpen(false)
+      }, TAG_SUGGESTION_DEBOUNCE_MS)
+    },
     // focus 只跟踪 cursor：候选只在输入变化后弹出，点进 prompt 中间不该弹
     notifyFocus: () => { syncCursor() },
     // 120ms 延迟：给 onMouseDown(pick) 时间完成；卸载时取消尚未执行的回调。
     notifyBlur: () => {
+      cancelPendingSearch()
       const timer = setTimeout(() => {
         blurTimersRef.current.delete(timer)
         setOpen(false)
@@ -155,7 +208,9 @@ export function useTagSuggest({
       blurTimersRef.current.add(timer)
     },
     // 鼠标点击 = 用户在挪光标，不是在补全 → 关掉候选
-    notifyClick: () => { syncCursor(); setOpen(false) },
+    notifyClick: () => {
+      syncCursor(); cancelPendingSearch(); setReadyQuery(null); setOpen(false)
+    },
     notifySelect: () => { syncCursor() },
     pickAt,
   }

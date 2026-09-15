@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import Button from './Button'
 import { Input } from './FormControl'
@@ -6,6 +6,12 @@ import { SegmentedControl } from './SelectionGroup'
 import { useDialog } from './Dialog'
 import { useToast } from './Toast'
 import { TranslatedTag } from './tagDisplay/TranslatedTag'
+import {
+  buildTagSearchIndex,
+  findTagMatches,
+  TAG_SUGGESTION_DEBOUNCE_MS,
+  TAG_SUGGESTION_LIMIT,
+} from '../tagDict/suggest'
 
 type Op = 'add' | 'remove' | 'replace' | 'dedupe'
 type Position = 'front' | 'back'
@@ -404,15 +410,27 @@ interface TagsFieldProps {
 
 function TagsField({ value, onChange, placeholder, suggestions, ariaLabel }: TagsFieldProps) {
   const [open, setOpen] = useState(false)
+  const [debouncedTail, setDebouncedTail] = useState('')
   const ref = useRef<HTMLDivElement>(null)
+  const searchIndex = useMemo(() => buildTagSearchIndex(suggestions), [suggestions])
 
   const tail = (() => {
     const m = value.match(/([^,，\n]*)$/)
     return (m ? m[1] : value).trim().toLowerCase()
   })()
-  const matches = tail
-    ? suggestions.filter((s) => s.toLowerCase().includes(tail) && s.toLowerCase() !== tail).slice(0, 8)
+  const matches = open && tail && debouncedTail === tail
+    ? findTagMatches(debouncedTail, searchIndex, TAG_SUGGESTION_LIMIT, tail)
+      .map(({ tag }) => tag)
     : []
+
+  useEffect(() => {
+    setDebouncedTail('')
+    if (!open || !tail) return
+    const timer = setTimeout(() => {
+      setDebouncedTail(tail)
+    }, TAG_SUGGESTION_DEBOUNCE_MS)
+    return () => clearTimeout(timer)
+  }, [open, tail, searchIndex])
 
   useEffect(() => {
     const close = (e: MouseEvent) => {
@@ -433,6 +451,7 @@ function TagsField({ value, onChange, placeholder, suggestions, ariaLabel }: Tag
         value={value}
         onChange={(e) => { onChange(e.target.value); setOpen(true) }}
         onFocus={() => setOpen(true)}
+        onBlur={() => setOpen(false)}
         placeholder={placeholder}
         aria-label={ariaLabel}
         controlSize="sm"

@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { __setTagPrefsForTest } from '../../tagDict/prefs'
 import { __setStateForTest } from '../../tagDict/store'
+import { TAG_SUGGESTION_DEBOUNCE_MS } from '../../tagDict/suggest'
 import { TagSuggestList } from './TagSuggestList'
 import { useTagSuggest } from './useTagSuggest'
 
@@ -14,6 +15,22 @@ function seedDict() {
     ['solo', ['单人']],
     ['long hair', ['长发']],
   ])
+  const tagKeys = Array.from(entries.keys())
+  __setStateForTest({
+    status: 'ready',
+    entries,
+    tagKeys,
+    compactedKeys: tagKeys.map((t) => t.replace(/[\s_]/g, '')),
+    reverse: [],
+    meta: null,
+    error: null,
+  })
+}
+
+function seedLargeDict() {
+  const entries = new Map<string, string[]>()
+  for (let i = 0; i < 40; i++) entries.set(`holding prefix ${i}`, [])
+  for (let i = 0; i < 40; i++) entries.set(`hair ornament ${i}`, [])
   const tagKeys = Array.from(entries.keys())
   __setStateForTest({
     status: 'ready',
@@ -109,6 +126,31 @@ describe('useTagSuggest 弹出规则', () => {
     expect(screen.getByRole('textbox')).toHaveValue('solo')
     expect(screen.queryByRole('listbox')).toBeNull()
   })
+
+  it('renders 50 candidates and keeps keyboard selection scrolled into view', async () => {
+    seedLargeDict()
+    const scrollIntoView = vi.fn()
+    const descriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollIntoView')
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+      configurable: true,
+      value: scrollIntoView,
+    })
+    try {
+      const user = userEvent.setup()
+      render(<Harness />)
+      const input = screen.getByRole('textbox')
+      await user.type(input, 'ho')
+      expect(await screen.findAllByRole('option')).toHaveLength(50)
+
+      scrollIntoView.mockClear()
+      await user.keyboard('{ArrowDown}')
+      expect(scrollIntoView).toHaveBeenLastCalledWith({ block: 'nearest' })
+      expect(screen.getAllByRole('option')[1]).toHaveAttribute('aria-selected', 'true')
+    } finally {
+      if (descriptor) Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', descriptor)
+      else delete (HTMLElement.prototype as Partial<HTMLElement>).scrollIntoView
+    }
+  })
 })
 
 describe('useTagSuggest blur timer lifecycle', () => {
@@ -157,6 +199,7 @@ describe('useTagSuggest blur timer lifecycle', () => {
   it('still accepts a suggestion during the blur grace and cleans the remaining callback on unmount', () => {
     const { result, onPick, unmount } = renderSuggest()
     act(() => { result.current.notifyChange() })
+    act(() => { vi.advanceTimersByTime(TAG_SUGGESTION_DEBOUNCE_MS) })
     act(() => { result.current.notifyBlur() })
     act(() => { vi.advanceTimersByTime(100) })
     act(() => { result.current.pickAt(0) })
@@ -166,6 +209,71 @@ describe('useTagSuggest blur timer lifecycle', () => {
     }))
     expect(result.current.open).toBe(false)
 
+    unmount()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+})
+
+describe('useTagSuggest search debounce', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    __setTagPrefsForTest({ loaded: true, autocomplete: true })
+    seedDict()
+  })
+  afterEach(() => {
+    vi.clearAllTimers()
+    vi.useRealTimers()
+  })
+
+  function renderDebounced(initialValue: string) {
+    const onPick = vi.fn()
+    const view = renderHook(
+      ({ value }) => useTagSuggest({
+        value,
+        inputRef: { current: null },
+        onPick,
+        wholeAsToken: true,
+      }),
+      { initialProps: { value: initialValue } },
+    )
+    return { ...view, onPick }
+  }
+
+  it('waits 40 ms and searches only the final rapid input', () => {
+    const { result, rerender } = renderDebounced('s')
+    act(() => { result.current.notifyChange() })
+    rerender({ value: 'sol' })
+    act(() => { result.current.notifyChange() })
+
+    act(() => { vi.advanceTimersByTime(TAG_SUGGESTION_DEBOUNCE_MS - 1) })
+    expect(result.current.suggestions).toEqual([])
+    act(() => { vi.advanceTimersByTime(1) })
+    expect(result.current.suggestions.map(({ tag }) => tag)).toEqual(['solo'])
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('hides stale candidates immediately so keyboard cannot select them', () => {
+    const { result, rerender, onPick } = renderDebounced('sol')
+    act(() => { result.current.notifyChange() })
+    act(() => { vi.advanceTimersByTime(TAG_SUGGESTION_DEBOUNCE_MS) })
+    expect(result.current.suggestions).toHaveLength(1)
+
+    rerender({ value: 'long' })
+    act(() => { result.current.notifyChange() })
+    expect(result.current.suggestions).toEqual([])
+    expect(result.current.handleKeyDown({ key: 'Enter' } as React.KeyboardEvent)).toBe(false)
+    expect(onPick).not.toHaveBeenCalled()
+  })
+
+  it('cancels a pending search when closed or unmounted', () => {
+    const { result, unmount } = renderDebounced('sol')
+    act(() => { result.current.notifyChange() })
+    expect(vi.getTimerCount()).toBe(1)
+    act(() => { result.current.setOpen(false) })
+    expect(vi.getTimerCount()).toBe(0)
+
+    act(() => { result.current.notifyChange() })
+    expect(vi.getTimerCount()).toBe(1)
     unmount()
     expect(vi.getTimerCount()).toBe(0)
   })
