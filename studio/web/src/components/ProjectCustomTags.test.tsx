@@ -20,7 +20,8 @@ describe('ProjectCustomTags', () => {
     )
 
     const palette = screen.getByRole('region', { name: '项目常驻标签' })
-    expect(palette).toHaveClass('max-h-36')
+    expect(palette).toHaveClass('max-h-[33.333333%]')
+    expect(palette).not.toHaveClass('basis-1/3')
     const header = palette.querySelector('[data-custom-tags-header]')
     expect(header).toHaveClass('h-10', 'shrink-0')
     expect(header).toHaveTextContent('自定义快捷标签')
@@ -135,15 +136,14 @@ describe('ProjectCustomTags', () => {
     expect(textMode).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByRole('region', { name: '项目常驻标签' })).toHaveClass(
       'min-h-0',
-      'max-h-none',
-      'basis-1/2',
+      'max-h-[33.333333%]',
+      'basis-1/3',
     )
-    expect(screen.getByRole('region', { name: '项目常驻标签' })).not.toHaveClass('max-h-36')
     expect(screen.getByRole('textbox', { name: '文本编辑自定义快捷标签' })).toBeInTheDocument()
     await user.click(textMode)
     expect(textMode).toHaveAttribute('aria-pressed', 'false')
-    expect(screen.getByRole('region', { name: '项目常驻标签' })).toHaveClass('max-h-36')
-    expect(screen.getByRole('region', { name: '项目常驻标签' })).not.toHaveClass('basis-1/2')
+    expect(screen.getByRole('region', { name: '项目常驻标签' })).toHaveClass('max-h-[33.333333%]')
+    expect(screen.getByRole('region', { name: '项目常驻标签' })).not.toHaveClass('basis-1/3')
     expect(screen.queryByRole('textbox', { name: '文本编辑自定义快捷标签' })).not.toBeInTheDocument()
 
     await user.click(textMode)

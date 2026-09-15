@@ -100,9 +100,10 @@ describe('TagEditor (PP4 chip mode)', () => {
       name: '以文本编辑自定义快捷标签',
     })
     await user.click(quickTextMode)
-    expect(palette).toHaveClass('basis-1/2')
+    expect(palette).toHaveClass('basis-1/3', 'max-h-[33.333333%]')
     await user.click(quickTextMode)
-    expect(palette).toHaveClass('max-h-36')
+    expect(palette).toHaveClass('max-h-[33.333333%]')
+    expect(palette).not.toHaveClass('basis-1/3')
 
     await user.click(screen.getByText('文本'))
     palette = screen.getByRole('region', { name: '项目常驻标签' })
@@ -110,7 +111,7 @@ describe('TagEditor (PP4 chip mode)', () => {
       name: '以文本编辑自定义快捷标签',
     })
     await user.click(quickTextMode)
-    expect(palette).toHaveClass('basis-1/2')
+    expect(palette).toHaveClass('basis-1/3', 'max-h-[33.333333%]')
   })
 
   it('reorders variable-width chips without strategy-level scaling', () => {

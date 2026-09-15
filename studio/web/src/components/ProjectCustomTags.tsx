@@ -134,8 +134,8 @@ export default function ProjectCustomTags({
   return (
     <section
       aria-label={t('tagEditor.customTagsLabel')}
-      className={`flex shrink-0 flex-col overflow-hidden rounded-[6px] border border-subtle bg-sunken ${
-        textEditing ? 'min-h-0 max-h-none basis-1/2' : 'max-h-36'
+      className={`flex max-h-[33.333333%] shrink-0 flex-col overflow-hidden rounded-[6px] border border-subtle bg-sunken ${
+        textEditing ? 'min-h-0 basis-1/3' : ''
       }`}
     >
       <div
