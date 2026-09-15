@@ -125,6 +125,8 @@ describe('resolveBrushAdjustment', () => {
 })
 
 describe('InpaintCanvas brush adjustment gesture', () => {
+  const previewClearRect = vi.fn()
+  const previewStroke = vi.fn()
   const context = {
     clearRect: vi.fn(),
     drawImage: vi.fn(),
@@ -167,7 +169,13 @@ describe('InpaintCanvas brush adjustment gesture', () => {
       },
     })
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(function getContext() {
-      return { ...context, canvas: this } as unknown as CanvasRenderingContext2D
+      return {
+        ...context,
+        ...(this.dataset.testid === 'stroke-preview-canvas'
+          ? { clearRect: previewClearRect, stroke: previewStroke }
+          : {}),
+        canvas: this,
+      } as unknown as CanvasRenderingContext2D
     })
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
       x: 0, y: 0, left: 0, top: 0, right: 500, bottom: 400,
@@ -343,6 +351,33 @@ describe('InpaintCanvas brush adjustment gesture', () => {
       fireEvent(viewport, pointerEvent('pointercancel', { button: 2 }))
     })
     expect(screen.queryByTestId('brush-adjust-hud')).not.toBeInTheDocument()
+  })
+
+  it('keeps an in-progress mask stroke on a uniformly composited preview layer', async () => {
+    const { viewport, onStrokeEnd, onMaskStrokeEnd } = await renderLoaded({ mode: 'mask' })
+    const preview = screen.getByTestId('stroke-preview-canvas')
+    previewClearRect.mockClear()
+    previewStroke.mockClear()
+
+    fireEvent(viewport, pointerEvent('pointerdown', {
+      button: 0, buttons: 1, clientX: 120, clientY: 120,
+    }))
+    const clearsAfterDown = previewClearRect.mock.calls.length
+    expect(clearsAfterDown).toBeGreaterThan(0)
+    expect(preview).toHaveStyle({ filter: 'blur(5px)', opacity: '0.45' })
+
+    fireEvent(viewport, pointerEvent('pointermove', {
+      button: 0, buttons: 1, clientX: 150, clientY: 140,
+    }))
+    expect(previewClearRect.mock.calls.length).toBe(clearsAfterDown)
+    expect(previewStroke).toHaveBeenCalled()
+    expect(onStrokeEnd).not.toHaveBeenCalled()
+    expect(onMaskStrokeEnd).not.toHaveBeenCalled()
+
+    fireEvent(viewport, pointerEvent('pointerup', {
+      button: 0, clientX: 150, clientY: 140,
+    }))
+    expect(onMaskStrokeEnd).toHaveBeenCalledTimes(1)
   })
 
   it('builds and closes a lasso only after three points reach the start', async () => {

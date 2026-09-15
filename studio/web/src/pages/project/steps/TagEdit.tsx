@@ -4,6 +4,7 @@ import { useBlocker, useOutletContext } from 'react-router-dom'
 import {
   api,
   type CommitItem,
+  type CropWorkspaceItem,
   type ProjectDetail,
   type Version,
 } from '../../../api/client'
@@ -24,6 +25,8 @@ import TagEditor from '../../../components/TagEditor'
 import TagStatsPanel from '../../../components/TagStatsPanel'
 import { useToast } from '../../../components/Toast'
 import ZoomableImage from '../../../components/ZoomableImage'
+import SingleImageInpaintDialog from '../../../components/preprocess/SingleImageInpaintDialog'
+import type { InpaintPersistedStage } from '../../../components/preprocess/saveInpaintEdits'
 import TrainingMaskOverlay from '../../../components/preprocess/TrainingMaskOverlay'
 import { compareImagePath } from '../../../lib/imageSort'
 import { useEventStream } from '../../../lib/useEventStream'
@@ -37,6 +40,14 @@ interface Ctx {
 }
 
 const keyOf = (folder: string, name: string) => `${folder}/${name}`
+
+function splitImageKey(key: string): { folder: string; name: string } {
+  const index = key.lastIndexOf('/')
+  return {
+    folder: index >= 0 ? key.slice(0, index) : '',
+    name: index >= 0 ? key.slice(index + 1) : key,
+  }
+}
 
 const TAG_EDIT_GRID_MIN = 15
 const TAG_EDIT_SIDE_MIN = 20
@@ -140,11 +151,13 @@ export default function TagEditPage() {
   const [isLoading, setIsLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [externalUpdatePending, setExternalUpdatePending] = useState(false)
-  const [maskMtimes, setMaskMtimes] = useState<Map<string, number>>(new Map())
+  const [workspaceImages, setWorkspaceImages] = useState<Map<string, CropWorkspaceItem>>(new Map())
   const [customTags, setCustomTags] = useState<string[]>(project.custom_tags ?? [])
   const [customTagsBusy, setCustomTagsBusy] = useState(false)
 
   const [activeKey, setActiveKey] = useState<string>('')
+  const [inpaintOpen, setInpaintOpen] = useState(false)
+  const [inpaintDirty, setInpaintDirty] = useState(false)
   const [sel, setSel] = useState<Set<string>>(new Set())
   const [anchor, setAnchor] = useState<string | null>(null)
   const [gridColumnCount, setGridColumnCount] = useState(1)
@@ -233,17 +246,17 @@ export default function TagEditPage() {
     }
   }, [project.id, versionId])
 
-  const refreshMaskMtimes = useCallback(async () => {
+  const refreshWorkspaceMetadata = useCallback(async () => {
     if (versionId == null) return
     const requestId = ++maskReloadRequestRef.current
     try {
       const r = await api.listCropWorkspaceTrain(project.id, versionId)
       if (requestId !== maskReloadRequestRef.current) return
-      const next = new Map<string, number>()
+      const next = new Map<string, CropWorkspaceItem>()
       for (const image of r.images) {
-        if (image.mask_mtime != null) next.set(image.name, image.mask_mtime)
+        next.set(image.name, image)
       }
-      setMaskMtimes(next)
+      setWorkspaceImages(next)
     } catch {
       // 遮罩预览是增强功能；加载失败时保留已有信息，不阻断标签编辑。
     }
@@ -261,6 +274,8 @@ export default function TagEditPage() {
     setLoadError(null)
     setExternalUpdatePending(false)
     setActiveKey('')
+    setInpaintOpen(false)
+    setInpaintDirty(false)
     setSel(new Set())
     setAnchor(null)
     setFolderFilter('')
@@ -268,10 +283,10 @@ export default function TagEditPage() {
   }, [reloadCache])
 
   useEffect(() => {
-    setMaskMtimes(new Map())
-    void refreshMaskMtimes()
+    setWorkspaceImages(new Map())
+    void refreshWorkspaceMetadata()
     return () => { maskReloadRequestRef.current += 1 }
-  }, [refreshMaskMtimes])
+  }, [refreshWorkspaceMetadata])
 
   const dirtyKeys = useMemo(() => {
     const out: string[] = []
@@ -285,11 +300,17 @@ export default function TagEditPage() {
   const dirty = dirtyKeys.length > 0
   const dirtyKeySet = useMemo(() => new Set(dirtyKeys), [dirtyKeys])
   dirtyRef.current = dirty
+  const hasUnsavedChanges = dirty || inpaintDirty
+  const unsavedExitMessage = inpaintDirty
+    ? dirty
+      ? t('tagEdit.unsavedCombinedMessage', { n: dirtyKeys.length })
+      : t('tagEdit.inpaintDiscardMessage')
+    : t('tagEdit.unsavedConfirmMessage', { n: dirtyKeys.length })
 
   useEventStream((evt) => {
     const projectChanged =
       evt.type === 'project_state_changed' && evt.project_id === project.id
-    if (projectChanged) void refreshMaskMtimes()
+    if (projectChanged) void refreshWorkspaceMetadata()
 
     const relevantVersion = versionId != null && evt.version_id === versionId
     const versionChanged = evt.type === 'version_state_changed' && relevantVersion
@@ -310,24 +331,24 @@ export default function TagEditPage() {
   })
 
   useEffect(() => {
-    if (!dirty) return
+    if (!hasUnsavedChanges) return
     const handler = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = '' }
     window.addEventListener('beforeunload', handler)
     return () => window.removeEventListener('beforeunload', handler)
-  }, [dirty])
+  }, [hasUnsavedChanges])
 
   // 应用内 React-Router 导航不触发 beforeunload，得靠 useBlocker（v6.4+）。
   // dirty=false 时 blocker 自动放行；dirty=true 时拦下导航 → confirm 弹窗
   // → 用户选"放弃"调 proceed()、"留下"调 reset()。
-  const blocker = useBlocker(dirty)
+  const blocker = useBlocker(hasUnsavedChanges)
   useEffect(() => {
     if (blocker.state !== 'blocked') return
     let cancelled = false
     void confirm(
-      t('tagEdit.unsavedConfirmMessage', { n: dirtyKeys.length }),
+      unsavedExitMessage,
       {
         tone: 'danger',
-        title: t('tagEdit.unsavedConfirmTitle'),
+        title: inpaintDirty ? t('tagEdit.inpaintDiscardTitle') : t('tagEdit.unsavedConfirmTitle'),
         okText: t('tagEdit.unsavedConfirmDiscard'),
         cancelText: t('tagEdit.unsavedConfirmStay'),
       },
@@ -337,25 +358,28 @@ export default function TagEditPage() {
       else blocker.reset?.()
     })
     return () => { cancelled = true }
-  }, [blocker, confirm, t, dirtyKeys.length])
+  }, [blocker, confirm, dirtyKeys.length, inpaintDirty, t, unsavedExitMessage])
 
   // 切版本会重挂载本页（Layout 的 Outlet key），不走路由导航、useBlocker 拦不住；
   // dirty 时注册切换守卫，复用同一套 confirm 文案。
   useEffect(() => {
-    if (!dirty) return
+    if (!hasUnsavedChanges) return
     setVersionSwitchGuard(() =>
       confirm(
-        t('tagEdit.unsavedConfirmMessage', { n: dirtyKeys.length }),
+        unsavedExitMessage,
         {
           tone: 'danger',
-          title: t('tagEdit.unsavedConfirmTitle'),
+          title: inpaintDirty ? t('tagEdit.inpaintDiscardTitle') : t('tagEdit.unsavedConfirmTitle'),
           okText: t('tagEdit.unsavedConfirmDiscard'),
           cancelText: t('tagEdit.unsavedConfirmStay'),
         },
       )
     )
     return () => setVersionSwitchGuard(null)
-  }, [dirty, dirtyKeys.length, setVersionSwitchGuard, confirm, t])
+  }, [
+    confirm, dirtyKeys.length, hasUnsavedChanges, inpaintDirty,
+    setVersionSwitchGuard, t, unsavedExitMessage,
+  ])
 
   // folder 列表 + 每个 folder 的原始张数（不受 filterTag 影响，让 tab 数字稳定
   // 不抖动 — 同 Preprocess chip 风格）。单 folder 项目时 UI 不显示 tabs。
@@ -393,18 +417,20 @@ export default function TagEditPage() {
       filteredKeys.map((k) => {
         const m = meta.get(k)!
         const tags = cache.get(k) ?? []
+        const imageMtime = workspaceImages.get(k)?.mtime
         return {
           name: k,
           thumbUrl:
             activeVersion != null
-              ? api.versionThumbUrl(project.id, activeVersion.id, 'train', m.name, m.folder)
+              ? api.versionThumbUrl(project.id, activeVersion.id, 'train', m.name, m.folder) +
+                (imageMtime == null ? '' : `&_=${imageMtime}`)
               : '',
           meta: tags.slice(0, 5).join(', '),
           badge: dirtyKeySet.has(k) ? t('tagEdit.unsavedBadge') : undefined,
           badgeTone: dirtyKeySet.has(k) ? 'warning' as const : undefined,
         }
       }),
-    [filteredKeys, meta, cache, dirtyKeySet, project.id, activeVersion, t]
+    [filteredKeys, meta, cache, dirtyKeySet, project.id, activeVersion, t, workspaceImages]
   )
 
   const selectedKeys = useMemo(
@@ -732,6 +758,86 @@ export default function TagEditPage() {
     await reload()
   }
 
+  const handleInpaintStageSaved = (stage: InpaintPersistedStage) => {
+    if (stage.kind === 'mask') {
+      setWorkspaceImages((previous) => {
+        const image = previous.get(stage.name)
+        if (!image) return previous
+        const next = new Map(previous)
+        next.set(stage.name, { ...image, mask_mtime: stage.maskMtime })
+        return next
+      })
+    } else {
+      const oldKey = stage.previousName
+      const newKey = stage.name
+      setWorkspaceImages((previous) => {
+        const oldImage = previous.get(oldKey)
+        const next = new Map(previous)
+        if (oldKey !== newKey) next.delete(oldKey)
+        next.set(newKey, {
+          ...(oldImage ?? {
+            name: newKey,
+            source: stage.result.origin,
+            processed: true,
+            mask_mtime: null,
+          }),
+          name: newKey,
+          source: stage.result.origin,
+          mtime: stage.result.mtime,
+          size: stage.result.size,
+          w: stage.result.w,
+          h: stage.result.h,
+          processed: true,
+        })
+        return next
+      })
+
+      if (oldKey !== newKey) {
+        const moveMapEntry = <T,>(previous: Map<string, T>): Map<string, T> => {
+          if (!previous.has(oldKey)) return previous
+          const next = new Map(previous)
+          const value = next.get(oldKey)!
+          next.delete(oldKey)
+          next.set(newKey, value)
+          return next
+        }
+        setCache(moveMapEntry)
+        setInitial(moveMapEntry)
+        setPendingTagDrafts(moveMapEntry)
+        setMeta((previous) => {
+          const existing = previous.get(oldKey)
+          if (!existing) return previous
+          const next = new Map(previous)
+          const parts = splitImageKey(newKey)
+          next.delete(oldKey)
+          next.set(newKey, { ...existing, folder: parts.folder, name: parts.name })
+          return next
+        })
+        setKeys((previous) => previous
+          .map((key) => key === oldKey ? newKey : key)
+          .sort(compareImagePath))
+        setSel((previous) => {
+          if (!previous.has(oldKey)) return previous
+          const next = new Set(previous)
+          next.delete(oldKey)
+          next.add(newKey)
+          return next
+        })
+        setAnchor((previous) => previous === oldKey ? newKey : previous)
+        setActiveKey((previous) => previous === oldKey ? newKey : previous)
+
+        const revision = tagRevisionByKeyRef.current.get(oldKey)
+        if (revision != null) {
+          tagRevisionByKeyRef.current.delete(oldKey)
+          tagRevisionByKeyRef.current.set(newKey, revision)
+        }
+      }
+    }
+
+    void refreshWorkspaceMetadata()
+    void reload()
+  }
+
   const stats = activeVersion.stats
   const trainTotal = stats?.train_image_count ?? 0
   const taggedTotal = stats?.tagged_image_count ?? 0
@@ -745,7 +851,9 @@ export default function TagEditPage() {
   const activeDisplayTags = activeTagDraft?.order ?? activeTags
   const activeInactiveTags = new Set(activeTagDraft?.inactive ?? [])
   const activeDirty = activeKey ? dirtyKeySet.has(activeKey) : false
-  const activeMaskMtime = activeKey ? maskMtimes.get(activeKey) : undefined
+  const activeWorkspaceImage = activeKey ? workspaceImages.get(activeKey) : undefined
+  const activeMaskMtime = activeWorkspaceImage?.mask_mtime ?? undefined
+  const activeImageMtime = activeWorkspaceImage?.mtime
   const activeMaskUrl =
     showTrainingMask && activeMaskMtime != null && versionId != null
       ? `${api.maskUrl(project.id, versionId, activeKey)}&_=${activeMaskMtime}`
@@ -923,6 +1031,15 @@ export default function TagEditPage() {
               <code className="flex-1 min-w-0 text-xs font-mono text-fg-secondary truncate">
                 {activeFolder}/{activeName}
               </code>
+              <Button
+                variant="ghost"
+                size="xs"
+                onClick={() => setInpaintOpen(true)}
+                disabled={!activeWorkspaceImage}
+                aria-haspopup="dialog"
+              >
+                {t('tagEdit.inpaintAction')}
+              </Button>
               <label className="shrink-0 flex items-center gap-1.5 text-xs text-fg-secondary cursor-pointer select-none">
                 <Checkbox
                   controlSize="sm"
@@ -938,7 +1055,8 @@ export default function TagEditPage() {
                   ZoomableImage 自带视口样式 + readout 条 */}
               <ZoomableImage
                 key={activeKey}
-                src={api.versionThumbUrl(project.id, activeVersion.id, 'train', activeName, activeFolder, 0)}
+                src={api.versionThumbUrl(project.id, activeVersion.id, 'train', activeName, activeFolder, 0) +
+                  (activeImageMtime == null ? '' : `&_=${activeImageMtime}`)}
                 alt={activeName}
                 overlay={activeMaskUrl
                   ? <TrainingMaskOverlay key={activeMaskUrl} src={activeMaskUrl} />
@@ -1072,6 +1190,19 @@ export default function TagEditPage() {
           )}
         </div>
       </div>
+      )}
+      {inpaintOpen && activeWorkspaceImage && versionId != null && (
+        <SingleImageInpaintDialog
+          projectId={project.id}
+          versionId={versionId}
+          image={activeWorkspaceImage}
+          onDirtyChange={setInpaintDirty}
+          onStageSaved={handleInpaintStageSaved}
+          onClose={() => {
+            setInpaintOpen(false)
+            setInpaintDirty(false)
+          }}
+        />
       )}
     </StepShell>
   )

@@ -15,6 +15,7 @@ import {
   TRAINING_MASK_COLOR,
   TRAINING_MASK_VIEW_ALPHA,
 } from './trainingMaskPreview'
+import { hasBlockingVisibleModal } from './inpaintPreferences'
 
 /** 一笔涂抹 / mask 笔画。坐标 / 直径都是**原图像素**单位 —— 视图缩放只影响
  *  显示，笔画数据与 zoom 无关，离屏重放（保存全部）才能与画布所见一致。 */
@@ -28,6 +29,8 @@ export interface InpaintStroke {
   erase?: boolean
   points: { x: number; y: number }[]
 }
+
+type InpaintPoint = InpaintStroke['points'][number]
 
 export type InpaintMode = 'paint' | 'mask'
 export type InpaintTool = 'brush' | 'eraser' | 'lasso'
@@ -78,6 +81,8 @@ export interface InpaintCanvasHandle {
   /** mask 层导出灰度 PNG（255=学 0=不学）+ 覆盖率。
    *  mask 为空（全学）→ null（调用方应 DELETE 而不是写全白文件）。 */
   exportMaskBlob: () => Promise<{ blob: Blob; coverage: number } | null>
+  /** Cancel an open lasso or point selection before an owning dialog closes. */
+  cancelTransientEdit: () => boolean
 }
 
 export interface BrushAdjustment {
@@ -101,14 +106,6 @@ let lassoIdSequence = 0
 function createLassoId(prefix: 'shape' | 'point'): string {
   lassoIdSequence += 1
   return `${prefix}-${Date.now().toString(36)}-${lassoIdSequence.toString(36)}`
-}
-
-function hasVisibleModal(): boolean {
-  return Array.from(document.querySelectorAll<HTMLElement>('[aria-modal="true"]')).some((modal) => {
-    const style = window.getComputedStyle(modal)
-    return !modal.hidden && modal.getAttribute('aria-hidden') !== 'true'
-      && style.display !== 'none' && style.visibility !== 'hidden'
-  })
 }
 
 /** Wait for a deliberate dominant direction before locking the whole gesture
@@ -484,8 +481,8 @@ function toHex(r: number, g: number, b: number): string {
  *  - mask edits（maskEdits）+ 服务器底图（maskBaseUrl）：合成到独立
  *    maskLayer（红色 alpha 位图），主画布最后以半透明叠加显示。
  *
- *  绘制中在主画布增量画预览段（mask 橡皮擦以半透明白示意），pointerup
- *  提交后由 props 变化触发全量重绘校正。
+ *  绘制中在独立预览画布增量绘制，pointerup 提交后由 props 变化触发
+ *  正式图层的全量重绘。
  */
 const InpaintCanvas = forwardRef<
   InpaintCanvasHandle,
@@ -510,6 +507,9 @@ const InpaintCanvas = forwardRef<
     /** Proposal-only overlay. It is never included in image or mask exports. */
     proposalRegions?: HeadMaskOverlayRegion[]
     onProposalPreviewState?: (state: 'loading' | 'ready' | 'error') => void
+    /** Optional external host for the zoom/coordinates readout. Undefined
+     * keeps the bar directly below the canvas; null hides it until mounted. */
+    statusBarPortalTarget?: HTMLElement | null
   }
 >(function InpaintCanvas(
   {
@@ -518,11 +518,13 @@ const InpaintCanvas = forwardRef<
     onLassoCreate, onLassoUpdate, onPickColor,
     proposalRegions = [],
     onProposalPreviewState,
+    statusBarPortalTarget,
   },
   ref,
 ) {
   const { t } = useTranslation()
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
+  const strokePreviewRef = useRef<HTMLCanvasElement | null>(null)
   const cursorRef = useRef<HTMLDivElement | null>(null)
   const imgRef = useRef<HTMLImageElement | null>(null)
   const scratchRef = useRef<HTMLCanvasElement | null>(null)
@@ -530,6 +532,7 @@ const InpaintCanvas = forwardRef<
   const maskLayerRef = useRef<HTMLCanvasElement | null>(null)
   const maskBaseRef = useRef<HTMLCanvasElement | null>(null)
   const contextMenuResetRef = useRef<number | null>(null)
+  const strokePreviewClearFrameRef = useRef<number | null>(null)
 
   // 视口（zoom / pan / fit / 坐标换算）走共享 hook；画笔类场景左键留给
   // 画笔（primaryButtonPans 缺省 false），pan 由空格 / 中键触发。
@@ -667,11 +670,73 @@ const InpaintCanvas = forwardRef<
     }
   }, [imageW, imageH])
 
+  const clearStrokePreview = useCallback(() => {
+    const preview = strokePreviewRef.current
+    const ctx = preview?.getContext('2d')
+    if (!preview || !ctx) return
+    ctx.clearRect(0, 0, preview.width, preview.height)
+  }, [])
+
+  const configureStrokePreview = useCallback((drawing: {
+    stroke: InpaintStroke
+    target: InpaintMode
+  }) => {
+    const preview = strokePreviewRef.current
+    if (!preview) return
+    const blur = (drawing.stroke.size * (1 - drawing.stroke.hardness)) / 2
+    preview.style.filter = blur > 0 ? `blur(${blur}px)` : 'none'
+    preview.style.opacity = drawing.stroke.erase
+      ? '0.5'
+      : drawing.target === 'mask' ? String(TRAINING_MASK_VIEW_ALPHA) : '1'
+  }, [])
+
+  /** Keep the in-progress stroke off the composited canvas. Opacity and soft
+   * edges belong to the whole preview layer instead of every sampled segment,
+   * so overlapping round caps cannot pulse darker while the pointer moves. */
+  const beginStrokePreview = useCallback((drawing: {
+    stroke: InpaintStroke
+    target: InpaintMode
+  }) => {
+    const preview = strokePreviewRef.current
+    const ctx = preview?.getContext('2d')
+    if (!preview || !ctx) return
+    clearStrokePreview()
+    configureStrokePreview(drawing)
+    const color = drawing.stroke.erase
+      ? '#ffffff'
+      : drawing.target === 'mask' ? TRAINING_MASK_COLOR : drawing.stroke.color
+    strokePath(ctx, drawing.stroke, color)
+  }, [clearStrokePreview, configureStrokePreview])
+
+  const extendStrokePreview = useCallback((
+    drawing: { stroke: InpaintStroke; target: InpaintMode },
+    from: InpaintPoint,
+    to: InpaintPoint,
+  ) => {
+    const ctx = strokePreviewRef.current?.getContext('2d')
+    if (!ctx) return
+    const color = drawing.stroke.erase
+      ? '#ffffff'
+      : drawing.target === 'mask' ? TRAINING_MASK_COLOR : drawing.stroke.color
+    ctx.save()
+    ctx.strokeStyle = color
+    ctx.lineWidth = drawing.stroke.size
+    ctx.lineCap = 'round'
+    ctx.lineJoin = 'round'
+    ctx.beginPath()
+    ctx.moveTo(from.x, from.y)
+    ctx.lineTo(to.x, to.y)
+    ctx.stroke()
+    ctx.restore()
+  }, [])
+
   // 图片加载（imageUrl 变化 = 换图或保存后 mtime 刷新）
   useEffect(() => {
     let cancelled = false
     setLoaded(false)
     imgRef.current = null
+    drawingRef.current = null
+    clearStrokePreview()
     loadImage(imageUrl).then(
       (img) => {
         if (cancelled) return
@@ -688,7 +753,7 @@ const InpaintCanvas = forwardRef<
       cancelled = true
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [imageUrl, zp.fit, redraw])
+  }, [imageUrl, zp.fit, redraw, clearStrokePreview])
 
   // mask 底图加载（URL 变化 = 换图 / 保存后刷新 / 本地清除→null）
   useEffect(() => {
@@ -713,7 +778,8 @@ const InpaintCanvas = forwardRef<
     const layer = ensureLayer(maskLayerRef)
     rebuildMaskLayer(layer, maskBaseRef.current, displayedMaskEdits, scratchRef)
     redraw()
-  }, [displayedMaskEdits, maskBaseTick, ensureLayer, redraw])
+    if (!drawingRef.current) clearStrokePreview()
+  }, [displayedMaskEdits, maskBaseTick, ensureLayer, redraw, clearStrokePreview])
 
   // 涂抹层重建（undo / redo / 落笔提交 / 清除 —— 含橡皮 composite）
   useEffect(() => {
@@ -724,7 +790,8 @@ const InpaintCanvas = forwardRef<
       drawPaintEdits(ctx, displayedPaintEdits, scratchRef)
     }
     redraw()
-  }, [displayedPaintEdits, ensureLayer, redraw])
+    if (!drawingRef.current) clearStrokePreview()
+  }, [displayedPaintEdits, ensureLayer, redraw, clearStrokePreview])
 
   useEffect(() => {
     redraw()
@@ -802,7 +869,16 @@ const InpaintCanvas = forwardRef<
       rebuildMaskLayer(layer, maskBaseRef.current, maskEditsRef.current, scratchRef)
       return await maskLayerToGray(layer)
     },
-  }), [ensureLayer])
+    cancelTransientEdit: () => {
+      const hadTransient = Boolean(lassoDraft || selectedLassoPoint || lassoDragRef.current)
+      if (!hadTransient) return false
+      setLassoDraft(null)
+      setSelectedLassoPoint(null)
+      setLassoPreview(null)
+      lassoDragRef.current = null
+      return true
+    },
+  }), [ensureLayer, lassoDraft, selectedLassoPoint])
 
   // 笔刷圆圈光标（ref 直改 style；直径 = 笔刷 × 当前 scale）
   const lastPointerRef = useRef<{ x: number; y: number } | null>(null)
@@ -901,6 +977,10 @@ const InpaintCanvas = forwardRef<
   useEffect(() => () => {
     brushAdjustRef.current = null
     lassoDragRef.current = null
+    drawingRef.current = null
+    if (strokePreviewClearFrameRef.current != null) {
+      window.cancelAnimationFrame(strokePreviewClearFrameRef.current)
+    }
     if (contextMenuResetRef.current != null) {
       window.clearTimeout(contextMenuResetRef.current)
     }
@@ -930,7 +1010,7 @@ const InpaintCanvas = forwardRef<
         event.defaultPrevented ||
         event.isComposing ||
         event.ctrlKey || event.altKey || event.metaKey || event.shiftKey ||
-        hasVisibleModal()
+        hasBlockingVisibleModal(wrap)
       ) return
       if (event.code === 'Escape') {
         if (!lassoDraft && !selectedLassoPoint) return
@@ -1054,26 +1134,17 @@ const InpaintCanvas = forwardRef<
         points: [pt],
       }
       drawingRef.current = { stroke, target: isMask ? 'mask' : 'paint' }
-      // 单点立即可见（预览；橡皮以半透明白示意，松手后全量重绘校正）
-      const ctx = canvasRef.current?.getContext('2d')
-      if (ctx) {
-        ctx.save()
-        if (stroke.erase) {
-          ctx.globalAlpha = 0.5
-          strokePath(ctx, stroke, '#ffffff')
-        } else if (isMask) {
-          ctx.globalAlpha = TRAINING_MASK_VIEW_ALPHA
-          strokePath(ctx, stroke, TRAINING_MASK_COLOR)
-        } else {
-          strokePath(ctx, stroke)
-        }
-        ctx.restore()
+      if (strokePreviewClearFrameRef.current != null) {
+        window.cancelAnimationFrame(strokePreviewClearFrameRef.current)
+        strokePreviewClearFrameRef.current = null
       }
+      beginStrokePreview(drawingRef.current)
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [
       editableLassos, imageH, imageW, lassoDraft, loaded, onLassoCreate,
-      pickColor, toContentPoint, updateBrushHud, updateCursor, zp.panPointerDown,
+      beginStrokePreview, pickColor, toContentPoint, updateBrushHud, updateCursor,
+      zp.panPointerDown,
     ],
   )
 
@@ -1133,31 +1204,13 @@ const InpaintCanvas = forwardRef<
       const stroke = drawing.stroke
       const prev = stroke.points[stroke.points.length - 1]
       stroke.points.push(pt)
-      const ctx = canvasRef.current?.getContext('2d')
-      if (ctx) {
-        ctx.save()
-        const isMask = drawing.target === 'mask'
-        if (stroke.erase) {
-          ctx.strokeStyle = '#ffffff'
-          ctx.globalAlpha = 0.5
-        } else if (isMask) {
-          ctx.strokeStyle = TRAINING_MASK_COLOR
-          ctx.globalAlpha = TRAINING_MASK_VIEW_ALPHA
-        } else {
-          ctx.strokeStyle = stroke.color
-        }
-        ctx.lineWidth = stroke.size
-        ctx.lineCap = 'round'
-        ctx.lineJoin = 'round'
-        ctx.beginPath()
-        ctx.moveTo(prev.x, prev.y)
-        ctx.lineTo(pt.x, pt.y)
-        ctx.stroke()
-        ctx.restore()
-      }
+      extendStrokePreview(drawing, prev, pt)
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [updateCursor, updateBrushHud, toContentPoint, imageW, imageH, onBrushAdjust, zp.panPointerMove],
+    [
+      updateCursor, updateBrushHud, toContentPoint, imageW, imageH,
+      extendStrokePreview, onBrushAdjust, zp.panPointerMove,
+    ],
   )
 
   const endStroke = useCallback(() => {
@@ -1167,8 +1220,15 @@ const InpaintCanvas = forwardRef<
     if (!drawing) return
     if (drawing.target === 'mask') onMaskStrokeEnd(drawing.stroke)
     else onStrokeEnd(drawing.stroke)
+    // The controlled edit normally rebuilds its layer before the next frame.
+    // Keep the preview until then to avoid a one-frame gap at pointer-up, with
+    // a frame fallback for consumers that intentionally do not retain edits.
+    strokePreviewClearFrameRef.current = window.requestAnimationFrame(() => {
+      strokePreviewClearFrameRef.current = null
+      clearStrokePreview()
+    })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [onStrokeEnd, onMaskStrokeEnd, zp.endPan])
+  }, [clearStrokePreview, onStrokeEnd, onMaskStrokeEnd, zp.endPan])
 
   const endInteraction = useCallback((
     e: React.PointerEvent<HTMLDivElement>,
@@ -1210,6 +1270,34 @@ const InpaintCanvas = forwardRef<
     ? [...lassoDraft.points, ...(cursorPos ? [{ ...cursorPos, id: 'cursor', smooth: false }] : [])]
     : []
   const erase = tool === 'eraser'
+  const statusBar = (
+    <div
+      data-testid="inpaint-canvas-status"
+      className="shrink-0 flex items-center gap-2 text-[11px] font-mono text-fg-tertiary px-1"
+    >
+      <span>{zp.zoomPct}%</span>
+      <button
+        type="button"
+        className="px-1.5 py-0.5 rounded hover:bg-overlay hover:text-fg-primary"
+        onClick={() => zp.fit()}
+      >{t('preprocessInpaint.zoomFit')}</button>
+      <button
+        type="button"
+        className="px-1.5 py-0.5 rounded hover:bg-overlay hover:text-fg-primary"
+        onClick={() => zp.reset100()}
+      >100%</button>
+      <span className="flex-1" />
+      {cursorPos && (
+        <span>{cursorPos.x}, {cursorPos.y}</span>
+      )}
+      <span>{imageW}×{imageH}</span>
+      <span className="text-fg-disabled">
+        {t(tool === 'lasso'
+          ? 'preprocessInpaint.lassoCanvasHint'
+          : 'preprocessInpaint.canvasHint')}
+      </span>
+    </div>
+  )
 
   return (
     <div className="flex flex-col h-full min-h-0 gap-1.5">
@@ -1245,6 +1333,14 @@ const InpaintCanvas = forwardRef<
             width={imageW}
             height={imageH}
             style={{ position: 'absolute', inset: 0 }}
+          />
+          <canvas
+            ref={strokePreviewRef}
+            data-testid="stroke-preview-canvas"
+            width={imageW}
+            height={imageH}
+            className="pointer-events-none absolute inset-0"
+            aria-hidden="true"
           />
           {tool === 'lasso' && (
             <svg
@@ -1347,30 +1443,10 @@ const InpaintCanvas = forwardRef<
         )}
       </div>
 
-      {/* readout 细条：zoom / 视图操作 / 光标像素坐标 */}
-      <div className="shrink-0 flex items-center gap-2 text-[11px] font-mono text-fg-tertiary px-1">
-        <span>{zp.zoomPct}%</span>
-        <button
-          type="button"
-          className="px-1.5 py-0.5 rounded hover:bg-overlay hover:text-fg-primary"
-          onClick={() => zp.fit()}
-        >{t('preprocessInpaint.zoomFit')}</button>
-        <button
-          type="button"
-          className="px-1.5 py-0.5 rounded hover:bg-overlay hover:text-fg-primary"
-          onClick={() => zp.reset100()}
-        >100%</button>
-        <span className="flex-1" />
-        {cursorPos && (
-          <span>{cursorPos.x}, {cursorPos.y}</span>
-        )}
-        <span>{imageW}×{imageH}</span>
-        <span className="text-fg-disabled">
-          {t(tool === 'lasso'
-            ? 'preprocessInpaint.lassoCanvasHint'
-            : 'preprocessInpaint.canvasHint')}
-        </span>
-      </div>
+      {/* readout 细条：默认在画布下方，也可传送到外部两栏布局底部。 */}
+      {statusBarPortalTarget === undefined
+        ? statusBar
+        : statusBarPortalTarget ? createPortal(statusBar, statusBarPortalTarget) : null}
     </div>
   )
 })

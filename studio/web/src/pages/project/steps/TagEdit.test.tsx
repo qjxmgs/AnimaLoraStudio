@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   setVersionSwitchGuard: vi.fn(),
   onEvent: undefined as undefined | ((event: Record<string, unknown>) => void),
   gridColumns: 2,
+  inpaintProps: [] as Array<Record<string, unknown>>,
 }))
 
 vi.mock('react-router-dom', async (importOriginal) => {
@@ -50,6 +51,39 @@ vi.mock('../../../components/preprocess/TrainingMaskOverlay', () => ({
   default: ({ src }: { src: string }) => (
     <div data-testid="training-mask-overlay" data-src={src} />
   ),
+}))
+vi.mock('../../../components/preprocess/SingleImageInpaintDialog', () => ({
+  default: (props: {
+    image: { name: string }
+    onDirtyChange?: (dirty: boolean) => void
+    onStageSaved?: (stage: Record<string, unknown>) => void
+    onClose: () => void
+  }) => {
+    mocks.inpaintProps.push(props as unknown as Record<string, unknown>)
+    return (
+      <div role="dialog" aria-label="模拟单图涂抹" data-image={props.image.name}>
+        <button type="button" onClick={() => props.onDirtyChange?.(true)}>模拟涂抹修改</button>
+        <button
+          type="button"
+          onClick={() => {
+            const nextName = props.image.name.replace(/\.[^.]+$/, '.png')
+            props.onStageSaved?.({
+              kind: 'paint',
+              previousName: props.image.name,
+              name: nextName,
+              result: {
+                name: nextName, origin: props.image.name.slice(props.image.name.lastIndexOf('/') + 1),
+                mtime: 99, size: 20, w: 640, h: 480,
+              },
+            })
+          }}
+        >
+          模拟保存原图
+        </button>
+        <button type="button" onClick={props.onClose}>关闭模拟涂抹</button>
+      </div>
+    )
+  },
 }))
 vi.mock('../../../components/ImageGrid', async () => {
   const { useEffect } = await import('react')
@@ -270,6 +304,7 @@ beforeEach(() => {
   localStorage.clear()
   mocks.onEvent = undefined
   mocks.gridColumns = 2
+  mocks.inpaintProps.length = 0
   vi.spyOn(api, 'listCaptionsFull').mockResolvedValue(captions)
   vi.spyOn(api, 'listCropWorkspaceTrain').mockResolvedValue(cropWorkspace)
   vi.spyOn(api, 'commitCaptions').mockResolvedValue({
@@ -789,6 +824,62 @@ describe('TagEdit workspace', () => {
     await ready()
     await user.click(screen.getByRole('button', { name: '打开 人物 A/a1.png' }))
     expect(screen.getByRole('checkbox', { name: '显示遮罩' })).not.toBeChecked()
+  })
+
+  it('opens the single-image inpaint dialog from the preview header before the mask toggle', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await ready()
+    await user.click(screen.getByRole('button', { name: '打开 人物 A/a1.png' }))
+
+    const action = screen.getByRole('button', { name: '涂抹' })
+    const toggle = screen.getByRole('checkbox', { name: '显示遮罩' })
+    expect(action.compareDocumentPosition(toggle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+
+    await user.click(action)
+    expect(screen.getByRole('dialog', { name: '模拟单图涂抹' })).toHaveAttribute(
+      'data-image',
+      '人物 A/a1.png',
+    )
+    expect(mocks.inpaintProps).toHaveLength(1)
+  })
+
+  it('migrates the active image and pending tag draft when inpaint converts a jpg to png', async () => {
+    vi.mocked(api.listCaptionsFull).mockResolvedValueOnce({
+      folder: null,
+      items: [{
+        folder: '人物 A', name: 'a1.jpg', tags: ['cat'], format: 'txt' as const,
+        tag_count: 1, tags_preview: ['cat'], has_caption: true,
+      }],
+    })
+    const jpgWorkspace = {
+      images: [{
+        name: '人物 A/a1.jpg', source: 'a1.jpg', w: 640, h: 480,
+        mtime: 1, size: 10, processed: false, mask_mtime: 123,
+      }],
+    }
+    vi.mocked(api.listCropWorkspaceTrain).mockResolvedValue(jpgWorkspace)
+    const user = userEvent.setup()
+    renderPage()
+    await ready()
+    await user.click(screen.getByRole('button', { name: '打开 人物 A/a1.jpg' }))
+    await user.click(screen.getByRole('button', { name: '切换标签 cat' }))
+    expect(screen.getByRole('button', { name: '切换标签 cat' })).toHaveAttribute('aria-pressed', 'false')
+
+    await user.click(screen.getByRole('button', { name: '涂抹' }))
+    vi.mocked(api.listCropWorkspaceTrain).mockResolvedValue({
+      images: [{ ...jpgWorkspace.images[0], name: '人物 A/a1.png', mtime: 99, processed: true }],
+    })
+    await user.click(screen.getByRole('button', { name: '模拟保存原图' }))
+
+    await waitFor(() => expect(screen.getByTestId('preview-image')).toHaveTextContent('a1.png'))
+    expect(screen.getByRole('button', { name: '切换标签 cat' })).toHaveAttribute('aria-pressed', 'false')
+    await user.click(screen.getByRole('button', { name: '保存（1）' }))
+    await waitFor(() => expect(api.commitCaptions).toHaveBeenCalledWith(7, 11, [{
+      folder: '人物 A',
+      name: 'a1.png',
+      tags: [],
+    }]))
   })
 
   it('removes the old overlay immediately when navigating to an image without a mask', async () => {
