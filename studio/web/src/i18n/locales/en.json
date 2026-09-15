@@ -585,8 +585,7 @@
     "tagCount": "{{n}} tags",
     "empty": "No tags yet",
     "addPlaceholder": "Add a tag, then press Enter / comma",
-    "textPlaceholder": "Comma / newline separated; edits become pending immediately",
-    "deleteTag": "Delete {{tag}}"
+    "textPlaceholder": "Comma / newline separated; edits become pending immediately"
   },
   "llmMessages": {
     "roleHintSystem": "Instructional · usually written once",

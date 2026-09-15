@@ -25,8 +25,10 @@ import { useTagSuggest } from './tagSuggest/useTagSuggest'
 
 interface Props {
   tags: string[]
+  /** Tags that stay visible in chip mode but are excluded from the saved value. */
+  inactiveTags?: ReadonlySet<string>
   natural?: boolean
-  onChange: (tags: string[]) => void
+  onChange: (tags: string[], inactiveTags: ReadonlySet<string>) => void
   onSave?: () => void | Promise<void>
   saving?: boolean
   dirty?: boolean
@@ -50,6 +52,11 @@ const parseLine = (raw: string): string[] => {
 
 const tagsEqual = (a: string[], b: string[]): boolean =>
   a.length === b.length && a.every((tag, index) => tag === b[index])
+
+const setsEqual = (a: ReadonlySet<string>, b: ReadonlySet<string>): boolean =>
+  a.size === b.size && Array.from(a).every((tag) => b.has(tag))
+
+const EMPTY_INACTIVE_TAGS: ReadonlySet<string> = new Set()
 
 /**
  * Tags are variable-width items in a wrapping flex row. rectSortingStrategy
@@ -108,6 +115,16 @@ const tagToneStyle = (index: number): TagToneStyle => ({
   backgroundColor: 'color-mix(in srgb, var(--tag-tone) 22%, var(--bg-surface))',
   borderColor: 'var(--tag-tone)',
 })
+
+const inactiveTagStyle: React.CSSProperties = {
+  color: 'var(--tag-inactive-fg)',
+  backgroundColor: 'var(--tag-inactive-bg)',
+  borderColor: 'var(--tag-inactive-border)',
+}
+
+const tagChipStyle = (index: number, inactive: boolean): React.CSSProperties => (
+  inactive ? inactiveTagStyle : tagToneStyle(index)
+)
 
 interface TagGeometry {
   id: string
@@ -233,26 +250,40 @@ interface PendingFlip {
 }
 
 export default function TagEditor({
-  tags, natural, onChange, onSave, saving, dirty, showTagCount = true, resetKey,
+  tags,
+  inactiveTags = EMPTY_INACTIVE_TAGS,
+  natural,
+  onChange,
+  onSave,
+  saving,
+  dirty,
+  showTagCount = true,
+  resetKey,
 }: Props) {
   const { t } = useTranslation()
   const [draft, setDraft] = useState('')
-  const tagsJoined = useMemo(() => tags.join(', '), [tags])
+  const selectedTags = useMemo(
+    () => tags.filter((tag) => !inactiveTags.has(tag)),
+    [inactiveTags, tags],
+  )
+  const tagsJoined = useMemo(() => selectedTags.join(', '), [selectedTags])
   const [mode, setMode] = useState<Mode>(natural ? 'text' : 'chip')
   const [textBuf, setTextBuf] = useState(() => tagsJoined)
   const [activeTag, setActiveTag] = useState<string | null>(null)
   const [dropTarget, setDropTarget] = useState<TagDropTarget | null>(null)
   const dropTargetRef = useRef<TagDropTarget | null>(null)
   const chipListRef = useRef<HTMLDivElement>(null)
-  const chipNodesRef = useRef(new Map<string, HTMLSpanElement>())
+  const chipNodesRef = useRef(new Map<string, HTMLButtonElement>())
   const pendingFlipRef = useRef<PendingFlip | null>(null)
   const flipAnimationsRef = useRef<Animation[]>([])
-  const textTagsRef = useRef([...tags])
+  const textTagsRef = useRef([...selectedTags])
   const previousResetKeyRef = useRef(resetKey)
   const draftInputRef = useRef<HTMLInputElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const suppressChipClickRef = useRef(false)
+  const suppressChipClickTimerRef = useRef<number | null>(null)
 
-  // PointerSensor + 6px 启动距离：拖拽手感不会跟「点 × 删除」/ 误触冲突。
+  // PointerSensor + 6px 启动距离：轻微点击仍是点选，越过阈值才进入排序。
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
   )
@@ -269,7 +300,12 @@ export default function TagEditor({
     flipAnimationsRef.current = []
   }
 
-  useEffect(() => () => cancelFlipAnimations(), [])
+  useEffect(() => () => {
+    cancelFlipAnimations()
+    if (suppressChipClickTimerRef.current != null) {
+      window.clearTimeout(suppressChipClickTimerRef.current)
+    }
+  }, [])
 
   useLayoutEffect(() => {
     const pending = pendingFlipRef.current
@@ -311,30 +347,38 @@ export default function TagEditor({
     previousResetKeyRef.current = resetKey
     setDraft('')
     setTextBuf(tagsJoined)
-    textTagsRef.current = [...tags]
+    textTagsRef.current = [...selectedTags]
     pendingFlipRef.current = null
     setActiveTag(null)
     setPendingDrop(null)
-  }, [resetKey, tags, tagsJoined])
+  }, [resetKey, selectedTags, tagsJoined])
 
   // Keep free-form punctuation and spacing intact while the parent echoes edits back.
   // A genuinely external tag change (for example, another active image) resets the buffer.
   useEffect(() => {
     if (mode !== 'text') {
-      textTagsRef.current = [...tags]
+      textTagsRef.current = [...selectedTags]
       return
     }
-    if (tagsEqual(tags, textTagsRef.current)) return
+    if (tagsEqual(selectedTags, textTagsRef.current)) return
     setTextBuf(tagsJoined)
-    textTagsRef.current = [...tags]
-  }, [mode, tags, tagsJoined])
+    textTagsRef.current = [...selectedTags]
+  }, [mode, selectedTags, tagsJoined])
 
   const addTag = (raw: string) => {
     const t = raw.trim().replace(/^[,，]+|[,，]+$/g, '')
     if (!t) return
-    if (tags.includes(t)) { setDraft(''); return }
+    if (tags.includes(t)) {
+      if (inactiveTags.has(t)) {
+        const nextInactive = new Set(inactiveTags)
+        nextInactive.delete(t)
+        onChange(tags, nextInactive)
+      }
+      setDraft('')
+      return
+    }
     // 加到末尾：跟 chip 拖拽重排的心智一致（新东西落在底部，用户拖到想要的位置）
-    onChange([...tags, t])
+    onChange([...tags, t], inactiveTags)
     setDraft('')
   }
 
@@ -348,9 +392,17 @@ export default function TagEditor({
 
   const updateText = (raw: string) => {
     setTextBuf(raw)
-    const next = parseLine(raw)
-    textTagsRef.current = next
-    if (!tagsEqual(next, tags)) onChange(next)
+    const nextSelected = parseLine(raw)
+    const selectedSet = new Set(nextSelected)
+    const nextTags = [
+      ...nextSelected,
+      ...tags.filter((tag) => !selectedSet.has(tag)),
+    ]
+    const nextInactive = new Set(nextTags.filter((tag) => !selectedSet.has(tag)))
+    textTagsRef.current = nextSelected
+    if (!tagsEqual(nextTags, tags) || !setsEqual(nextInactive, inactiveTags)) {
+      onChange(nextTags, nextInactive)
+    }
   }
 
   // text 模式 textarea：根据 cursor 算 token range，替换为 `tag, ` 并保持光标。
@@ -371,12 +423,27 @@ export default function TagEditor({
     },
   })
 
-  const removeTag = (t: string) => {
-    onChange(tags.filter((x) => x !== t))
+  const toggleTag = (tag: string) => {
+    const nextInactive = new Set(inactiveTags)
+    if (nextInactive.has(tag)) nextInactive.delete(tag)
+    else nextInactive.add(tag)
+    onChange(tags, nextInactive)
+  }
+
+  const armPostDragClickGuard = () => {
+    suppressChipClickRef.current = true
+    if (suppressChipClickTimerRef.current != null) {
+      window.clearTimeout(suppressChipClickTimerRef.current)
+    }
+    suppressChipClickTimerRef.current = window.setTimeout(() => {
+      suppressChipClickRef.current = false
+      suppressChipClickTimerRef.current = null
+    }, 0)
   }
 
   const handleDragStart = (event: DragStartEvent) => {
     cancelFlipAnimations()
+    suppressChipClickRef.current = true
     setPendingDrop(null)
     setActiveTag(String(event.active.id))
   }
@@ -416,6 +483,11 @@ export default function TagEditor({
     setPendingDrop(null)
   }
 
+  const cancelDrag = () => {
+    armPostDragClickGuard()
+    clearDragState()
+  }
+
   const handleDragEnd = (event: DragEndEvent) => {
     const target = dropTargetRef.current
     const next = target
@@ -429,12 +501,13 @@ export default function TagEditor({
         ))),
       }
     }
+    armPostDragClickGuard()
     clearDragState()
     if (next === tags) return
-    onChange(next)
+    onChange(next, inactiveTags)
   }
 
-  const registerChipNode = useCallback((tag: string, node: HTMLSpanElement | null) => {
+  const registerChipNode = useCallback((tag: string, node: HTMLButtonElement | null) => {
     if (node) chipNodesRef.current.set(tag, node)
     else chipNodesRef.current.delete(tag)
   }, [])
@@ -442,7 +515,7 @@ export default function TagEditor({
   const switchToText = () => {
     if (mode === 'text') return
     setTextBuf(tagsJoined)
-    textTagsRef.current = [...tags]
+    textTagsRef.current = [...selectedTags]
     setMode('text')
   }
 
@@ -456,7 +529,7 @@ export default function TagEditor({
       <div className="flex flex-col gap-2 flex-1 min-h-0">
         <Textarea
           value={tags[0] ?? ''}
-          onChange={(e) => onChange([e.target.value])}
+          onChange={(e) => onChange([e.target.value], EMPTY_INACTIVE_TAGS)}
           placeholder={t('tagEditor.naturalPlaceholder')}
           aria-label={t('tagEditor.naturalInputLabel')}
           mono
@@ -496,7 +569,9 @@ export default function TagEditor({
         />
         <span className="flex-1" />
         {showTagCount && (
-          <span className="text-fg-tertiary tnum">{t('tagEditor.tagCount', { n: tags.length })}</span>
+          <span className="text-fg-tertiary tnum">
+            {t('tagEditor.tagCount', { n: selectedTags.length })}
+          </span>
         )}
       </div>
 
@@ -508,7 +583,7 @@ export default function TagEditor({
             onDragStart={handleDragStart}
             onDragMove={handleDragMove}
             onDragEnd={handleDragEnd}
-            onDragCancel={clearDragState}
+            onDragCancel={cancelDrag}
           >
             <SortableContext items={tags} strategy={tagFlowSortingStrategy}>
               <div ref={chipListRef} className="flex flex-wrap gap-2 overflow-y-auto flex-1 min-h-0 content-start py-1">
@@ -520,9 +595,11 @@ export default function TagEditor({
                     key={t}
                     id={t}
                     toneIndex={index}
+                    inactive={inactiveTags.has(t)}
                     insertionEdge={dropTarget?.id === t ? dropTarget.edge : null}
                     onNodeChange={registerChipNode}
-                    onRemove={() => removeTag(t)}
+                    onToggle={() => toggleTag(t)}
+                    suppressClickRef={suppressChipClickRef}
                   />
                 ))}
               </div>
@@ -532,7 +609,10 @@ export default function TagEditor({
                 <span
                   aria-hidden="true"
                   className={`${TAG_CHIP_CLASS} shadow-lg cursor-grabbing pointer-events-none`}
-                  style={tagToneStyle(Math.max(0, tags.indexOf(activeTag)))}
+                  style={tagChipStyle(
+                    Math.max(0, tags.indexOf(activeTag)),
+                    inactiveTags.has(activeTag),
+                  )}
                 >
                   <TranslatedTag
                     tag={activeTag}
@@ -540,7 +620,6 @@ export default function TagEditor({
                     missingTranslation="-"
                     translationClassName="text-current opacity-70"
                   />
-                  <span className="text-fg-tertiary text-sm leading-none">×</span>
                 </span>
               ) : null}
             </DragOverlay>
@@ -638,41 +717,50 @@ export default function TagEditor({
   )
 }
 
-/** 单个可拖拽 chip。
- *
- * × 删除按钮要 stopPropagation onPointerDown —— 否则 6px 移动阈值过后 × 也成了
- * 拖拽起点,点 × 反而触发拖拽。
- */
+/** 可点选、可拖拽的单个 chip。 */
 function SortableChip({
   id,
   toneIndex,
+  inactive,
   insertionEdge,
   onNodeChange,
-  onRemove,
+  onToggle,
+  suppressClickRef,
 }: {
   id: string
   toneIndex: number
+  inactive: boolean
   insertionEdge: TagDropEdge | null
-  onNodeChange: (tag: string, node: HTMLSpanElement | null) => void
-  onRemove: () => void
+  onNodeChange: (tag: string, node: HTMLButtonElement | null) => void
+  onToggle: () => void
+  suppressClickRef: React.MutableRefObject<boolean>
 }) {
-  const { t } = useTranslation()
   const {
     attributes, listeners, setNodeRef, isDragging,
   } = useSortable({ id })
-  const ref = useCallback((node: HTMLSpanElement | null) => {
+  const ref = useCallback((node: HTMLButtonElement | null) => {
     setNodeRef(node)
     onNodeChange(id, node)
   }, [id, onNodeChange, setNodeRef])
   return (
-    <span
+    <button
+      type="button"
       ref={ref}
-      style={tagToneStyle(toneIndex)}
+      style={tagChipStyle(toneIndex, inactive)}
       data-tag-chip={id}
       data-tag-tone-index={toneIndex % TAG_TONES.length}
+      data-tag-inactive={inactive ? 'true' : 'false'}
       {...attributes}
       {...listeners}
-      className={`${TAG_CHIP_CLASS} cursor-grab active:cursor-grabbing transition-[background-color,border-color,box-shadow,opacity] ${
+      aria-pressed={!inactive}
+      onClick={(event) => {
+        if (suppressClickRef.current) {
+          event.preventDefault()
+          return
+        }
+        onToggle()
+      }}
+      className={`${TAG_CHIP_CLASS} appearance-none font-[inherit] text-left cursor-grab active:cursor-grabbing transition-[color,background-color,border-color,box-shadow,opacity] ${
         isDragging ? 'opacity-25' : 'opacity-100'
       }`}
     >
@@ -691,14 +779,6 @@ function SortableChip({
         missingTranslation="-"
         translationClassName="text-current opacity-70"
       />
-      <button
-        onPointerDown={(e) => e.stopPropagation()}
-        onClick={onRemove}
-        aria-label={t('tagEditor.deleteTag', { tag: id })}
-        className="self-stretch flex items-center bg-transparent border-none text-fg-tertiary hover:text-err cursor-pointer p-0 pl-0.5 text-sm leading-none"
-      >
-        ×
-      </button>
-    </span>
+    </button>
   )
 }

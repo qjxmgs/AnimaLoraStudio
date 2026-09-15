@@ -113,17 +113,57 @@ vi.mock('../../../components/ImageGrid', async () => {
   }
 })
 vi.mock('../../../components/TagEditor', () => ({
-  default: ({ tags, onChange }: { tags: string[]; onChange: (tags: string[]) => void }) => (
-    <div>
-      <span>当前标签 {tags.join(',')}</span>
-      <input
-        aria-label="以文本编辑标签"
-        value={tags.join(', ')}
-        onChange={(event) => onChange(event.target.value.split(',').map((tag) => tag.trim()).filter(Boolean))}
-      />
-      <button type="button" onClick={() => onChange([...tags, 'edited'])}>修改标签</button>
-    </div>
-  ),
+  default: ({
+    tags,
+    inactiveTags = new Set<string>(),
+    onChange,
+  }: {
+    tags: string[]
+    inactiveTags?: ReadonlySet<string>
+    onChange: (tags: string[], inactiveTags: ReadonlySet<string>) => void
+  }) => {
+    const activeTags = tags.filter((tag) => !inactiveTags.has(tag))
+    return (
+      <div>
+        <span>当前标签 {activeTags.join(',')}</span>
+        <input
+          aria-label="以文本编辑标签"
+          value={activeTags.join(', ')}
+          onChange={(event) => {
+            const nextActive = event.target.value.split(',').map((tag) => tag.trim()).filter(Boolean)
+            const nextActiveSet = new Set(nextActive)
+            const nextTags = [...nextActive, ...tags.filter((tag) => !nextActiveSet.has(tag))]
+            onChange(nextTags, new Set(nextTags.filter((tag) => !nextActiveSet.has(tag))))
+          }}
+        />
+        <button
+          type="button"
+          onClick={() => onChange(
+            tags.includes('edited') ? tags : [...tags, 'edited'],
+            new Set(Array.from(inactiveTags).filter((tag) => tag !== 'edited')),
+          )}
+        >
+          修改标签
+        </button>
+        {tags.map((tag) => (
+          <button
+            key={tag}
+            type="button"
+            aria-label={`切换标签 ${tag}`}
+            aria-pressed={!inactiveTags.has(tag)}
+            onClick={() => {
+              const nextInactive = new Set(inactiveTags)
+              if (nextInactive.has(tag)) nextInactive.delete(tag)
+              else nextInactive.add(tag)
+              onChange(tags, nextInactive)
+            }}
+          >
+            {tag}
+          </button>
+        ))}
+      </div>
+    )
+  },
 }))
 vi.mock('../../../components/BulkActionBar', () => ({
   default: ({ selectedKeys }: { selectedKeys: string[] }) => (
@@ -688,6 +728,143 @@ describe('TagEdit workspace', () => {
     expect(screen.getByRole('checkbox', { name: '显示遮罩' })).toBeChecked()
     expect(screen.queryByTestId('training-mask-overlay')).not.toBeInTheDocument()
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('keeps an inactive tag visible until save and excludes it from the commit payload', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await ready()
+
+    await user.click(screen.getByRole('button', { name: '打开 人物 A/a1.png' }))
+    const chip = screen.getByRole('button', { name: '切换标签 cat' })
+    await user.click(chip)
+
+    expect(chip).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.getByText('0 个标签')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '保存（1）' }))
+
+    await waitFor(() => expect(api.commitCaptions).toHaveBeenCalledWith(7, 11, [{
+      folder: '人物 A',
+      name: 'a1.png',
+      tags: [],
+    }]))
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: '切换标签 cat' })).not.toBeInTheDocument()
+    })
+    expect(screen.getByRole('button', { name: '已保存' })).toBeDisabled()
+  })
+
+  it('can restore an inactive tag before save without leaving a dirty draft', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await ready()
+
+    await user.click(screen.getByRole('button', { name: '打开 人物 A/a1.png' }))
+    const chip = screen.getByRole('button', { name: '切换标签 cat' })
+    await user.click(chip)
+    await user.click(chip)
+
+    expect(chip).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('button', { name: '已保存' })).toBeDisabled()
+    expect(api.commitCaptions).not.toHaveBeenCalled()
+  })
+
+  it('retains a newly added inactive tag as a saveable draft, then removes it after save', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await ready()
+
+    await user.click(screen.getByRole('button', { name: '打开 人物 A/a1.png' }))
+    await user.click(screen.getByRole('button', { name: '修改标签' }))
+    const added = screen.getByRole('button', { name: '切换标签 edited' })
+    await user.click(added)
+
+    expect(added).toHaveAttribute('aria-pressed', 'false')
+    await user.click(screen.getByRole('button', { name: '保存（1）' }))
+    await waitFor(() => expect(api.commitCaptions).toHaveBeenCalledWith(7, 11, [{
+      folder: '人物 A',
+      name: 'a1.png',
+      tags: ['cat'],
+    }]))
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: '切换标签 edited' })).not.toBeInTheDocument()
+    })
+  })
+
+  it('preserves each image inactive draft while switching images', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await ready()
+
+    await user.click(screen.getByRole('button', { name: '打开 人物 A/a1.png' }))
+    await user.click(screen.getByRole('button', { name: '切换标签 cat' }))
+    await user.click(screen.getByRole('button', { name: '打开 人物 A/a2.png' }))
+    expect(screen.getByRole('button', { name: '切换标签 dog' })).toHaveAttribute('aria-pressed', 'true')
+
+    await user.click(screen.getByRole('button', { name: '打开 人物 A/a1.png' }))
+    expect(screen.getByRole('button', { name: '切换标签 cat' })).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    )
+  })
+
+  it('keeps an inactive tag visible when its caption write is skipped', async () => {
+    vi.mocked(api.commitCaptions).mockResolvedValue({
+      written: 0,
+      skipped: ['人物 A/a1.png'],
+      snapshot: { id: 'snap-inactive', created_at: 2, size: 1, file_count: 0 },
+    })
+    const user = userEvent.setup()
+    renderPage()
+    await ready()
+
+    await user.click(screen.getByRole('button', { name: '打开 人物 A/a1.png' }))
+    await user.click(screen.getByRole('button', { name: '切换标签 cat' }))
+    await user.click(screen.getByRole('button', { name: '保存（1）' }))
+
+    await waitFor(() => expect(api.commitCaptions).toHaveBeenCalledTimes(1))
+    expect(screen.getByRole('button', { name: '切换标签 cat' })).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    )
+    expect(screen.getByRole('button', { name: '保存（1）' })).toBeEnabled()
+  })
+
+  it('does not clear a newer inactive draft when an older save finishes', async () => {
+    type CommitResponse = Awaited<ReturnType<typeof api.commitCaptions>>
+    let resolveCommit!: (value: CommitResponse) => void
+    vi.mocked(api.commitCaptions).mockReturnValueOnce(new Promise((resolve) => {
+      resolveCommit = resolve
+    }))
+    const user = userEvent.setup()
+    renderPage()
+    await ready()
+
+    await user.click(screen.getByRole('button', { name: '打开 人物 A/a1.png' }))
+    await user.click(screen.getByRole('button', { name: '切换标签 cat' }))
+    await user.click(screen.getByRole('button', { name: '保存（1）' }))
+    await waitFor(() => expect(api.commitCaptions).toHaveBeenCalledWith(7, 11, [{
+      folder: '人物 A',
+      name: 'a1.png',
+      tags: [],
+    }]))
+
+    await user.click(screen.getByRole('button', { name: '修改标签' }))
+    await act(async () => resolveCommit({
+      written: 1,
+      skipped: [],
+      snapshot: { id: 'snap-stale', created_at: 4, size: 1, file_count: 1 },
+    }))
+
+    expect(screen.getByRole('button', { name: '切换标签 cat' })).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    )
+    expect(screen.getByRole('button', { name: '切换标签 edited' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+    expect(screen.getByRole('button', { name: '保存（1）' })).toBeEnabled()
   })
 
   it('saves the latest text edit with one dataset-level save action', async () => {

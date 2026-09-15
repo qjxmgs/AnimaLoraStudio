@@ -26,6 +26,12 @@
   --border-default: #cdcbc0;
   --border-strong:  #a8a59a;
 
+  /* Pending tag removal: intentionally cooler and flatter than the five
+   * coloured tag tones, so it reads as unavailable on the warm light canvas. */
+  --tag-inactive-bg:     #d4d6d9;
+  --tag-inactive-fg:     #858990;
+  --tag-inactive-border: #a8acb2;
+
   /* accents */
   --accent:        #d8541d;     /* orange — active marks and decorative emphasis */
   --accent-hover:  #b9441a;
@@ -130,6 +136,11 @@
   --border-subtle:  #2a2820;
   --border-default: #3a3830;
   --border-strong:  #5a5750;
+
+  /* Keep the already accepted dark-theme treatment unchanged. */
+  --tag-inactive-bg: color-mix(in srgb, var(--fg-disabled) 52%, var(--bg-surface));
+  --tag-inactive-fg: color-mix(in srgb, var(--fg-disabled) 72%, var(--fg-tertiary));
+  --tag-inactive-border: color-mix(in srgb, var(--fg-disabled) 72%, var(--border-strong));
 
   --accent:        #ed6b3a;
   --accent-hover:  #f78a5e;

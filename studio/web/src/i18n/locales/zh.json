@@ -585,8 +585,7 @@
     "tagCount": "{{n}} 个标签",
     "empty": "还没有标签",
     "addPlaceholder": "添加标签后按 Enter / 逗号",
-    "textPlaceholder": "逗号 / 换行分隔，修改会进入待保存状态",
-    "deleteTag": "删除 {{tag}}"
+    "textPlaceholder": "逗号 / 换行分隔，修改会进入待保存状态"
   },
   "llmMessages": {
     "roleHintSystem": "指令性 · 一般写一次",

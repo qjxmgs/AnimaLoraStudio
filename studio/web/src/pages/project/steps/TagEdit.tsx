@@ -50,6 +50,13 @@ interface CaptionMeta {
   format: 'txt' | 'json' | 'none'
 }
 
+interface PendingTagDraft {
+  /** Complete visual order, including tags that are pending removal. */
+  order: string[]
+  /** Inactive tags in their visual order. */
+  inactive: string[]
+}
+
 type GridDirection = 'up' | 'down' | 'left' | 'right'
 
 const NON_TEXT_INPUT_TYPES = new Set([
@@ -118,8 +125,10 @@ export default function TagEditPage() {
   const versionId = activeVersion?.id ?? null
 
   const [cache, setCache] = useState<Map<string, string[]>>(new Map())
+  const [pendingTagDrafts, setPendingTagDrafts] = useState<Map<string, PendingTagDraft>>(new Map())
   const dirtyRef = useRef(false)
   const editRevisionRef = useRef(0)
+  const tagRevisionByKeyRef = useRef(new Map<string, number>())
   const reloadRequestRef = useRef(0)
   const maskReloadRequestRef = useRef(0)
   const saveInFlightRef = useRef(false)
@@ -198,6 +207,8 @@ export default function TagEditPage() {
       }
       setCache(c)
       setInitial(new Map(c))
+      setPendingTagDrafts(new Map())
+      tagRevisionByKeyRef.current.clear()
       setMeta(m)
       setKeys(ks)
       setHasLoaded(true)
@@ -234,6 +245,8 @@ export default function TagEditPage() {
   useEffect(() => {
     setCache(new Map())
     setInitial(new Map())
+    setPendingTagDrafts(new Map())
+    tagRevisionByKeyRef.current.clear()
     setMeta(new Map())
     setKeys([])
     setHasLoaded(false)
@@ -258,10 +271,10 @@ export default function TagEditPage() {
     for (const k of keys) {
       const cur = cache.get(k) ?? []
       const ini = initial.get(k) ?? []
-      if (!arraysEqual(cur, ini)) out.push(k)
+      if (!arraysEqual(cur, ini) || pendingTagDrafts.has(k)) out.push(k)
     }
     return out
-  }, [cache, initial, keys])
+  }, [cache, initial, keys, pendingTagDrafts])
   const dirty = dirtyKeys.length > 0
   const dirtyKeySet = useMemo(() => new Set(dirtyKeys), [dirtyKeys])
   dirtyRef.current = dirty
@@ -471,22 +484,65 @@ export default function TagEditPage() {
     setActiveKey(navKeys[next])
   }
 
-  const updateActiveTags = (tags: string[]) => {
-    if (!activeKey) return
+  const markKeysEdited = (changedKeys: Iterable<string>) => {
     editRevisionRef.current += 1
+    for (const key of changedKeys) {
+      const revision = tagRevisionByKeyRef.current.get(key) ?? 0
+      tagRevisionByKeyRef.current.set(key, revision + 1)
+    }
     dirtyRef.current = true
+  }
+
+  const updateActiveTags = (tags: string[], inactiveTags: ReadonlySet<string>) => {
+    if (!activeKey) return
+    const currentActive = cache.get(activeKey) ?? []
+    const currentDraft = pendingTagDrafts.get(activeKey)
+    const currentOrder = currentDraft?.order ?? currentActive
+    const currentInactive = currentDraft?.inactive ?? []
+    const nextInactive = tags.filter((tag) => inactiveTags.has(tag))
+    if (arraysEqual(tags, currentOrder) && arraysEqual(nextInactive, currentInactive)) return
+
+    const inactiveSet = new Set(nextInactive)
+    const nextActive = tags.filter((tag) => !inactiveSet.has(tag))
+    markKeysEdited([activeKey])
     setCache((prev) => {
-      const next = new Map(prev); next.set(activeKey, [...tags]); return next
+      const next = new Map(prev); next.set(activeKey, nextActive); return next
+    })
+    setPendingTagDrafts((prev) => {
+      const next = new Map(prev)
+      if (nextInactive.length === 0) next.delete(activeKey)
+      else next.set(activeKey, { order: [...tags], inactive: nextInactive })
+      return next
     })
   }
 
   const applyBulkUpdates = (updates: Map<string, string[]>) => {
     if (updates.size === 0) return
-    editRevisionRef.current += 1
-    dirtyRef.current = true
+    markKeysEdited(updates.keys())
     setCache((prev) => {
       const next = new Map(prev)
       for (const [k, v] of updates) next.set(k, v)
+      return next
+    })
+    setPendingTagDrafts((prev) => {
+      const next = new Map(prev)
+      for (const [key, activeTags] of updates) {
+        const draft = next.get(key)
+        if (!draft) continue
+        const activeSet = new Set(activeTags)
+        const oldInactive = new Set(draft.inactive)
+        const retainedInactive = draft.order.filter((tag) => (
+          oldInactive.has(tag) && !activeSet.has(tag)
+        ))
+        if (retainedInactive.length === 0) {
+          next.delete(key)
+        } else {
+          next.set(key, {
+            order: [...activeTags, ...retainedInactive],
+            inactive: retainedInactive,
+          })
+        }
+      }
       return next
     })
   }
@@ -554,6 +610,10 @@ export default function TagEditPage() {
     }
 
     const editRevisionAtSave = editRevisionRef.current
+    const tagRevisionsAtSave = new Map(dirtyKeys.map((key) => [
+      key,
+      tagRevisionByKeyRef.current.get(key) ?? 0,
+    ]))
     const items: CommitItem[] = dirtyKeys.map((k) => {
       const m = meta.get(k)!
       return { folder: m.folder, name: m.name, tags: [...(cache.get(k) ?? [])] }
@@ -570,6 +630,15 @@ export default function TagEditPage() {
       setInitial((prev) => {
         const next = new Map(prev)
         for (const k of writtenKeys) next.set(k, [...(submitted.get(k) ?? [])])
+        return next
+      })
+      setPendingTagDrafts((prev) => {
+        const next = new Map(prev)
+        for (const key of writtenKeys) {
+          if ((tagRevisionByKeyRef.current.get(key) ?? 0) === tagRevisionsAtSave.get(key)) {
+            next.delete(key)
+          }
+        }
         return next
       })
 
@@ -639,6 +708,9 @@ export default function TagEditPage() {
   const activeFolder = activeMeta?.folder ?? ''
   const activeName = activeMeta?.name ?? ''
   const activeTags = activeKey ? cache.get(activeKey) ?? [] : []
+  const activeTagDraft = activeKey ? pendingTagDrafts.get(activeKey) : undefined
+  const activeDisplayTags = activeTagDraft?.order ?? activeTags
+  const activeInactiveTags = new Set(activeTagDraft?.inactive ?? [])
   const activeDirty = activeKey ? dirtyKeySet.has(activeKey) : false
   const activeMaskMtime = activeKey ? maskMtimes.get(activeKey) : undefined
   const activeMaskUrl =
@@ -931,7 +1003,8 @@ export default function TagEditPage() {
               <div className="p-2.5 flex-1 min-h-0 flex flex-col">
                 <TagEditor
                   resetKey={activeKey}
-                  tags={activeTags}
+                  tags={activeDisplayTags}
+                  inactiveTags={activeInactiveTags}
                   onChange={updateActiveTags}
                   showTagCount={false}
                 />

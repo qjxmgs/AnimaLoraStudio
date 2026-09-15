@@ -48,10 +48,12 @@ describe('TagEditor (PP4 chip mode)', () => {
   })
 
   it('renders chips for each tag', () => {
-    render(<TagEditor tags={['a', 'b']} onChange={() => {}} />)
+    const { container } = render(<TagEditor tags={['a', 'b']} onChange={() => {}} />)
     expect(screen.getByText('a')).toBeInTheDocument()
     expect(screen.getByText('b')).toBeInTheDocument()
     expect(screen.getByText('2 个标签')).toBeInTheDocument()
+    expect(container.querySelector('[data-tag-chip="a"]')?.tagName).toBe('BUTTON')
+    expect(screen.queryByLabelText('删除 a')).not.toBeInTheDocument()
   })
 
   it('reorders variable-width chips without strategy-level scaling', () => {
@@ -191,7 +193,10 @@ describe('TagEditor (PP4 chip mode)', () => {
       target: { value: 'a, b,\na' },
     })
 
-    expect(onChange).toHaveBeenLastCalledWith(['a', 'b'])
+    expect(onChange).toHaveBeenLastCalledWith(['a', 'b'], expect.any(Set))
+    expect(Array.from(
+      onChange.mock.calls[onChange.mock.calls.length - 1]?.[1] as Set<string>,
+    )).toEqual([])
     expect(screen.queryByRole('button', { name: '同步' })).not.toBeInTheDocument()
   })
 
@@ -235,7 +240,7 @@ describe('TagEditor (PP4 chip mode)', () => {
     render(<TagEditor tags={['a']} onChange={onChange} />)
     const input = screen.getByPlaceholderText(/添加标签/)
     await user.type(input, 'new{Enter}')
-    expect(onChange).toHaveBeenCalledWith(['a', 'new'])
+    expect(onChange).toHaveBeenCalledWith(['a', 'new'], expect.any(Set))
   })
 
   it('comma also adds a tag', async () => {
@@ -243,15 +248,78 @@ describe('TagEditor (PP4 chip mode)', () => {
     const onChange = vi.fn()
     render(<TagEditor tags={[]} onChange={onChange} />)
     await user.type(screen.getByPlaceholderText(/添加标签/), 'foo,')
-    expect(onChange).toHaveBeenCalledWith(['foo'])
+    expect(onChange).toHaveBeenCalledWith(['foo'], expect.any(Set))
   })
 
-  it('clicking × removes a tag', async () => {
+  it('clicking a chip toggles it between selected colour and inactive grey', async () => {
+    const user = userEvent.setup()
+    function ControlledEditor() {
+      const [tags, setTags] = useState(['a', 'b'])
+      const [inactive, setInactive] = useState<Set<string>>(new Set())
+      return (
+        <TagEditor
+          tags={tags}
+          inactiveTags={inactive}
+          onChange={(nextTags, nextInactive) => {
+            setTags(nextTags)
+            setInactive(new Set(nextInactive))
+          }}
+        />
+      )
+    }
+    const { container } = render(<ControlledEditor />)
+    const chip = container.querySelector<HTMLButtonElement>('[data-tag-chip="a"]')!
+    expect(chip).toHaveAttribute('aria-pressed', 'true')
+
+    await user.click(chip)
+    expect(chip).toHaveAttribute('aria-pressed', 'false')
+    expect(chip).toHaveAttribute('data-tag-inactive', 'true')
+    expect(chip.style.color).toBe('var(--tag-inactive-fg)')
+    expect(chip.style.backgroundColor).toBe('var(--tag-inactive-bg)')
+    expect(chip.style.borderColor).toBe('var(--tag-inactive-border)')
+    expect(screen.getByText('1 个标签')).toBeInTheDocument()
+
+    await user.click(chip)
+    expect(chip).toHaveAttribute('aria-pressed', 'true')
+    expect(chip).toHaveAttribute('data-tag-inactive', 'false')
+    expect(screen.getByText('2 个标签')).toBeInTheDocument()
+  })
+
+  it('reactivates an inactive duplicate from the add input without adding another chip', async () => {
     const user = userEvent.setup()
     const onChange = vi.fn()
-    render(<TagEditor tags={['a', 'b']} onChange={onChange} />)
-    await user.click(screen.getByLabelText('删除 a'))
-    expect(onChange).toHaveBeenCalledWith(['b'])
+    const { container } = render(
+      <TagEditor tags={['a', 'b']} inactiveTags={new Set(['b'])} onChange={onChange} />,
+    )
+    await user.type(screen.getByPlaceholderText(/添加标签/), 'b{Enter}')
+
+    expect(onChange).toHaveBeenCalledWith(['a', 'b'], expect.any(Set))
+    expect(Array.from(
+      onChange.mock.calls[onChange.mock.calls.length - 1]?.[1] as Set<string>,
+    )).toEqual([])
+    expect(container.querySelectorAll('[data-tag-chip="b"]')).toHaveLength(1)
+  })
+
+  it('shows only selected tags in text mode and retains omitted tags as inactive chips', async () => {
+    const user = userEvent.setup()
+    const onChange = vi.fn()
+    const { rerender } = render(
+      <TagEditor tags={['a', 'b', 'c']} inactiveTags={new Set(['b'])} onChange={onChange} />,
+    )
+    await user.click(screen.getByText('文本'))
+    const input = screen.getByRole('textbox', { name: '以文本编辑标签' })
+    expect(input).toHaveValue('a, c')
+
+    fireEvent.change(input, { target: { value: 'c, b' } })
+    expect(onChange).toHaveBeenLastCalledWith(['c', 'b', 'a'], expect.any(Set))
+    expect(Array.from(
+      onChange.mock.calls[onChange.mock.calls.length - 1]?.[1] as Set<string>,
+    )).toEqual(['a'])
+
+    rerender(
+      <TagEditor tags={['c', 'b', 'a']} inactiveTags={new Set(['a'])} onChange={onChange} />,
+    )
+    expect(input).toHaveValue('c, b')
   })
 
   it('refuses duplicates silently', async () => {
@@ -274,7 +342,9 @@ describe('TagEditor (PP4 chip mode)', () => {
   // not, so running more click-driven cases afterwards would be misleading.
   it('keeps the DOM still during drag, marks the gap, then commits once on drop', async () => {
     const onChange = vi.fn()
-    const { container } = render(<TagEditor tags={['a', 'b', 'c']} onChange={onChange} />)
+    const { container } = render(
+      <TagEditor tags={['a', 'b', 'c']} inactiveTags={new Set(['a'])} onChange={onChange} />,
+    )
     const list = container.querySelector('[data-tag-chip]')!.parentElement!
     vi.spyOn(list, 'getBoundingClientRect').mockReturnValue(rect(0, 0, 400, 160))
     const chips = Array.from(container.querySelectorAll<HTMLElement>('[data-tag-chip]'))
@@ -323,7 +393,16 @@ describe('TagEditor (PP4 chip mode)', () => {
     fireEvent.pointerUp(document, {
       button: 0, clientX: 201, clientY: 20, pointerId: 1, isPrimary: true,
     })
-    await waitFor(() => expect(onChange).toHaveBeenCalledWith(['b', 'c', 'a']))
+    // The click synthesized from the same pointer gesture must not reactivate
+    // the inactive chip after the reorder completes.
+    fireEvent.click(chips[0])
+    await waitFor(() => expect(onChange).toHaveBeenCalledWith(
+      ['b', 'c', 'a'],
+      expect.any(Set),
+    ))
+    expect(Array.from(
+      onChange.mock.calls[onChange.mock.calls.length - 1]?.[1] as Set<string>,
+    )).toEqual(['a'])
     expect(onChange).toHaveBeenCalledTimes(1)
   })
 })
