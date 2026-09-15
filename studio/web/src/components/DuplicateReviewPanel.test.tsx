@@ -49,5 +49,28 @@ describe('DuplicateReviewPanel image selection', () => {
     expect(removePreview?.querySelector('.ui-image-selection-frame')).toBeInTheDocument()
     expect(keepPreview?.parentElement).toHaveClass('border-ok')
     expect(removePreview?.parentElement).toHaveClass('border-warn')
+    expect(removePreview?.querySelector('.ui-image-selection-frame')).not.toHaveClass(
+      'ui-image-selection-frame-static',
+    )
+  })
+
+  it('uses static RGB frames when multiple removal candidates are selected', () => {
+    render(
+      <DuplicateReviewPanel
+        projectId={1}
+        versionId={2}
+        result={result}
+        selected={new Set(['1_data/keep.png', '1_data/remove.png'])}
+        busy={false}
+        onSelect={vi.fn()}
+        onPreview={vi.fn()}
+      />
+    )
+
+    const frames = document.querySelectorAll('.ui-image-selection-frame')
+    expect(frames).toHaveLength(2)
+    frames.forEach((frame) => {
+      expect(frame).toHaveClass('ui-image-selection-frame-static')
+    })
   })
 })

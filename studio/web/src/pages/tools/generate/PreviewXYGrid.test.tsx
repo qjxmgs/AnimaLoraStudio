@@ -101,7 +101,7 @@ describe('PreviewXYGrid', () => {
 
   it('highlights selected cells via selectedIndices', () => {
     const samples = [makeSample(0, 0, 20, null), makeSample(1, 0, 25, null)]
-    render(
+    const { rerender } = render(
       <PreviewXYGrid
         samples={samples}
         taskId={99}
@@ -113,6 +113,21 @@ describe('PreviewXYGrid', () => {
     const buttons = screen.getAllByRole('img').map((img) => img.closest('button'))
     expect(buttons[0]?.querySelector('.ui-image-selection-frame')).toBeInTheDocument()
     expect(buttons[1]?.querySelector('.ui-image-selection-frame')).not.toBeInTheDocument()
+
+    rerender(
+      <PreviewXYGrid
+        samples={samples}
+        taskId={99}
+        xAxis={xAxis}
+        yAxis={null}
+        selectedIndices={[0, 1]}
+      />
+    )
+    const selectedFrames = document.querySelectorAll('.ui-image-selection-frame')
+    expect(selectedFrames).toHaveLength(2)
+    selectedFrames.forEach((frame) => {
+      expect(frame).toHaveClass('ui-image-selection-frame-static')
+    })
   })
 
   it('navigates fullscreen cells with arrow keys', async () => {

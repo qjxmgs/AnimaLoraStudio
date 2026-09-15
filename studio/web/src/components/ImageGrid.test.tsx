@@ -126,6 +126,12 @@ describe('ImageGrid (PP3)', () => {
     expect(cells[1].querySelectorAll('.ui-image-selection-frame')).toHaveLength(1)
     expect(cells[1]).toHaveAttribute('aria-selected', 'true')
     expect(cells[2].querySelector('.ui-image-selection-frame')).toBeNull()
+    expect(cells[0].querySelector('.ui-image-selection-frame')).toHaveClass(
+      'ui-image-selection-frame-static',
+    )
+    expect(cells[1].querySelector('.ui-image-selection-frame')).toHaveClass(
+      'ui-image-selection-frame-static',
+    )
 
     rerender(
       <ImageGrid
@@ -137,6 +143,26 @@ describe('ImageGrid (PP3)', () => {
     )
     cells = screen.getAllByRole('gridcell')
     expect(cells[1].querySelectorAll('.ui-image-selection-frame')).toHaveLength(1)
+    expect(cells[1].querySelector('.ui-image-selection-frame')).not.toHaveClass(
+      'ui-image-selection-frame-static',
+    )
+
+    rerender(
+      <ImageGrid
+        items={items}
+        selected={new Set(['a.png', 'b.png'])}
+        activeName="b.png"
+        onSelect={() => {}}
+      />
+    )
+    cells = screen.getAllByRole('gridcell')
+    expect(cells[1].querySelectorAll('.ui-image-selection-frame')).toHaveLength(1)
+    expect(cells[0].querySelector('.ui-image-selection-frame')).toHaveClass(
+      'ui-image-selection-frame-static',
+    )
+    expect(cells[1].querySelector('.ui-image-selection-frame')).toHaveClass(
+      'ui-image-selection-frame-static',
+    )
   })
 
   it('keeps the height chain on the grid while applying inset inside the Virtuoso scrollport', () => {

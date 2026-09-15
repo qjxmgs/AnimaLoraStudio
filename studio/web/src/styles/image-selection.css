@@ -7,6 +7,15 @@
  * without composite mask support.
  */
 .ui-image-selection-frame {
+  --ui-image-selection-rgb: conic-gradient(
+    #ff3040 0deg,
+    #ffd500 60deg,
+    #34d058 120deg,
+    #22d3ee 180deg,
+    #3b82f6 240deg,
+    #d946ef 300deg,
+    #ff3040 360deg
+  );
   position: absolute;
   inset: 0;
   z-index: 2;
@@ -42,18 +51,24 @@
     display: block;
     width: 300%;
     height: 300%;
-    background: conic-gradient(
-      #ff3040 0deg,
-      #ffd500 60deg,
-      #34d058 120deg,
-      #22d3ee 180deg,
-      #3b82f6 240deg,
-      #d946ef 300deg,
-      #ff3040 360deg
-    );
+    background: var(--ui-image-selection-rgb);
     transform: translate(-50%, -50%) rotate(0turn);
     animation: ui-image-selection-chase 2.2s linear infinite;
     will-change: transform;
+  }
+
+  /* Multi-select can produce hundreds of frames. Paint the same RGB gradient
+   * directly on the masked frame so no transform animation or promoted layer
+   * is created for those thumbnails. */
+  .ui-image-selection-frame-static {
+    background: var(--ui-image-selection-rgb);
+  }
+
+  .ui-image-selection-frame-static .ui-image-selection-frame-gradient {
+    display: none;
+    animation: none;
+    transform: none;
+    will-change: auto;
   }
 }
 

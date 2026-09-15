@@ -214,6 +214,7 @@ export default function PreviewXYGrid({
   }, [cellIndex, fullscreenIdx, samples])
 
   const selSet = new Set(selectedIndices ?? [])
+  const animateSelectionFrame = selSet.size <= 1
 
   // grid 列：固定 cellW（zoom 调它），yDraft 时左侧多一列 axis label。
   // 用 ${cellW}px 而非 minmax(MIN, 1fr) —— 后者在容器宽时按 1fr 均分，
@@ -296,6 +297,7 @@ export default function PreviewXYGrid({
               samples={samples}
               taskId={taskId}
               selSet={selSet}
+              animateSelectionFrame={animateSelectionFrame}
               onCellClick={onCellClick}
               onCellDoubleClick={(idx) => setFullscreenIdx(idx)}
             />
@@ -346,7 +348,7 @@ export default function PreviewXYGrid({
 
 function Row({
   yi, yv, xValues, xAxis, yAxis, cellIndex, samples, taskId, selSet,
-  onCellClick, onCellDoubleClick,
+  animateSelectionFrame, onCellClick, onCellDoubleClick,
 }: {
   yi: number
   yv: string | null
@@ -357,6 +359,7 @@ function Row({
   samples: XYSample[]
   taskId: number
   selSet: Set<number>
+  animateSelectionFrame: boolean
   onCellClick?: (sampleIdx: number) => void
   onCellDoubleClick?: (sampleIdx: number) => void
 }) {
@@ -390,6 +393,7 @@ function Row({
             imageUrl={sample?.imageUrl}
             sampleIdx={idx ?? null}
             isSelected={isSel}
+            animateSelectionFrame={animateSelectionFrame}
             tooltip={tooltip}
             onClick={onCellClick}
             onDoubleClick={onCellDoubleClick}
@@ -401,7 +405,8 @@ function Row({
 }
 
 function GridCell({
-  taskId, filename, imageUrl, sampleIdx, isSelected, tooltip, onClick, onDoubleClick,
+  taskId, filename, imageUrl, sampleIdx, isSelected, animateSelectionFrame,
+  tooltip, onClick, onDoubleClick,
 }: {
   taskId: number
   filename: string | null
@@ -409,6 +414,7 @@ function GridCell({
   imageUrl?: string
   sampleIdx: number | null
   isSelected: boolean
+  animateSelectionFrame: boolean
   tooltip: string
   onClick?: (idx: number) => void
   onDoubleClick?: (idx: number) => void
@@ -462,7 +468,7 @@ function GridCell({
         onError={() => setErrored(true)}
         onLoad={() => setErrored(false)}
       />
-      {isSelected && <ImageSelectionFrame />}
+      {isSelected && <ImageSelectionFrame animated={animateSelectionFrame} />}
     </button>
   )
 }

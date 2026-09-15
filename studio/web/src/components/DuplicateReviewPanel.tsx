@@ -117,6 +117,7 @@ export default function DuplicateReviewPanel({
                 versionId={versionId}
                 group={group}
                 selected={selected}
+                animateSelectionFrame={selected.size <= 1}
                 busy={busy}
                 onToggle={toggleName}
                 onPreview={onPreview}
@@ -134,6 +135,7 @@ function DuplicateGroupCard({
   versionId,
   group,
   selected,
+  animateSelectionFrame,
   busy,
   onToggle,
   onPreview,
@@ -142,6 +144,7 @@ function DuplicateGroupCard({
   versionId: number
   group: DuplicateGroup
   selected: Set<string>
+  animateSelectionFrame: boolean
   busy: boolean
   onToggle: (name: string) => void
   onPreview: (name: string) => void
@@ -169,6 +172,7 @@ function DuplicateGroupCard({
             versionId={versionId}
             item={item}
             selected={selected.has(item.name)}
+            animateSelectionFrame={animateSelectionFrame}
             suggestedKeep={item.keep}
             busy={busy}
             onToggle={() => onToggle(item.name)}
@@ -185,6 +189,7 @@ function DuplicateItemCell({
   versionId,
   item,
   selected,
+  animateSelectionFrame,
   suggestedKeep,
   busy,
   onToggle,
@@ -194,6 +199,7 @@ function DuplicateItemCell({
   versionId: number
   item: DuplicateItem
   selected: boolean
+  animateSelectionFrame: boolean
   suggestedKeep: boolean
   busy: boolean
   onToggle: () => void
@@ -227,7 +233,7 @@ function DuplicateItemCell({
             />
           )
         })()}
-        {selected && <ImageSelectionFrame />}
+        {selected && <ImageSelectionFrame animated={animateSelectionFrame} />}
       </button>
       <div className="p-1.5 flex flex-col gap-1 text-[11px]">
         <div className="flex items-center gap-1 min-w-0 flex-wrap">

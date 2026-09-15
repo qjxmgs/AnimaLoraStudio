@@ -197,6 +197,10 @@ export default function ImageGrid({
     )
   }
   const decoupled = activeName !== undefined
+  const hasDistinctActiveFrame =
+    activeIndex >= 0 && activeName != null && !selected.has(activeName)
+  const framedSelectionCount = selected.size + (hasDistinctActiveFrame ? 1 : 0)
+  const animateSelectionFrame = framedSelectionCount <= 1
 
   // role="grid" + aria-label 放在外层 wrapper：VirtuosoGrid 内部 List/Item 包多
   // 层 div（scroller/list/item），role 直接挂内层会被 Virtuoso 改写 className/
@@ -226,6 +230,7 @@ export default function ImageGrid({
               item={it}
               selected={isSel}
               borderHighlight={borderHighlight}
+              animateSelectionFrame={animateSelectionFrame}
               onSelect={onSelect}
               onHover={onHover}
               onPreview={onPreview}
@@ -245,11 +250,13 @@ export default function ImageGrid({
  *
  * `borderHighlight` 标识当前活跃项，跟 `selected`（checkbox 状态）解耦。
  * RGB frame 对两种状态取并集：TagEdit 等解耦路径上，当前图和批量选中图都
- * 清晰可见，两者重合时仍只渲染一层。 */
+ * 清晰可见，两者重合时仍只渲染一层。批量选择超过一张时统一切换为静态
+ * RGB，避免每个可见缩略图都维持独立的合成动画。 */
 const Cell = memo(function Cell({
   item,
   selected,
   borderHighlight,
+  animateSelectionFrame,
   onSelect,
   onHover,
   onPreview,
@@ -259,6 +266,7 @@ const Cell = memo(function Cell({
   item: ImageGridItem
   selected: boolean
   borderHighlight: boolean
+  animateSelectionFrame: boolean
   onSelect: (name: string, e: React.MouseEvent) => void
   onHover?: (name: string) => void
   onPreview?: (name: string) => void
@@ -346,7 +354,9 @@ const Cell = memo(function Cell({
           (loaded ? 'opacity-100' : 'opacity-0')
         }
       />
-      {(selected || borderHighlight) && <ImageSelectionFrame />}
+      {(selected || borderHighlight) && (
+        <ImageSelectionFrame animated={animateSelectionFrame} />
+      )}
       <button
         type="button"
         onClick={handleSelectionClick}

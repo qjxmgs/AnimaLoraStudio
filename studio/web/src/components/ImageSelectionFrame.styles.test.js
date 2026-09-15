@@ -24,3 +24,15 @@ it('defines a transform-only RGB chase with a reduced-motion fallback', () => {
   expect(reducedMotion).toContain('animation: none')
   expect(reducedMotion).toContain('will-change: auto')
 })
+
+it('uses a non-animated RGB paint for multi-selection frames', () => {
+  const staticFrame = styles.match(/\.ui-image-selection-frame-static\s*\{([^}]*)\}/m)?.[1]
+  const staticGradient = styles.match(
+    /\.ui-image-selection-frame-static \.ui-image-selection-frame-gradient\s*\{([^}]*)\}/m,
+  )?.[1]
+
+  expect(staticFrame).toContain('background: var(--ui-image-selection-rgb)')
+  expect(staticGradient).toContain('display: none')
+  expect(staticGradient).toContain('animation: none')
+  expect(staticGradient).toContain('will-change: auto')
+})
