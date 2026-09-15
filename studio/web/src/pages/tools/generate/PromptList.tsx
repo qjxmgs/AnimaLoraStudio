@@ -55,9 +55,7 @@ export default function PromptList({
         value={value}
         onChange={(e) => { onChange([e.target.value]); suggest.notifyChange() }}
         onKeyDown={(e) => { suggest.handleKeyDown(e) }}
-        onKeyUp={() => suggest.notifySelect()}
         onClick={() => suggest.notifyClick()}
-        onFocus={() => suggest.notifyFocus()}
         onBlur={() => suggest.notifyBlur()}
         placeholder={placeholder ?? t('generate.positivePlaceholder')}
         aria-label={ariaLabel}
@@ -69,13 +67,12 @@ export default function PromptList({
       )}
       <TagSuggestList
         open={suggest.open}
+        pending={suggest.pending}
         suggestions={suggest.suggestions}
         activeIdx={suggest.activeIdx}
         onPick={(s) => suggest.pickAt(suggest.suggestions.indexOf(s))}
         onHover={suggest.setActiveIdx}
         inputRef={taRef}
-        cursor={suggest.cursor}
-        positionDeps={[value]}
       />
     </div>
   )

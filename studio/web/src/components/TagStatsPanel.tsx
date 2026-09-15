@@ -277,7 +277,6 @@ function EditTagInput({ tag, editInputRef, value, setValue, onCommit, onCancel }
           else if (e.key === 'Escape') onCancel()
         }}
         onClick={() => suggest.notifyClick()}
-        onFocus={() => suggest.notifyFocus()}
         onBlur={() => { suggest.notifyBlur(); onCancel() }}
         aria-label={t('tagStats.replaceInputLabel', { tag })}
         controlSize="sm"
@@ -286,13 +285,12 @@ function EditTagInput({ tag, editInputRef, value, setValue, onCommit, onCancel }
       />
       <TagSuggestList
         open={suggest.open}
+        pending={suggest.pending}
         suggestions={suggest.suggestions}
         activeIdx={suggest.activeIdx}
         onPick={(s) => suggest.pickAt(suggest.suggestions.indexOf(s))}
         onHover={suggest.setActiveIdx}
         inputRef={editInputRef}
-        cursor={suggest.cursor}
-        positionDeps={[value]}
       />
     </div>
   )

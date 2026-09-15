@@ -3,8 +3,8 @@
  * 设计原则：hook 不修改用户的 value，仅在用户选中候选时回调 `onPick`。
  * caller 决定怎么落进数据（替换 token range / 推到 tags 数组 / append）。
  *
- * 弹出规则：候选只在输入变化（notifyChange）后弹出；聚焦 / 鼠标点击移动光标
- * 不弹，点击还会关掉已弹出的候选。全局开关（Settings「Tag 翻译词典」区）关掉
+ * 弹出规则：候选只在输入变化（notifyChange）后弹出；聚焦不弹，鼠标点击
+ * 输入框会关掉已弹出的候选。全局开关（Settings「Tag 翻译词典」区）关掉
  * 后所有入口都不弹。
  *
  * Token 模式：
@@ -48,24 +48,20 @@ interface Args {
 
 export interface TagSuggestApi {
   open: boolean
+  /** 防抖查询尚未完成；上一批候选仅保留视觉，不允许提交。 */
+  pending: boolean
   suggestions: TagSuggestion[]
   activeIdx: number
   setActiveIdx: (i: number) => void
   setOpen: (open: boolean) => void
-  /** 当前 caret 位置（state）；传给 TagSuggestList 让它做 positionDep。 */
-  cursor: number
   /** 在 input 的 onKeyDown 里第一句调；返回 true 表示已处理（caller 应 return）。 */
   handleKeyDown: (e: React.KeyboardEvent) => boolean
-  /** 在 input 的 onChange 里调（cursor 跟踪 + 自动 open）。唯一的弹出入口。 */
+  /** 在 input 的 onChange 里调（防抖搜索 + 自动 open）。唯一的弹出入口。 */
   notifyChange: () => void
-  /** 在 input 的 onFocus 里调（只跟踪 cursor，不弹候选）。 */
-  notifyFocus: () => void
   /** 在 input 的 onBlur 里调（延迟关闭，给点击留时间）。 */
   notifyBlur: () => void
   /** 在 input 的 onClick 里调：鼠标点击移动光标 → 关掉已弹出的候选。 */
   notifyClick: () => void
-  /** 在 input 的 onKeyUp 里调（键盘移动光标时跟踪 cursor）。 */
-  notifySelect: () => void
   /** 鼠标点选 / 程序触发用。 */
   pickAt: (i: number) => void
 }
@@ -77,8 +73,8 @@ export function useTagSuggest({
   const [acEnabled] = useTagAutocompleteEnabled()
   const off = disabled || !acEnabled
   const [open, setOpen] = useState(false)
+  const [pending, setPending] = useState(false)
   const [activeIdx, setActiveIdx] = useState(0)
-  const [cursor, setCursor] = useState(0)
   const blurTimersRef = useRef(new Set<ReturnType<typeof setTimeout>>())
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const latestValueRef = useRef(value)
@@ -103,6 +99,7 @@ export function useTagSuggest({
   useEffect(() => {
     if (!off) return
     cancelPendingSearch()
+    setPending(false)
     setReadyQuery(null)
     setOpen(false)
   }, [off, cancelPendingSearch])
@@ -126,24 +123,24 @@ export function useTagSuggest({
   const sugKey = suggestions.map((s) => s.tag).join('|')
   useEffect(() => { setActiveIdx(0) }, [sugKey])
 
-  const syncCursor = () => {
-    const el = inputRef.current
-    if (!el) return
-    setCursor(el.selectionStart ?? el.value.length)
-  }
-
   const pickAt = (i: number) => {
+    if (pending) return
     const s = suggestions[i]
     if (!s || !readyQuery) return
     onPick({ suggestion: s, range: { start: readyQuery.start, end: readyQuery.end } })
     cancelPendingSearch()
+    setPending(false)
     setReadyQuery(null)
     setOpen(false)
   }
 
   const handleKeyDown = (e: React.KeyboardEvent): boolean => {
     if (off) return false
-    if (!open || suggestions.length === 0) return false
+    if (e.key === 'Escape' && open) {
+      e.preventDefault(); e.stopPropagation()
+      cancelPendingSearch(); setPending(false); setReadyQuery(null); setOpen(false); return true
+    }
+    if (pending || !open || suggestions.length === 0) return false
     if (e.key === 'ArrowDown') {
       e.preventDefault(); setActiveIdx((activeIdx + 1) % suggestions.length); return true
     }
@@ -154,33 +151,30 @@ export function useTagSuggest({
     if (e.key === 'Enter' || e.key === 'Tab') {
       e.preventDefault(); pickAt(activeIdx); return true
     }
-    if (e.key === 'Escape') {
-      e.preventDefault(); e.stopPropagation()
-      cancelPendingSearch(); setReadyQuery(null); setOpen(false); return true
-    }
     return false
   }
 
   return {
-    open, suggestions, activeIdx, setActiveIdx,
+    open, pending, suggestions, activeIdx, setActiveIdx,
     setOpen: (nextOpen) => {
       if (!nextOpen) {
         cancelPendingSearch()
+        setPending(false)
         setReadyQuery(null)
       }
       setOpen(nextOpen)
     },
-    cursor,
     handleKeyDown,
     notifyChange: () => {
-      syncCursor()
       cancelPendingSearch()
       setReadyQuery(null)
       if (off) {
+        setPending(false)
         setOpen(false)
         return
       }
-      // 旧候选立即失效；仅在用户停止输入 40ms 后搜索最后一个 token。
+      // Hook 中的旧候选立即失效；浮层在 pending 时只保留其视觉副本且不可操作。
+      setPending(true)
       setOpen(true)
       searchTimerRef.current = setTimeout(() => {
         searchTimerRef.current = null
@@ -193,14 +187,14 @@ export function useTagSuggest({
             ? extractWhitespaceToken(currentValue, currentCursor)
             : extractCurrentToken(currentValue, currentCursor)
         setReadyQuery({ ...nextToken, value: currentValue })
+        setPending(false)
         if (!nextToken.token) setOpen(false)
       }, TAG_SUGGESTION_DEBOUNCE_MS)
     },
-    // focus 只跟踪 cursor：候选只在输入变化后弹出，点进 prompt 中间不该弹
-    notifyFocus: () => { syncCursor() },
     // 120ms 延迟：给 onMouseDown(pick) 时间完成；卸载时取消尚未执行的回调。
     notifyBlur: () => {
       cancelPendingSearch()
+      setPending(false)
       const timer = setTimeout(() => {
         blurTimersRef.current.delete(timer)
         setOpen(false)
@@ -209,9 +203,8 @@ export function useTagSuggest({
     },
     // 鼠标点击 = 用户在挪光标，不是在补全 → 关掉候选
     notifyClick: () => {
-      syncCursor(); cancelPendingSearch(); setReadyQuery(null); setOpen(false)
+      cancelPendingSearch(); setPending(false); setReadyQuery(null); setOpen(false)
     },
-    notifySelect: () => { syncCursor() },
     pickAt,
   }
 }

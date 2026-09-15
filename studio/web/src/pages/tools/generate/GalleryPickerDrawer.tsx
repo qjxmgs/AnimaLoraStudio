@@ -383,9 +383,7 @@ const GalleryPickerDrawer = forwardRef<GalleryPickerDrawerHandle, GalleryPickerD
               disabled={tagging}
               onChange={(event) => { setQuery(event.target.value); searchSuggest.notifyChange() }}
               onKeyDown={(event) => { searchSuggest.handleKeyDown(event) }}
-              onKeyUp={() => searchSuggest.notifySelect()}
               onClick={() => searchSuggest.notifyClick()}
-              onFocus={() => searchSuggest.notifyFocus()}
               onBlur={() => searchSuggest.notifyBlur()}
               placeholder={t('generate.gallerySearchPlaceholder')}
               aria-label={t('generate.gallerySearch')}
@@ -401,13 +399,12 @@ const GalleryPickerDrawer = forwardRef<GalleryPickerDrawerHandle, GalleryPickerD
             <TagSuggestList
               id={SEARCH_SUGGESTIONS_ID}
               open={searchSuggest.open}
+              pending={searchSuggest.pending}
               suggestions={searchSuggest.suggestions}
               activeIdx={searchSuggest.activeIdx}
               onPick={(suggestion) => searchSuggest.pickAt(searchSuggest.suggestions.indexOf(suggestion))}
               onHover={searchSuggest.setActiveIdx}
               inputRef={searchInputRef}
-              cursor={searchSuggest.cursor}
-              positionDeps={[query]}
             />
           </div>
 

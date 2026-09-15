@@ -59,20 +59,17 @@ function Harness({ initial = '' }: { initial?: string }) {
         value={value}
         onChange={(e) => { setValue(e.target.value); suggest.notifyChange() }}
         onKeyDown={(e) => { suggest.handleKeyDown(e) }}
-        onKeyUp={() => suggest.notifySelect()}
         onClick={() => suggest.notifyClick()}
-        onFocus={() => suggest.notifyFocus()}
         onBlur={() => suggest.notifyBlur()}
       />
       <TagSuggestList
         open={suggest.open}
+        pending={suggest.pending}
         suggestions={suggest.suggestions}
         activeIdx={suggest.activeIdx}
         onPick={(s) => suggest.pickAt(suggest.suggestions.indexOf(s))}
         onHover={suggest.setActiveIdx}
         inputRef={inputRef}
-        cursor={suggest.cursor}
-        positionDeps={[value]}
       />
     </div>
   )
@@ -246,13 +243,15 @@ describe('useTagSuggest search debounce', () => {
     act(() => { result.current.notifyChange() })
 
     act(() => { vi.advanceTimersByTime(TAG_SUGGESTION_DEBOUNCE_MS - 1) })
+    expect(result.current.pending).toBe(true)
     expect(result.current.suggestions).toEqual([])
     act(() => { vi.advanceTimersByTime(1) })
+    expect(result.current.pending).toBe(false)
     expect(result.current.suggestions.map(({ tag }) => tag)).toEqual(['solo'])
     expect(vi.getTimerCount()).toBe(0)
   })
 
-  it('hides stale candidates immediately so keyboard cannot select them', () => {
+  it('marks stale candidates pending so keyboard cannot select them', () => {
     const { result, rerender, onPick } = renderDebounced('sol')
     act(() => { result.current.notifyChange() })
     act(() => { vi.advanceTimersByTime(TAG_SUGGESTION_DEBOUNCE_MS) })
@@ -260,6 +259,7 @@ describe('useTagSuggest search debounce', () => {
 
     rerender({ value: 'long' })
     act(() => { result.current.notifyChange() })
+    expect(result.current.pending).toBe(true)
     expect(result.current.suggestions).toEqual([])
     expect(result.current.handleKeyDown({ key: 'Enter' } as React.KeyboardEvent)).toBe(false)
     expect(onPick).not.toHaveBeenCalled()
@@ -270,11 +270,31 @@ describe('useTagSuggest search debounce', () => {
     act(() => { result.current.notifyChange() })
     expect(vi.getTimerCount()).toBe(1)
     act(() => { result.current.setOpen(false) })
+    expect(result.current.pending).toBe(false)
     expect(vi.getTimerCount()).toBe(0)
 
     act(() => { result.current.notifyChange() })
     expect(vi.getTimerCount()).toBe(1)
     unmount()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('Escape closes the list and cancels a pending search', () => {
+    const { result } = renderDebounced('sol')
+    act(() => { result.current.notifyChange() })
+    const event = {
+      key: 'Escape',
+      preventDefault: vi.fn(),
+      stopPropagation: vi.fn(),
+    } as unknown as React.KeyboardEvent
+
+    let handled = false
+    act(() => { handled = result.current.handleKeyDown(event) })
+    expect(handled).toBe(true)
+    expect(event.preventDefault).toHaveBeenCalledOnce()
+    expect(event.stopPropagation).toHaveBeenCalledOnce()
+    expect(result.current.open).toBe(false)
+    expect(result.current.pending).toBe(false)
     expect(vi.getTimerCount()).toBe(0)
   })
 })

@@ -1678,19 +1678,17 @@ export function ExcludeTags({
               }
             }}
             onClick={() => suggest.notifyClick()}
-            onFocus={() => suggest.notifyFocus()}
             onBlur={() => suggest.notifyBlur()}
             placeholder={t('reg.excludePlaceholder')}
           />
           <TagSuggestList
             open={suggest.open}
+            pending={suggest.pending}
             suggestions={suggest.suggestions}
             activeIdx={suggest.activeIdx}
             onPick={(s) => suggest.pickAt(suggest.suggestions.indexOf(s))}
             onHover={suggest.setActiveIdx}
             inputRef={inputRef}
-            cursor={suggest.cursor}
-            positionDeps={[draft]}
           />
         </div>
         <Button

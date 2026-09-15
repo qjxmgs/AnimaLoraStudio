@@ -639,7 +639,6 @@ export default function TagEditor({
                         }
                       }}
                       onClick={() => draftSuggest.notifyClick()}
-                      onFocus={() => draftSuggest.notifyFocus()}
                       onBlur={() => draftSuggest.notifyBlur()}
                       placeholder={t('tagEditor.addPlaceholder')}
                       aria-label={t('tagEditor.addInputLabel')}
@@ -649,13 +648,12 @@ export default function TagEditor({
                     />
                     <TagSuggestList
                       open={draftSuggest.open}
+                      pending={draftSuggest.pending}
                       suggestions={draftSuggest.suggestions}
                       activeIdx={draftSuggest.activeIdx}
                       onPick={(s) => draftSuggest.pickAt(draftSuggest.suggestions.indexOf(s))}
                       onHover={draftSuggest.setActiveIdx}
                       inputRef={draftInputRef}
-                      cursor={draftSuggest.cursor}
-                      positionDeps={[draft]}
                     />
                   </div>
                   {onSave && (
@@ -702,9 +700,7 @@ export default function TagEditor({
               value={textBuf}
               onChange={(e) => { updateText(e.target.value); textSuggest.notifyChange() }}
               onKeyDown={(e) => { textSuggest.handleKeyDown(e) }}
-              onKeyUp={() => textSuggest.notifySelect()}
               onClick={() => textSuggest.notifyClick()}
-              onFocus={() => textSuggest.notifyFocus()}
               onBlur={() => { textSuggest.notifyBlur() }}
               placeholder={t('tagEditor.textPlaceholder')}
               aria-label={t('tagEditor.textInputLabel')}
@@ -714,13 +710,12 @@ export default function TagEditor({
             />
             <TagSuggestList
               open={textSuggest.open}
+              pending={textSuggest.pending}
               suggestions={textSuggest.suggestions}
               activeIdx={textSuggest.activeIdx}
               onPick={(s) => textSuggest.pickAt(textSuggest.suggestions.indexOf(s))}
               onHover={textSuggest.setActiveIdx}
               inputRef={textareaRef}
-              cursor={textSuggest.cursor}
-              positionDeps={[textBuf]}
             />
           </div>
           {customTagPalette}

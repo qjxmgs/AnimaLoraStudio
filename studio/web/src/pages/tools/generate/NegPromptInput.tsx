@@ -40,9 +40,7 @@ export default function NegPromptInput({ value, onChange, modelFamily = 'anima' 
         value={value}
         onChange={(e) => { onChange(e.target.value); suggest.notifyChange() }}
         onKeyDown={(e) => { suggest.handleKeyDown(e) }}
-        onKeyUp={() => suggest.notifySelect()}
         onClick={() => suggest.notifyClick()}
-        onFocus={() => suggest.notifyFocus()}
         onBlur={() => suggest.notifyBlur()}
       />
       {tokenCount != null && (
@@ -52,13 +50,12 @@ export default function NegPromptInput({ value, onChange, modelFamily = 'anima' 
       )}
       <TagSuggestList
         open={suggest.open}
+        pending={suggest.pending}
         suggestions={suggest.suggestions}
         activeIdx={suggest.activeIdx}
         onPick={(s) => suggest.pickAt(suggest.suggestions.indexOf(s))}
         onHover={suggest.setActiveIdx}
         inputRef={taRef}
-        cursor={suggest.cursor}
-        positionDeps={[value]}
       />
     </div>
   )

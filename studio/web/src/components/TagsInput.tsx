@@ -85,9 +85,7 @@ export function TagListInput({ value, onChange, placeholder, disabled, className
             suggest.notifyChange()
           }}
           onKeyDown={(e) => { suggest.handleKeyDown(e) }}
-          onKeyUp={() => { suggest.notifySelect() }}
           onClick={() => { suggest.notifyClick() }}
-          onFocus={() => { suggest.notifyFocus() }}
           onBlur={() => {
             suggest.notifyBlur()
             // blur 归整：下划线→空格（跟训练 caption 同形，后端匹配也已 _/空格不敏感），
@@ -105,13 +103,12 @@ export function TagListInput({ value, onChange, placeholder, disabled, className
         />
         <TagSuggestList
           open={suggest.open}
+          pending={suggest.pending}
           suggestions={suggest.suggestions}
           activeIdx={suggest.activeIdx}
           onPick={(s) => suggest.pickAt(suggest.suggestions.indexOf(s))}
           onHover={suggest.setActiveIdx}
           inputRef={inputRef}
-          cursor={suggest.cursor}
-          positionDeps={[text]}
         />
       </div>
     )
