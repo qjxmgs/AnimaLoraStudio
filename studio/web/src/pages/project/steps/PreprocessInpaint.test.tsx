@@ -75,11 +75,11 @@ const image: CropWorkspaceItem = {
   mtime: 1, size: 100, processed: false, mask_mtime: null,
 }
 
-function renderPage() {
+function renderPage(projectId = 1) {
   return render(
     <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }} initialEntries={['/inpaint']}>
       <Routes>
-        <Route element={<Outlet context={{ project: { id: 1 }, activeVersion: { id: 2 }, reload: mocks.reload }} />}>
+        <Route element={<Outlet context={{ project: { id: projectId }, activeVersion: { id: 2 }, reload: mocks.reload }} />}>
           <Route path="/inpaint" element={<PreprocessInpaintPage />} />
         </Route>
       </Routes>
@@ -135,6 +135,27 @@ describe('Preprocess inpaint contracts', () => {
       hardness: 0.35,
     })
     expect(screen.getByRole('button', { name: '保存当前图' })).toBeDisabled()
+  })
+
+  it('persists mode and tool across projects', async () => {
+    const user = userEvent.setup()
+    const firstProject = renderPage(1)
+    await screen.findByRole('group', { name: '涂抹工作集图片' })
+
+    await user.click(within(screen.getByRole('radiogroup', { name: '模式' })).getByRole('radio', { name: '训练遮罩' }))
+    await user.click(within(screen.getByRole('radiogroup', { name: '工具' })).getByRole('radio', { name: '橡皮' }))
+
+    expect(window.localStorage.getItem('studio:inpaint:mode')).toBe(JSON.stringify('mask'))
+    expect(window.localStorage.getItem('studio:inpaint:erase')).toBe(JSON.stringify(true))
+
+    firstProject.unmount()
+    renderPage(99)
+    await screen.findByRole('group', { name: '涂抹工作集图片' })
+
+    expect(within(screen.getByRole('radiogroup', { name: '模式' })).getByRole('radio', { name: '训练遮罩' })).toBeChecked()
+    expect(within(screen.getByRole('radiogroup', { name: '工具' })).getByRole('radio', { name: '橡皮' })).toBeChecked()
+    expect(screen.getByTestId('inpaint-canvas')).toHaveAttribute('data-mode', 'mask')
+    expect(screen.getByTestId('inpaint-canvas')).toHaveAttribute('data-erase', 'true')
   })
 
   it('opens setup to explain the save prerequisite while unsaved edits block Start', async () => {
@@ -273,9 +294,9 @@ describe('Preprocess inpaint contracts', () => {
     })
     renderPage()
     await screen.findByRole('group', { name: '涂抹工作集图片' })
-    // Entering mask mode also checks the independent contour review workspace.
-    await waitFor(() => expect(api.getPreprocessStatusTrain).toHaveBeenCalledTimes(3))
-    expect(api.getHeadMaskProposals).toHaveBeenCalledTimes(1)
+    // The remembered mask mode checks the independent contour review workspace on remount too.
+    await waitFor(() => expect(api.getPreprocessStatusTrain).toHaveBeenCalledTimes(4))
+    expect(api.getHeadMaskProposals).toHaveBeenCalledTimes(2)
     expect(screen.getByRole('button', { name: '保存全部 (0)' })).toBeDisabled()
     expect(mocks.toast.mock.calls.filter(([message]) => String(message).includes('已为 2 张图片添加 3 个遮罩'))).toHaveLength(1)
     },

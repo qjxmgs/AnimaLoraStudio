@@ -99,9 +99,13 @@ function InpaintWorkspace() {
   // ────── Editor state ──────
   // 统一编辑历史：涂抹与 mask 笔画混合入同一时间线 —— 模式只是笔刷，
   // dirty / undo / 保存都跨模式共用，切模式不改变页面状态语义。
-  const [mode, setMode] = useState<InpaintMode>('paint')
+  const [mode, setMode] = useLocalStorageState<InpaintMode>(
+    'studio:inpaint:mode', 'paint',
+  )
   // 画笔 / 橡皮跨模式共用：涂抹橡皮擦未保存笔画，遮罩橡皮擦 mask
-  const [erase, setErase] = useState(false)
+  const [erase, setErase] = useLocalStorageState<boolean>(
+    'studio:inpaint:erase', false,
+  )
   const [activeName, setActiveName] = useState<string | null>(null)
   const [historyByImage, setHistoryByImage] = useState<Record<string, HistoryEntry[]>>({})
   const [redoByImage, setRedoByImage] = useState<Record<string, HistoryEntry[]>>({})
@@ -240,7 +244,7 @@ function InpaintWorkspace() {
       : summary
     toast(message, applicable.length === 0 && (failed > 0 || skipped > 0) ? 'error'
       : issues.length > 0 ? 'info' : 'success')
-  }, [t, toast])
+  }, [setErase, setMode, t, toast])
 
   const rawUrl = useCallback((im: CropWorkspaceItem) => {
     const { folder, filename } = splitRel(im.name)
