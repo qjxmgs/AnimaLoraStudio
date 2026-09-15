@@ -22,6 +22,7 @@ function mk(over: Partial<ProjectSummary> & { id: number }): ProjectSummary {
     archived_at: null,
     note: null,
     ...over,
+    custom_tags: over.custom_tags ?? [],
   }
 }
 

@@ -1086,6 +1086,7 @@ export interface ProjectSummary {
   /** v12: 非 null = 已归档（软隐藏）。list 归档/活跃都返回，切分在前端。 */
   archived_at: number | null
   note: string | null
+  custom_tags: string[]
   download_image_count?: number
   preprocess_image_count?: number
 }
@@ -2617,6 +2618,7 @@ export const api = {
       title: string
       note: string
       active_version_id: number | null
+      custom_tags: string[]
     }>
   ) =>
     req<ProjectDetail>(`/api/projects/${pid}`, {

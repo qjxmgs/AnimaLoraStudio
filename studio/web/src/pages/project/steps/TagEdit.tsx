@@ -132,6 +132,7 @@ export default function TagEditPage() {
   const reloadRequestRef = useRef(0)
   const maskReloadRequestRef = useRef(0)
   const saveInFlightRef = useRef(false)
+  const customTagsSaveInFlightRef = useRef(false)
   const [initial, setInitial] = useState<Map<string, string[]>>(new Map())
   const [meta, setMeta] = useState<Map<string, CaptionMeta>>(new Map())
   const [keys, setKeys] = useState<string[]>([])
@@ -140,6 +141,8 @@ export default function TagEditPage() {
   const [loadError, setLoadError] = useState<string | null>(null)
   const [externalUpdatePending, setExternalUpdatePending] = useState(false)
   const [maskMtimes, setMaskMtimes] = useState<Map<string, number>>(new Map())
+  const [customTags, setCustomTags] = useState<string[]>(project.custom_tags ?? [])
+  const [customTagsBusy, setCustomTagsBusy] = useState(false)
 
   const [activeKey, setActiveKey] = useState<string>('')
   const [sel, setSel] = useState<Set<string>>(new Set())
@@ -175,6 +178,10 @@ export default function TagEditPage() {
 
   const gridMax = 100 - boundedSidePct - TAG_EDIT_PREVIEW_MIN
   const sideMax = 100 - boundedGridPct - TAG_EDIT_PREVIEW_MIN
+
+  useEffect(() => {
+    setCustomTags(project.custom_tags ?? [])
+  }, [project.custom_tags, project.id])
 
   const reloadCache = useCallback(async (
     mode: 'initial' | 'refresh' | 'replace' = 'refresh',
@@ -514,6 +521,32 @@ export default function TagEditPage() {
       else next.set(activeKey, { order: [...tags], inactive: nextInactive })
       return next
     })
+  }
+
+  const persistCustomTags = async (nextTags: string[]) => {
+    if (customTagsSaveInFlightRef.current) return
+    customTagsSaveInFlightRef.current = true
+    setCustomTagsBusy(true)
+    try {
+      const updated = await api.updateProject(project.id, { custom_tags: nextTags })
+      setCustomTags(updated.custom_tags ?? [])
+      await reload()
+    } catch (error) {
+      toast(t('tagEdit.customTagsSaveFailed', { error: String(error) }), 'error')
+    } finally {
+      customTagsSaveInFlightRef.current = false
+      setCustomTagsBusy(false)
+    }
+  }
+
+  const addCustomTag = async (tag: string) => {
+    if (customTags.includes(tag)) return
+    await persistCustomTags([...customTags, tag])
+  }
+
+  const deleteCustomTag = async (tag: string) => {
+    if (!customTags.includes(tag)) return
+    await persistCustomTags(customTags.filter((item) => item !== tag))
   }
 
   const applyBulkUpdates = (updates: Map<string, string[]>) => {
@@ -1007,6 +1040,10 @@ export default function TagEditPage() {
                   inactiveTags={activeInactiveTags}
                   onChange={updateActiveTags}
                   showTagCount={false}
+                  customTags={customTags}
+                  customTagsBusy={customTagsBusy}
+                  onAddCustomTag={addCustomTag}
+                  onDeleteCustomTag={deleteCustomTag}
                 />
               </div>
             </Card>

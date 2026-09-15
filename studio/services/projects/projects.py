@@ -84,8 +84,35 @@ def _write_project_json(p: dict[str, Any]) -> None:
 # ---------------------------------------------------------------------------
 
 
+def normalize_custom_tags(value: Any) -> list[str]:
+    """Return an ordered, exact-match tag list from DB/API/manifest input."""
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except (json.JSONDecodeError, TypeError):
+            return []
+    if not isinstance(value, (list, tuple)):
+        return []
+
+    result: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        if not isinstance(item, str):
+            continue
+        tag = item.strip()
+        if not tag or tag in seen:
+            continue
+        seen.add(tag)
+        result.append(tag)
+    return result
+
+
 def _row_to_project(row: Optional[sqlite3.Row]) -> Optional[dict[str, Any]]:
-    return dict(row) if row else None
+    if not row:
+        return None
+    out = dict(row)
+    out["custom_tags"] = normalize_custom_tags(out.get("custom_tags"))
+    return out
 
 
 def create_project(
@@ -94,6 +121,7 @@ def create_project(
     title: str,
     slug: Optional[str] = None,
     note: Optional[str] = None,
+    custom_tags: Optional[Iterable[str]] = None,
 ) -> dict[str, Any]:
     title = (title or "").strip()
     if not title:
@@ -107,10 +135,18 @@ def create_project(
     base_slug = slugify(slug) if slug else slugify(title)
     final_slug = _unique_slug(conn, base_slug)
     now = time.time()
+    normalized_custom_tags = normalize_custom_tags(list(custom_tags or []))
     cur = conn.execute(
-        "INSERT INTO projects(slug, title, created_at, updated_at, note) "
-        "VALUES (?, ?, ?, ?, ?)",
-        (final_slug, title, now, now, note),
+        "INSERT INTO projects(slug, title, created_at, updated_at, note, custom_tags) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (
+            final_slug,
+            title,
+            now,
+            now,
+            note,
+            json.dumps(normalized_custom_tags, ensure_ascii=False),
+        ),
     )
     conn.commit()
     pid = int(cur.lastrowid)
@@ -144,14 +180,13 @@ def _must_get(conn: sqlite3.Connection, project_id: int) -> dict[str, Any]:
 
 def list_projects(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     return [
-        dict(r)
-        for r in conn.execute(
-            "SELECT * FROM projects ORDER BY updated_at DESC"
-        )
+        project
+        for row in conn.execute("SELECT * FROM projects ORDER BY updated_at DESC")
+        if (project := _row_to_project(row)) is not None
     ]
 
 
-_UPDATABLE = {"title", "note", "active_version_id"}
+_UPDATABLE = {"title", "note", "active_version_id", "custom_tags"}
 
 
 def update_project(
@@ -161,6 +196,11 @@ def update_project(
     keep = {k: v for k, v in fields.items() if k in _UPDATABLE}
     if not keep:
         return p
+    if "custom_tags" in keep:
+        keep["custom_tags"] = json.dumps(
+            normalize_custom_tags(keep["custom_tags"]),
+            ensure_ascii=False,
+        )
     cols = ", ".join(f"{k} = ?" for k in keep)
     params: list[Any] = list(keep.values())
     cols += ", updated_at = ?"

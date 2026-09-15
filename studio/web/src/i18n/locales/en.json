@@ -585,7 +585,17 @@
     "tagCount": "{{n}} tags",
     "empty": "No tags yet",
     "addPlaceholder": "Add a tag, then press Enter / comma",
-    "textPlaceholder": "Comma / newline separated; edits become pending immediately"
+    "textPlaceholder": "Comma / newline separated; edits become pending immediately",
+    "customTagsLabel": "Project quick tags",
+    "customTagUnavailable": "{{tag}} is already on the current image",
+    "customTagAdd": "Add {{tag}} to the current image",
+    "customTagDelete": "Delete project quick tag {{tag}}",
+    "customTagDeleteConfirm": "Click again to delete project quick tag {{tag}}",
+    "customTagInputLabel": "Enter a new project quick tag",
+    "customTagPlaceholder": "Custom tag",
+    "customTagDuplicate": "This project quick tag already exists",
+    "customTagConfirm": "Confirm project quick tag",
+    "customTagCreate": "Add a project quick tag"
   },
   "llmMessages": {
     "roleHintSystem": "Instructional · usually written once",
@@ -2073,7 +2083,8 @@
     "unsavedConfirmTitle": "Unsaved tag edits",
     "unsavedConfirmMessage": "You have unsaved tag changes on {{n}} image(s). Navigating away will discard them. Leave anyway?",
     "unsavedConfirmDiscard": "Discard and leave",
-    "unsavedConfirmStay": "Stay on this page"
+    "unsavedConfirmStay": "Stay on this page",
+    "customTagsSaveFailed": "Could not save project quick tags: {{error}}"
   },
   "download": {
     "modeBooru": "Booru search",

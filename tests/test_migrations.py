@@ -113,6 +113,33 @@ def test_v17_adds_tasks_params_column(tmp_path: Path) -> None:
         assert "params" in cols
 
 
+def test_v21_adds_project_custom_tags_with_empty_default(tmp_path: Path) -> None:
+    """v21 upgrades an existing projects table without changing old rows."""
+    from studio.infrastructure.migrations._v21_project_custom_tags import migrate as v21
+
+    dbfile = tmp_path / "legacy-projects.db"
+    with _open(dbfile) as c:
+        c.executescript(
+            """
+            CREATE TABLE projects (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                slug TEXT UNIQUE NOT NULL,
+                title TEXT NOT NULL,
+                active_version_id INTEGER,
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL,
+                note TEXT,
+                archived_at REAL
+            );
+            INSERT INTO projects(slug, title, created_at, updated_at)
+            VALUES ('legacy', 'Legacy', 1, 1);
+            """
+        )
+        v21(c)
+        row = c.execute("SELECT custom_tags FROM projects").fetchone()
+        assert row["custom_tags"] == "[]"
+
+
 def test_v1_db_upgrades_in_place_preserving_tasks(tmp_path: Path) -> None:
     """模拟 PP0 之前留下来的 v1 库（只有 tasks 表）：执行 init_db 应升到 v2 且数据不丢。"""
     dbfile = tmp_path / "legacy.db"

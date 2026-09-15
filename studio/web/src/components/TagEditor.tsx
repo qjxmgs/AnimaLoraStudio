@@ -18,6 +18,7 @@ import { useTranslation } from 'react-i18next'
 
 import Button from './Button'
 import { Input, Textarea } from './FormControl'
+import ProjectCustomTags from './ProjectCustomTags'
 import { SegmentedControl } from './SelectionGroup'
 import { TranslatedTag } from './tagDisplay/TranslatedTag'
 import { TagSuggestList } from './tagSuggest/TagSuggestList'
@@ -35,6 +36,10 @@ interface Props {
   showTagCount?: boolean
   /** Identity of the edited source. Changing it resets only per-source buffers, not mode. */
   resetKey?: string
+  customTags?: string[]
+  customTagsBusy?: boolean
+  onAddCustomTag?: (tag: string) => void | Promise<void>
+  onDeleteCustomTag?: (tag: string) => void | Promise<void>
 }
 
 type Mode = 'chip' | 'text'
@@ -259,6 +264,10 @@ export default function TagEditor({
   dirty,
   showTagCount = true,
   resetKey,
+  customTags = [],
+  customTagsBusy = false,
+  onAddCustomTag,
+  onDeleteCustomTag,
 }: Props) {
   const { t } = useTranslation()
   const [draft, setDraft] = useState('')
@@ -524,6 +533,18 @@ export default function TagEditor({
     setMode('chip')
   }
 
+  const customTagPalette = onAddCustomTag && onDeleteCustomTag ? (
+    <ProjectCustomTags
+      tags={customTags}
+      activeTags={new Set(selectedTags)}
+      busy={customTagsBusy}
+      resetKey={resetKey}
+      onPick={addTag}
+      onAdd={onAddCustomTag}
+      onDelete={onDeleteCustomTag}
+    />
+  ) : null
+
   if (natural) {
     return (
       <div className="flex flex-col gap-2 flex-1 min-h-0">
@@ -624,6 +645,7 @@ export default function TagEditor({
               ) : null}
             </DragOverlay>
           </DndContext>
+          {customTagPalette}
           <div className="flex items-center gap-1.5 shrink-0">
             <div className="relative flex-1">
               <Input
@@ -698,6 +720,7 @@ export default function TagEditor({
               positionDeps={[textBuf]}
             />
           </div>
+          {customTagPalette}
           {onSave && (
             <div className="flex items-center justify-end shrink-0">
               <Button

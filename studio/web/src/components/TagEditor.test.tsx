@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { __setTagPrefsForTest } from '../tagDict/prefs'
@@ -54,6 +54,29 @@ describe('TagEditor (PP4 chip mode)', () => {
     expect(screen.getByText('2 个标签')).toBeInTheDocument()
     expect(container.querySelector('[data-tag-chip="a"]')?.tagName).toBe('BUTTON')
     expect(screen.queryByLabelText('删除 a')).not.toBeInTheDocument()
+  })
+
+  it('shows project quick tags in both modes and reactivates a pending tag', async () => {
+    const user = userEvent.setup()
+    const onChange = vi.fn()
+    const props = {
+      tags: ['pending'],
+      inactiveTags: new Set(['pending']),
+      customTags: ['pending', 'new tag'],
+      onChange,
+      onAddCustomTag: vi.fn(),
+      onDeleteCustomTag: vi.fn(),
+    }
+    render(<TagEditor {...props} />)
+
+    let palette = screen.getByRole('region', { name: '项目常驻标签' })
+    expect(within(palette).getByRole('button', { name: /^pending$/ })).toBeEnabled()
+    await user.click(within(palette).getByRole('button', { name: /^pending$/ }))
+    expect(onChange).toHaveBeenLastCalledWith(['pending'], new Set())
+
+    await user.click(screen.getByText('文本'))
+    palette = screen.getByRole('region', { name: '项目常驻标签' })
+    expect(palette).toBeInTheDocument()
   })
 
   it('reorders variable-width chips without strategy-level scaling', () => {

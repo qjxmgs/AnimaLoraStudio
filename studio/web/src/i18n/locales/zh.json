@@ -585,7 +585,17 @@
     "tagCount": "{{n}} 个标签",
     "empty": "还没有标签",
     "addPlaceholder": "添加标签后按 Enter / 逗号",
-    "textPlaceholder": "逗号 / 换行分隔，修改会进入待保存状态"
+    "textPlaceholder": "逗号 / 换行分隔，修改会进入待保存状态",
+    "customTagsLabel": "项目常驻标签",
+    "customTagUnavailable": "{{tag}} 已在当前图片中",
+    "customTagAdd": "将 {{tag}} 添加到当前图片",
+    "customTagDelete": "删除常驻标签 {{tag}}",
+    "customTagDeleteConfirm": "再次点击删除常驻标签 {{tag}}",
+    "customTagInputLabel": "输入新的项目常驻标签",
+    "customTagPlaceholder": "自定义 tag",
+    "customTagDuplicate": "该常驻标签已存在",
+    "customTagConfirm": "确认添加常驻标签",
+    "customTagCreate": "添加项目常驻标签"
   },
   "llmMessages": {
     "roleHintSystem": "指令性 · 一般写一次",
@@ -2073,7 +2083,8 @@
     "unsavedConfirmTitle": "有未保存的标签修改",
     "unsavedConfirmMessage": "你还有 {{n}} 张图的标签未保存。切换页面会丢失这些修改，确定要离开吗？",
     "unsavedConfirmDiscard": "放弃修改并离开",
-    "unsavedConfirmStay": "留在本页"
+    "unsavedConfirmStay": "留在本页",
+    "customTagsSaveFailed": "常驻标签保存失败：{{error}}"
   },
   "download": {
     "modeBooru": "Booru 抓取",

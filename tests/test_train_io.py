@@ -51,6 +51,8 @@ def _png(content: bytes = b"fake-png") -> bytes:
 
 def test_export_round_trip(isolated, tmp_path: Path) -> None:
     p, v, train = _make_project_with_train(isolated)
+    with db.connection_for(isolated["db"]) as conn:
+        projects.update_project(conn, p["id"], custom_tags=["solo", "1girl"])
     # 默认已有 1_data；放两张 + 1 个 caption；再加一个 2_concept 子文件夹
     (train / "1_data").mkdir(parents=True, exist_ok=True)
     (train / "1_data" / "a.png").write_bytes(_png())
@@ -67,6 +69,7 @@ def test_export_round_trip(isolated, tmp_path: Path) -> None:
     assert dest.exists()
     assert result["manifest"]["stats"]["image_count"] == 3
     assert result["manifest"]["stats"]["tagged_count"] == 2
+    assert result["manifest"]["source"]["custom_tags"] == ["solo", "1girl"]
     assert {c["folder"] for c in result["manifest"]["stats"]["concepts"]} == {
         "1_data",
         "2_concept",
@@ -94,6 +97,7 @@ def test_export_round_trip(isolated, tmp_path: Path) -> None:
     # ADR-0007 PR-5: import 不再推 stage
     assert imported["stats"]["image_count"] == 3
     assert imported["stats"]["tagged_count"] == 2
+    assert imported["project"]["custom_tags"] == ["solo", "1girl"]
 
     new_train = versions.version_dir(
         imported["project"]["id"],
@@ -259,6 +263,7 @@ def test_export_bundle_records_version_and_preset_names(isolated, tmp_path: Path
 
     dest = tmp_path / "out.bundle.zip"
     with db.connection_for(isolated["db"]) as conn:
+        projects.update_project(conn, p["id"], custom_tags=["rabbit ears", "solo"])
         versions.update_version(conn, v["id"], config_name="style_preset")
         result = train_io.export_bundle(
             conn,
@@ -270,11 +275,17 @@ def test_export_bundle_records_version_and_preset_names(isolated, tmp_path: Path
     source = result["manifest"]["source"]
     assert source["version_label"] == "anime-v2"
     assert source["preset_name"] == "style_preset"
+    assert source["custom_tags"] == ["rabbit ears", "solo"]
 
     with zipfile.ZipFile(dest) as zf:
         manifest = json.loads(zf.read("manifest.json"))
     assert manifest["source"]["version_label"] == "anime-v2"
     assert manifest["source"]["preset_name"] == "style_preset"
+    assert manifest["source"]["custom_tags"] == ["rabbit ears", "solo"]
+
+    with db.connection_for(isolated["db"]) as conn:
+        imported = train_io.import_bundle(conn, dest, presets_base=tmp_path / "presets")
+    assert imported["project"]["custom_tags"] == ["rabbit ears", "solo"]
 
 
 def test_export_bundle_training_caches_roundtrip(isolated, tmp_path: Path) -> None:

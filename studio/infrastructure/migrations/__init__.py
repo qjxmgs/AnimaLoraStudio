@@ -35,6 +35,7 @@ from ._v17_unified_ledger import migrate as _migrate_v17
 from ._v18_legacy_jobs_freeze import migrate as _migrate_v18
 from ._v19_eval_sessions import migrate as _migrate_v19
 from ._v20_generate_images import migrate as _migrate_v20
+from ._v21_project_custom_tags import migrate as _migrate_v21
 
 Migration = Callable[[sqlite3.Connection], None]
 
@@ -59,6 +60,7 @@ MIGRATIONS: list[Migration] = [
     _migrate_v18, # v18: 冻结旧 project_jobs（R-3 写路径翻转，残留 pending/running→canceled）
     _migrate_v19, # v19: eval_sessions / eval_candidates / eval_metric_results（EvalSession 模型，#465）
     _migrate_v20, # v20: tasks.generate_images（出图时间线 DB 单源）+ cover→images 最小列回填
+    _migrate_v21, # v21: projects.custom_tags（项目级常驻标签列表）
 ]
 
 

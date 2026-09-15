@@ -18,6 +18,7 @@ class ProjectUpdate(BaseModel):
     note: Optional[str] = None
     stage: Optional[str] = None
     active_version_id: Optional[int] = None
+    custom_tags: Optional[list[str]] = None
 
 
 class VersionCreate(BaseModel):

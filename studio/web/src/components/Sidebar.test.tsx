@@ -43,6 +43,7 @@ const MOCK_PROJECT: ProjectDetail = {
   active_version_label: 'v1', active_version_status: 'preparing',
   active_version_phase: 'curating', created_at: 0, updated_at: 0,
   archived_at: null, note: null, versions: [MOCK_VERSION],
+  custom_tags: [],
   download_image_count: 0, preprocess_image_count: 0,
 }
 const STICKY: SelectedProjectValue = { project: MOCK_PROJECT, activeVersion: MOCK_VERSION }

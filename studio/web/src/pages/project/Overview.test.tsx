@@ -45,6 +45,7 @@ function makeProject(overrides: Partial<ProjectDetail> = {}): ProjectDetail {
     download_image_count: 0, preprocess_image_count: 0,
     versions: [makeVersion()],
     ...overrides,
+    custom_tags: overrides.custom_tags ?? [],
   }
 }
 

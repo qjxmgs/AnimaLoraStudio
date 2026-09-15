@@ -165,6 +165,7 @@ def export_train(
             "title": p["title"],
             "version_label": v["label"],
             "slug": p["slug"],
+            "custom_tags": p.get("custom_tags", []),
         },
         "stats": {
             "image_count": image_count,
@@ -272,6 +273,7 @@ def import_train(
             source = manifest.get("source") or {}
             title = (source.get("title") or "imported").strip() or "imported"
             base_slug = projects.slugify(source.get("slug") or title)
+            custom_tags = projects.normalize_custom_tags(source.get("custom_tags"))
 
             # 先扫一遍合法 entry；空内容直接报错避免建空项目
             entries: list[tuple[zipfile.ZipInfo, str]] = []
@@ -297,7 +299,13 @@ def import_train(
             # 建 project + v1（用 DAO，自动建目录树）
             slug = _resolve_slug_conflict(conn, base_slug)
             note = f"imported from {title!r}"
-            p = projects.create_project(conn, title=title, slug=slug, note=note)
+            p = projects.create_project(
+                conn,
+                title=title,
+                slug=slug,
+                note=note,
+                custom_tags=custom_tags,
+            )
             v = versions.create_version(
                 conn, project_id=p["id"], label="v1"
             )
@@ -584,6 +592,7 @@ def export_bundle(
             "version_label": v["label"],
             "slug": p["slug"],
             "preset_name": v.get("config_name"),
+            "custom_tags": p.get("custom_tags", []),
         },
         "includes": {
             "train": opts.train,
@@ -735,6 +744,7 @@ def import_bundle(
             base_slug = projects.slugify(source.get("slug") or title)
             version_label = _bundle_source_version_label(source)
             preset_name = _bundle_source_preset_name(source)
+            custom_tags = projects.normalize_custom_tags(source.get("custom_tags"))
 
             if schema_ver == 1:
                 # v1：仅 train/ entries，用原有安全检查
@@ -756,8 +766,13 @@ def import_bundle(
                     )
 
                 slug = _resolve_slug_conflict(conn, base_slug)
-                p = projects.create_project(conn, title=title, slug=slug,
-                                             note=f"imported from {title!r}")
+                p = projects.create_project(
+                    conn,
+                    title=title,
+                    slug=slug,
+                    note=f"imported from {title!r}",
+                    custom_tags=custom_tags,
+                )
                 v = versions.create_version(conn, project_id=p["id"], label=version_label)
                 v = _restore_preset_name(conn, v["id"], preset_name, presets_base) or v
                 vdir = versions.version_dir(p["id"], p["slug"], v["label"])
@@ -822,8 +837,13 @@ def import_bundle(
                 )
 
             slug = _resolve_slug_conflict(conn, base_slug)
-            p = projects.create_project(conn, title=title, slug=slug,
-                                         note=f"imported from {title!r}")
+            p = projects.create_project(
+                conn,
+                title=title,
+                slug=slug,
+                note=f"imported from {title!r}",
+                custom_tags=custom_tags,
+            )
             v = versions.create_version(conn, project_id=p["id"], label=version_label)
             vdir = versions.version_dir(p["id"], p["slug"], v["label"])
 

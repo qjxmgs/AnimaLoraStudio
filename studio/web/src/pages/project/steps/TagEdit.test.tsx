@@ -117,10 +117,18 @@ vi.mock('../../../components/TagEditor', () => ({
     tags,
     inactiveTags = new Set<string>(),
     onChange,
+    customTags = [],
+    customTagsBusy = false,
+    onAddCustomTag,
+    onDeleteCustomTag,
   }: {
     tags: string[]
     inactiveTags?: ReadonlySet<string>
     onChange: (tags: string[], inactiveTags: ReadonlySet<string>) => void
+    customTags?: string[]
+    customTagsBusy?: boolean
+    onAddCustomTag?: (tag: string) => void | Promise<void>
+    onDeleteCustomTag?: (tag: string) => void | Promise<void>
   }) => {
     const activeTags = tags.filter((tag) => !inactiveTags.has(tag))
     return (
@@ -161,6 +169,37 @@ vi.mock('../../../components/TagEditor', () => ({
             {tag}
           </button>
         ))}
+        <section aria-label="项目常驻标签">
+          {customTags.map((tag) => (
+            <span key={tag}>
+              <button
+                type="button"
+                disabled={customTagsBusy || activeTags.includes(tag)}
+                onClick={() => {
+                  const nextInactive = new Set(inactiveTags)
+                  nextInactive.delete(tag)
+                  onChange(tags.includes(tag) ? tags : [...tags, tag], nextInactive)
+                }}
+              >
+                常驻 {tag}
+              </button>
+              <button
+                type="button"
+                disabled={customTagsBusy}
+                onClick={() => onDeleteCustomTag?.(tag)}
+              >
+                删除常驻 {tag}
+              </button>
+            </span>
+          ))}
+          <button
+            type="button"
+            disabled={customTagsBusy}
+            onClick={() => onAddCustomTag?.('project_new')}
+          >
+            添加测试常驻标签
+          </button>
+        </section>
       </div>
     )
   },
@@ -196,8 +235,12 @@ const cropWorkspace = {
   ],
 }
 
-function renderPage() {
-  const project = { id: 7 } as ProjectDetail
+function renderPage(projectOverrides: Partial<ProjectDetail> = {}) {
+  const project = {
+    id: 7,
+    custom_tags: ['cat', 'quick'],
+    ...projectOverrides,
+  } as ProjectDetail
   const activeVersion = {
     id: 11,
     trigger_word: 'sks',
@@ -234,6 +277,10 @@ beforeEach(() => {
     skipped: [],
     snapshot: { id: 'snap-1', created_at: 1, size: 1, file_count: 1 },
   })
+  vi.spyOn(api, 'updateProject').mockImplementation(async (pid, body) => ({
+    id: pid,
+    custom_tags: body.custom_tags ?? [],
+  } as ProjectDetail))
 })
 
 describe('TagEdit workspace', () => {
@@ -649,6 +696,71 @@ describe('TagEdit workspace', () => {
     expect(closeButton.querySelector('svg')).toHaveAttribute('stroke', 'currentColor')
     await user.click(closeButton)
     expect(screen.queryByTestId('preview-image')).not.toBeInTheDocument()
+  })
+
+  it('adds an available project quick tag to the active caption only', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await ready()
+    await user.click(screen.getByRole('button', { name: '打开 人物 A/a1.png' }))
+
+    expect(screen.getByRole('button', { name: '常驻 cat' })).toBeDisabled()
+    await user.click(screen.getByRole('button', { name: '常驻 quick' }))
+
+    expect(screen.getByText('当前标签 cat,quick')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '保存（1）' })).toBeEnabled()
+    expect(api.updateProject).not.toHaveBeenCalled()
+  })
+
+  it('reactivates a project quick tag as soon as its active chip is pending removal', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await ready()
+    await user.click(screen.getByRole('button', { name: '打开 人物 A/a1.png' }))
+
+    await user.click(screen.getByRole('button', { name: '切换标签 cat' }))
+    expect(screen.getByRole('button', { name: '常驻 cat' })).toBeEnabled()
+    await user.click(screen.getByRole('button', { name: '常驻 cat' }))
+
+    expect(screen.getByText('当前标签 cat')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '常驻 cat' })).toBeDisabled()
+  })
+
+  it('persists project quick-tag changes immediately without dirtying captions', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await ready()
+    await user.click(screen.getByRole('button', { name: '打开 人物 A/a1.png' }))
+
+    await user.click(screen.getByRole('button', { name: '添加测试常驻标签' }))
+    await waitFor(() => expect(api.updateProject).toHaveBeenCalledWith(7, {
+      custom_tags: ['cat', 'quick', 'project_new'],
+    }))
+    expect(screen.getByRole('button', { name: '已保存' })).toBeDisabled()
+    expect(api.commitCaptions).not.toHaveBeenCalled()
+    expect(mocks.reload).toHaveBeenCalled()
+
+    await user.click(screen.getByRole('button', { name: '删除常驻 quick' }))
+    await waitFor(() => expect(api.updateProject).toHaveBeenLastCalledWith(7, {
+      custom_tags: ['cat', 'project_new'],
+    }))
+  })
+
+  it('keeps project quick tags unchanged and reports an immediate-save failure', async () => {
+    vi.mocked(api.updateProject).mockRejectedValueOnce(new Error('offline'))
+    const user = userEvent.setup()
+    renderPage()
+    await ready()
+    await user.click(screen.getByRole('button', { name: '打开 人物 A/a1.png' }))
+
+    await user.click(screen.getByRole('button', { name: '添加测试常驻标签' }))
+
+    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith(
+      '常驻标签保存失败：Error: offline',
+      'error',
+    ))
+    expect(screen.getByRole('button', { name: '常驻 quick' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '常驻 project_new' })).not.toBeInTheDocument()
   })
 
   it('shows a persisted training-mask toggle that defaults on and survives navigation and remount', async () => {

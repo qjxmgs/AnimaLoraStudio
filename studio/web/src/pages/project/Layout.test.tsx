@@ -53,6 +53,7 @@ function makeProject(activeVid: number, versions: Version[]): ProjectDetail {
     active_version_label: 'v2', active_version_status: 'preparing',
     active_version_phase: 'curating', created_at: 0, updated_at: 0,
     archived_at: null, note: null, versions,
+    custom_tags: [],
     download_image_count: 0, preprocess_image_count: 0,
   }
 }

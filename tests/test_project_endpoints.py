@@ -1,6 +1,7 @@
 """PP1 — /api/projects + /api/projects/{pid}/versions HTTP 端到端。"""
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -83,6 +84,26 @@ def test_patch_updates_note_and_stage(client: TestClient) -> None:
     assert resp.status_code == 200
     body = resp.json()
     assert body["note"] == "edited"
+
+
+def test_project_custom_tags_are_normalized_persisted_and_listed(
+    client: TestClient,
+) -> None:
+    created = client.post("/api/projects", json={"title": "Quick tags"}).json()
+    assert created["custom_tags"] == []
+
+    response = client.patch(
+        f"/api/projects/{created['id']}",
+        json={"custom_tags": ["  solo  ", "1girl", "solo", "", "  "]},
+    )
+    assert response.status_code == 200
+    assert response.json()["custom_tags"] == ["solo", "1girl"]
+
+    listed = client.get("/api/projects").json()["items"]
+    assert listed[0]["custom_tags"] == ["solo", "1girl"]
+    pdir = projects.project_dir(created["id"], created["slug"])
+    project_json = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
+    assert project_json["custom_tags"] == ["solo", "1girl"]
 
 
 def test_delete_removes_dir(client: TestClient) -> None:
