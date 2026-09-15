@@ -6,13 +6,44 @@
  * 显示文本规则：caller 传啥就显示啥（保留 `_` 或者空格形式）；只是字典查找时
  * 内部归一成空格（dict 存储一律 canonical）。这样 Reg/booru 边界 tag 也能命中。
  */
+import type { ReactNode } from 'react'
+
 import { useTagDict } from '../../tagDict/store'
 import { useShowTagTranslation } from '../../tagDict/prefs'
 
-export function TranslatedTag({ tag }: { tag: string }) {
+interface Props {
+  tag: string
+  /** Existing chip surfaces stay inline; TagEditor opts into the stacked layout. */
+  layout?: 'inline' | 'stacked'
+  /** Only used by the stacked layout while translation display is enabled. */
+  missingTranslation?: ReactNode
+  /** Lets a containing surface keep the secondary line inside its own palette. */
+  translationClassName?: string
+}
+
+export function TranslatedTag({
+  tag,
+  layout = 'inline',
+  missingTranslation,
+  translationClassName = 'text-fg-tertiary',
+}: Props) {
   const [show] = useShowTagTranslation()
   const dict = useTagDict()
   const zh = dict.entries.get(tag) ?? dict.entries.get(tag.replace(/_/g, ' '))
+
+  if (layout === 'stacked') {
+    return (
+      <span className="flex min-w-0 flex-col items-start">
+        <span className="font-sans text-sm leading-[1.15]">{tag}</span>
+        {show && (
+          <span className={`mt-0.5 font-sans text-xs leading-[1.15] ${translationClassName}`}>
+            {zh && zh.length > 0 ? zh.join(' ') : missingTranslation}
+          </span>
+        )}
+      </span>
+    )
+  }
+
   if (!show || !zh || zh.length === 0) {
     return <span>{tag}</span>
   }

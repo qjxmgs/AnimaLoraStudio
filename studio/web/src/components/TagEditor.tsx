@@ -1,22 +1,22 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
+  closestCenter,
   DndContext,
   DragOverlay,
   PointerSensor,
   pointerWithin,
   useSensor,
   useSensors,
+  type CollisionDetection,
   type DragEndEvent,
   type DragOverEvent,
   type DragStartEvent,
 } from '@dnd-kit/core'
 import {
   SortableContext,
-  arrayMove,
   useSortable,
   type SortingStrategy,
 } from '@dnd-kit/sortable'
-import { CSS } from '@dnd-kit/utilities'
 import { useTranslation } from 'react-i18next'
 
 import Button from './Button'
@@ -59,22 +59,66 @@ const tagsEqual = (a: string[], b: string[]): boolean =>
  * maps every displaced item into another item's rectangle, including scaleX /
  * scaleY. That distorts text and makes differently sized chips overlap.
  *
- * Keep the strategy itself transform-free. The DOM order is updated on
- * DragOver, so useSortable can animate each same-sized chip from its previous
- * layout position to its new one. SortableChip applies translation only and
- * deliberately drops any scale component.
+ * Keep the strategy itself transform-free. While dragging, the list remains
+ * still and an insertion marker identifies the pending drop edge. Once the
+ * parent accepts the new order, TagEditor runs a translation-only FLIP pass.
  */
 export const tagFlowSortingStrategy: SortingStrategy = () => null
 
-export const reorderTagFlow = (order: string[], activeId: string, overId: string): string[] => {
+export type TagDropEdge = 'before' | 'after'
+
+export const getTagDropEdge = (
+  pointerX: number,
+  targetLeft: number,
+  targetWidth: number,
+): TagDropEdge => pointerX < targetLeft + targetWidth / 2 ? 'before' : 'after'
+
+export const reorderTagFlow = (
+  order: string[],
+  activeId: string,
+  overId: string,
+  edge: TagDropEdge,
+): string[] => {
   const oldIndex = order.indexOf(activeId)
-  const newIndex = order.indexOf(overId)
-  if (oldIndex < 0 || newIndex < 0 || oldIndex === newIndex) return order
-  return arrayMove(order, oldIndex, newIndex)
+  if (oldIndex < 0 || activeId === overId) return order
+
+  const next = [...order]
+  next.splice(oldIndex, 1)
+  const overIndex = next.indexOf(overId)
+  if (overIndex < 0) return order
+  next.splice(overIndex + (edge === 'after' ? 1 : 0), 0, activeId)
+  return tagsEqual(next, order) ? order : next
 }
 
+export const TAG_TONES = [
+  '#768eca', // blue
+  '#5da6ba', // cyan
+  '#66af83', // green
+  '#9b79ca', // purple
+  '#bd79a1', // pink
+] as const
+
 const TAG_CHIP_CLASS =
-  'inline-flex shrink-0 items-center gap-1 whitespace-nowrap px-2 py-0.5 rounded-full bg-overlay border border-subtle text-sm font-mono text-fg-primary select-none touch-none'
+  'relative inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-[5px] border px-2.5 py-1.5 select-none touch-none'
+
+type TagToneStyle = React.CSSProperties & { '--tag-tone': string }
+
+const tagToneStyle = (index: number): TagToneStyle => ({
+  '--tag-tone': TAG_TONES[index % TAG_TONES.length],
+  color: 'color-mix(in srgb, var(--tag-tone) 72%, var(--fg-primary))',
+  backgroundColor: 'color-mix(in srgb, var(--tag-tone) 22%, var(--bg-surface))',
+  borderColor: 'var(--tag-tone)',
+})
+
+interface DropTarget {
+  id: string
+  edge: TagDropEdge
+}
+
+interface PendingFlip {
+  order: string[]
+  rects: Map<string, DOMRect>
+}
 
 export default function TagEditor({
   tags, natural, onChange, onSave, saving, dirty, showTagCount = true, resetKey,
@@ -85,8 +129,13 @@ export default function TagEditor({
   const [mode, setMode] = useState<Mode>(natural ? 'text' : 'chip')
   const [textBuf, setTextBuf] = useState(() => tagsJoined)
   const [activeTag, setActiveTag] = useState<string | null>(null)
-  const [dragOrder, setDragOrder] = useState<string[] | null>(null)
-  const dragOrderRef = useRef<string[] | null>(null)
+  const [dropTarget, setDropTarget] = useState<DropTarget | null>(null)
+  const dropTargetRef = useRef<DropTarget | null>(null)
+  const pointerCoordinatesRef = useRef<{ x: number; y: number } | null>(null)
+  const chipListRef = useRef<HTMLDivElement>(null)
+  const chipNodesRef = useRef(new Map<string, HTMLSpanElement>())
+  const pendingFlipRef = useRef<PendingFlip | null>(null)
+  const flipAnimationsRef = useRef<Animation[]>([])
   const textTagsRef = useRef([...tags])
   const previousResetKeyRef = useRef(resetKey)
   const draftInputRef = useRef<HTMLInputElement>(null)
@@ -96,6 +145,70 @@ export default function TagEditor({
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
   )
+
+  const collisionDetection = useCallback<CollisionDetection>((args) => {
+    const pointer = args.pointerCoordinates
+    pointerCoordinatesRef.current = pointer
+    const listRect = chipListRef.current?.getBoundingClientRect()
+    if (!pointer || !listRect
+      || pointer.x < listRect.left || pointer.x > listRect.right
+      || pointer.y < listRect.top || pointer.y > listRect.bottom) {
+      return []
+    }
+
+    // The original chip stays in place as a placeholder and must not become a
+    // drop target. In a flex gap, fall back to the nearest neighbouring chip.
+    const filteredArgs = {
+      ...args,
+      droppableContainers: args.droppableContainers.filter(({ id }) => id !== args.active.id),
+    }
+    const direct = pointerWithin(filteredArgs)
+    return direct.length > 0 ? direct : closestCenter(filteredArgs)
+  }, [])
+
+  const setPendingDrop = (next: DropTarget | null) => {
+    dropTargetRef.current = next
+    setDropTarget((current) => (
+      current?.id === next?.id && current?.edge === next?.edge ? current : next
+    ))
+  }
+
+  const cancelFlipAnimations = () => {
+    flipAnimationsRef.current.forEach((animation) => animation.cancel())
+    flipAnimationsRef.current = []
+  }
+
+  useEffect(() => () => cancelFlipAnimations(), [])
+
+  useLayoutEffect(() => {
+    const pending = pendingFlipRef.current
+    if (!pending || !tagsEqual(tags, pending.order)) return
+    pendingFlipRef.current = null
+    cancelFlipAnimations()
+
+    const reduceMotion = typeof window !== 'undefined'
+      && typeof window.matchMedia === 'function'
+      && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    if (reduceMotion) return
+
+    const animations: Animation[] = []
+    chipNodesRef.current.forEach((node, tag) => {
+      const before = pending.rects.get(tag)
+      if (!before || typeof node.animate !== 'function') return
+      const after = node.getBoundingClientRect()
+      const dx = before.left - after.left
+      const dy = before.top - after.top
+      if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) return
+      animations.push(node.animate(
+        [
+          { transform: `translate3d(${dx}px, ${dy}px, 0)` },
+          { transform: 'translate3d(0, 0, 0)' },
+        ],
+        { duration: 160, easing: 'cubic-bezier(0.2, 0, 0, 1)' },
+      ))
+    })
+    flipAnimationsRef.current = animations
+  }, [tags])
 
   // Reset draft when image switches
   useEffect(() => { setDraft('') }, [tags])
@@ -108,6 +221,9 @@ export default function TagEditor({
     setDraft('')
     setTextBuf(tagsJoined)
     textTagsRef.current = [...tags]
+    pendingFlipRef.current = null
+    setActiveTag(null)
+    setPendingDrop(null)
   }, [resetKey, tags, tagsJoined])
 
   // Keep free-form punctuation and spacing intact while the parent echoes edits back.
@@ -169,35 +285,52 @@ export default function TagEditor({
   }
 
   const handleDragStart = (event: DragStartEvent) => {
-    const next = [...tags]
-    dragOrderRef.current = next
-    setDragOrder(next)
+    cancelFlipAnimations()
+    setPendingDrop(null)
     setActiveTag(String(event.active.id))
   }
 
   const handleDragOver = (event: DragOverEvent) => {
     const { active, over } = event
-    const current = dragOrderRef.current
-    if (!current || !over || active.id === over.id) return
-    const next = reorderTagFlow(current, String(active.id), String(over.id))
-    if (next === current) return
-    dragOrderRef.current = next
-    setDragOrder(next)
+    const pointer = pointerCoordinatesRef.current
+    if (!over || !pointer || active.id === over.id) {
+      setPendingDrop(null)
+      return
+    }
+    const edge = getTagDropEdge(pointer.x, over.rect.left, over.rect.width)
+    const next: DropTarget = { id: String(over.id), edge }
+    // Do not advertise the gap that would leave the order unchanged.
+    setPendingDrop(reorderTagFlow(tags, String(active.id), next.id, edge) === tags ? null : next)
   }
 
   const clearDragState = () => {
     setActiveTag(null)
-    setDragOrder(null)
-    dragOrderRef.current = null
+    setPendingDrop(null)
+    pointerCoordinatesRef.current = null
   }
 
   const handleDragEnd = (event: DragEndEvent) => {
-    const { over } = event
-    const next = dragOrderRef.current ?? tags
+    const target = event.over ? dropTargetRef.current : null
+    const next = target
+      ? reorderTagFlow(tags, String(event.active.id), target.id, target.edge)
+      : tags
+    if (next !== tags) {
+      pendingFlipRef.current = {
+        order: next,
+        rects: new Map(Array.from(chipNodesRef.current, ([tag, node]) => (
+          [tag, node.getBoundingClientRect()]
+        ))),
+      }
+    }
     clearDragState()
-    if (!over || tagsEqual(next, tags)) return
+    if (next === tags) return
     onChange(next)
   }
+
+  const registerChipNode = useCallback((tag: string, node: HTMLSpanElement | null) => {
+    if (node) chipNodesRef.current.set(tag, node)
+    else chipNodesRef.current.delete(tag)
+  }, [])
 
   const switchToText = () => {
     if (mode === 'text') return
@@ -265,19 +398,27 @@ export default function TagEditor({
         <>
           <DndContext
             sensors={sensors}
-            collisionDetection={pointerWithin}
+            collisionDetection={collisionDetection}
             onDragStart={handleDragStart}
+            onDragMove={handleDragOver}
             onDragOver={handleDragOver}
             onDragEnd={handleDragEnd}
             onDragCancel={clearDragState}
           >
-            <SortableContext items={dragOrder ?? tags} strategy={tagFlowSortingStrategy}>
-              <div className="flex flex-wrap gap-1 overflow-y-auto flex-1 min-h-0 content-start py-1">
+            <SortableContext items={tags} strategy={tagFlowSortingStrategy}>
+              <div ref={chipListRef} className="flex flex-wrap gap-2 overflow-y-auto flex-1 min-h-0 content-start py-1">
                 {tags.length === 0 && (
                   <span className="text-xs text-fg-tertiary">{t('tagEditor.empty')}</span>
                 )}
-                {(dragOrder ?? tags).map((t) => (
-                  <SortableChip key={t} id={t} onRemove={() => removeTag(t)} />
+                {tags.map((t, index) => (
+                  <SortableChip
+                    key={t}
+                    id={t}
+                    toneIndex={index}
+                    insertionEdge={dropTarget?.id === t ? dropTarget.edge : null}
+                    onNodeChange={registerChipNode}
+                    onRemove={() => removeTag(t)}
+                  />
                 ))}
               </div>
             </SortableContext>
@@ -285,9 +426,15 @@ export default function TagEditor({
               {activeTag ? (
                 <span
                   aria-hidden="true"
-                  className={`${TAG_CHIP_CLASS} border-accent bg-surface shadow-lg cursor-grabbing pointer-events-none`}
+                  className={`${TAG_CHIP_CLASS} shadow-lg cursor-grabbing pointer-events-none`}
+                  style={tagToneStyle(Math.max(0, tags.indexOf(activeTag)))}
                 >
-                  <TranslatedTag tag={activeTag} />
+                  <TranslatedTag
+                    tag={activeTag}
+                    layout="stacked"
+                    missingTranslation="-"
+                    translationClassName="text-current opacity-70"
+                  />
                   <span className="text-fg-tertiary text-sm leading-none">×</span>
                 </span>
               ) : null}
@@ -391,37 +538,59 @@ export default function TagEditor({
  * × 删除按钮要 stopPropagation onPointerDown —— 否则 6px 移动阈值过后 × 也成了
  * 拖拽起点,点 × 反而触发拖拽。
  */
-function SortableChip({ id, onRemove }: { id: string; onRemove: () => void }) {
+function SortableChip({
+  id,
+  toneIndex,
+  insertionEdge,
+  onNodeChange,
+  onRemove,
+}: {
+  id: string
+  toneIndex: number
+  insertionEdge: TagDropEdge | null
+  onNodeChange: (tag: string, node: HTMLSpanElement | null) => void
+  onRemove: () => void
+}) {
   const { t } = useTranslation()
   const {
-    attributes, listeners, setNodeRef, transform, transition, isDragging, isOver,
+    attributes, listeners, setNodeRef, isDragging,
   } = useSortable({ id })
-  const style: React.CSSProperties = {
-    // FLIP movement is useful here; rect-based scale is not. Keeping translation
-    // only prevents variable-width tags from stretching each other's text.
-    transform: CSS.Translate.toString(transform),
-    transition,
-  }
+  const ref = useCallback((node: HTMLSpanElement | null) => {
+    setNodeRef(node)
+    onNodeChange(id, node)
+  }, [id, onNodeChange, setNodeRef])
   return (
     <span
-      ref={setNodeRef}
-      style={style}
+      ref={ref}
+      style={tagToneStyle(toneIndex)}
+      data-tag-chip={id}
+      data-tag-tone-index={toneIndex % TAG_TONES.length}
       {...attributes}
       {...listeners}
       className={`${TAG_CHIP_CLASS} cursor-grab active:cursor-grabbing transition-[background-color,border-color,box-shadow,opacity] ${
-        isDragging
-          ? 'opacity-25'
-          : isOver
-            ? 'border-accent ring-2 ring-accent-soft'
-            : 'opacity-100'
+        isDragging ? 'opacity-25' : 'opacity-100'
       }`}
     >
-      <TranslatedTag tag={id} />
+      {insertionEdge && (
+        <span
+          aria-hidden="true"
+          data-tag-insertion-edge={insertionEdge}
+          className={`pointer-events-none absolute -inset-y-0.5 z-10 w-0.5 rounded-full bg-info shadow-sm ${
+            insertionEdge === 'before' ? '-left-[3px]' : '-right-[3px]'
+          }`}
+        />
+      )}
+      <TranslatedTag
+        tag={id}
+        layout="stacked"
+        missingTranslation="-"
+        translationClassName="text-current opacity-70"
+      />
       <button
         onPointerDown={(e) => e.stopPropagation()}
         onClick={onRemove}
         aria-label={t('tagEditor.deleteTag', { tag: id })}
-        className="bg-transparent border-none text-fg-tertiary hover:text-err cursor-pointer p-0 text-sm leading-none"
+        className="self-stretch flex items-center bg-transparent border-none text-fg-tertiary hover:text-err cursor-pointer p-0 pl-0.5 text-sm leading-none"
       >
         ×
       </button>
