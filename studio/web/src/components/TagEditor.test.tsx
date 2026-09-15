@@ -56,6 +56,26 @@ describe('TagEditor (PP4 chip mode)', () => {
     expect(screen.queryByLabelText('删除 a')).not.toBeInTheDocument()
   })
 
+  it('keeps the single-tag input directly below the chip flow and above quick tags', () => {
+    const { container } = render(
+      <TagEditor
+        tags={['a', 'b']}
+        customTags={['quick']}
+        onChange={() => {}}
+        onAddCustomTag={() => {}}
+        onDeleteCustomTag={() => {}}
+      />,
+    )
+
+    const chipList = container.querySelector('[data-tag-chip-list]')
+    const input = screen.getByRole('textbox', { name: '添加单个标签' })
+    const palette = screen.getByRole('region', { name: '项目常驻标签' })
+    expect(chipList).toContainElement(input)
+    expect(chipList?.compareDocumentPosition(palette)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    )
+  })
+
   it('shows project quick tags in both modes and reactivates a pending tag', async () => {
     const user = userEvent.setup()
     const onChange = vi.fn()

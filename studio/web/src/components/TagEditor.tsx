@@ -607,7 +607,11 @@ export default function TagEditor({
             onDragCancel={cancelDrag}
           >
             <SortableContext items={tags} strategy={tagFlowSortingStrategy}>
-              <div ref={chipListRef} className="flex flex-wrap gap-2 overflow-y-auto flex-1 min-h-0 content-start py-1">
+              <div
+                ref={chipListRef}
+                data-tag-chip-list
+                className="flex flex-wrap gap-2 overflow-y-auto flex-1 min-h-0 content-start py-1"
+              >
                 {tags.length === 0 && (
                   <span className="text-xs text-fg-tertiary">{t('tagEditor.empty')}</span>
                 )}
@@ -623,6 +627,50 @@ export default function TagEditor({
                     suppressClickRef={suppressChipClickRef}
                   />
                 ))}
+                <div className="basis-full flex items-center gap-1.5 shrink-0">
+                  <div className="relative flex-1">
+                    <Input
+                      ref={draftInputRef}
+                      value={draft}
+                      onChange={(e) => { setDraft(e.target.value); draftSuggest.notifyChange() }}
+                      onKeyDown={(e) => {
+                        if (draftSuggest.handleKeyDown(e)) return
+                        if (e.key === 'Enter' || e.key === ',' || e.key === '，') {
+                          e.preventDefault(); addTag(draft)
+                        }
+                      }}
+                      onClick={() => draftSuggest.notifyClick()}
+                      onFocus={() => draftSuggest.notifyFocus()}
+                      onBlur={() => draftSuggest.notifyBlur()}
+                      placeholder={t('tagEditor.addPlaceholder')}
+                      aria-label={t('tagEditor.addInputLabel')}
+                      controlSize="sm"
+                      mono
+                      className="w-full"
+                    />
+                    <TagSuggestList
+                      open={draftSuggest.open}
+                      suggestions={draftSuggest.suggestions}
+                      activeIdx={draftSuggest.activeIdx}
+                      onPick={(s) => draftSuggest.pickAt(draftSuggest.suggestions.indexOf(s))}
+                      onHover={draftSuggest.setActiveIdx}
+                      inputRef={draftInputRef}
+                      cursor={draftSuggest.cursor}
+                      positionDeps={[draft]}
+                    />
+                  </div>
+                  {onSave && (
+                    <Button
+                      variant={dirty ? 'primary' : 'secondary'}
+                      size="sm"
+                      disabled={saving || !dirty}
+                      loading={saving}
+                      onClick={onSave}
+                    >
+                      {saving ? t('common.saving') : dirty ? t('common.save') : t('saveBar.saved')}
+                    </Button>
+                  )}
+                </div>
               </div>
             </SortableContext>
             <DragOverlay adjustScale={false} dropAnimation={null}>
@@ -646,50 +694,6 @@ export default function TagEditor({
             </DragOverlay>
           </DndContext>
           {customTagPalette}
-          <div className="flex items-center gap-1.5 shrink-0">
-            <div className="relative flex-1">
-              <Input
-                ref={draftInputRef}
-                value={draft}
-                onChange={(e) => { setDraft(e.target.value); draftSuggest.notifyChange() }}
-                onKeyDown={(e) => {
-                  if (draftSuggest.handleKeyDown(e)) return
-                  if (e.key === 'Enter' || e.key === ',' || e.key === '，') {
-                    e.preventDefault(); addTag(draft)
-                  }
-                }}
-                onClick={() => draftSuggest.notifyClick()}
-                onFocus={() => draftSuggest.notifyFocus()}
-                onBlur={() => draftSuggest.notifyBlur()}
-                placeholder={t('tagEditor.addPlaceholder')}
-                aria-label={t('tagEditor.addInputLabel')}
-                controlSize="sm"
-                mono
-                className="w-full"
-              />
-              <TagSuggestList
-                open={draftSuggest.open}
-                suggestions={draftSuggest.suggestions}
-                activeIdx={draftSuggest.activeIdx}
-                onPick={(s) => draftSuggest.pickAt(draftSuggest.suggestions.indexOf(s))}
-                onHover={draftSuggest.setActiveIdx}
-                inputRef={draftInputRef}
-                cursor={draftSuggest.cursor}
-                positionDeps={[draft]}
-              />
-            </div>
-            {onSave && (
-              <Button
-                variant={dirty ? 'primary' : 'secondary'}
-                size="sm"
-                disabled={saving || !dirty}
-                loading={saving}
-                onClick={onSave}
-              >
-                {saving ? t('common.saving') : dirty ? t('common.save') : t('saveBar.saved')}
-              </Button>
-            )}
-          </div>
         </>
       ) : (
         <>
