@@ -12,6 +12,7 @@ export type ModalSize = 'sm' | 'md' | 'lg' | 'wide'
 
 interface ModalBaseProps {
   title: ReactNode
+  titleMeta?: ReactNode
   description?: ReactNode
   children?: ReactNode
   footer?: ReactNode
@@ -81,6 +82,7 @@ function getFocusable(panel: HTMLElement): HTMLElement[] {
 
 export default function Modal({
   title,
+  titleMeta,
   description,
   children,
   footer,
@@ -162,7 +164,7 @@ export default function Modal({
     role,
     'aria-modal': true,
     'aria-labelledby': titleId,
-    'aria-describedby': description ? descriptionId : undefined,
+    'aria-describedby': description || titleMeta ? descriptionId : undefined,
     tabIndex: -1,
     className: [
       'flex min-h-0 flex-col overflow-hidden rounded-lg border border-dim bg-elevated shadow-xl',
@@ -178,7 +180,19 @@ export default function Modal({
       <header className="shrink-0 px-page pt-page">
         <div className="flex min-w-0 items-start gap-related">
           <div className="min-w-0 flex-1">
-            <h2 id={titleId} className="type-section-title">{title}</h2>
+            {titleMeta ? (
+              <div className="flex min-w-0 items-baseline gap-related">
+                <h2 id={titleId} className="type-section-title shrink-0">{title}</h2>
+                <p
+                  id={description ? undefined : descriptionId}
+                  className="min-w-0 truncate font-mono text-xs font-normal text-fg-secondary"
+                >
+                  {titleMeta}
+                </p>
+              </div>
+            ) : (
+              <h2 id={titleId} className="type-section-title">{title}</h2>
+            )}
             {description && (
               <p id={descriptionId} className="type-page-description mt-related">
                 {description}

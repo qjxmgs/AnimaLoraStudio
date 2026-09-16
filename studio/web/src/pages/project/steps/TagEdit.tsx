@@ -142,7 +142,9 @@ export default function TagEditPage() {
   const tagRevisionByKeyRef = useRef(new Map<string, number>())
   const reloadRequestRef = useRef(0)
   const maskReloadRequestRef = useRef(0)
+  const removeRequestRef = useRef(0)
   const saveInFlightRef = useRef(false)
+  const removeInFlightRef = useRef(false)
   const customTagsSaveInFlightRef = useRef(false)
   const [initial, setInitial] = useState<Map<string, string[]>>(new Map())
   const [meta, setMeta] = useState<Map<string, CaptionMeta>>(new Map())
@@ -158,6 +160,7 @@ export default function TagEditPage() {
   const [activeKey, setActiveKey] = useState<string>('')
   const [inpaintOpen, setInpaintOpen] = useState(false)
   const [inpaintDirty, setInpaintDirty] = useState(false)
+  const [removingKey, setRemovingKey] = useState('')
   const [sel, setSel] = useState<Set<string>>(new Set())
   const [anchor, setAnchor] = useState<string | null>(null)
   const [gridColumnCount, setGridColumnCount] = useState(1)
@@ -276,6 +279,9 @@ export default function TagEditPage() {
     setActiveKey('')
     setInpaintOpen(false)
     setInpaintDirty(false)
+    removeRequestRef.current += 1
+    removeInFlightRef.current = false
+    setRemovingKey('')
     setSel(new Set())
     setAnchor(null)
     setFolderFilter('')
@@ -859,6 +865,73 @@ export default function TagEditPage() {
       ? `${api.maskUrl(project.id, versionId, activeKey)}&_=${activeMaskMtime}`
       : null
 
+  const removeActiveImage = async () => {
+    if (!activeKey || versionId == null || removeInFlightRef.current) return
+    const key = activeKey
+    const hasUnsavedTags = dirtyKeySet.has(key)
+    const confirmed = await confirm(
+      t(hasUnsavedTags ? 'tagEdit.removeImageConfirmDirty' : 'tagEdit.removeImageConfirm', {
+        name: key,
+      }),
+      {
+        tone: 'danger',
+        title: t('tagEdit.removeImageTitle'),
+        okText: t('tagEdit.removeImageConfirmAction'),
+      },
+    )
+    if (!confirmed || removeInFlightRef.current) return
+
+    const visibleIndex = filteredKeys.indexOf(key)
+    const remainingVisible = filteredKeys.filter((candidate) => candidate !== key)
+    const adjacentKey = visibleIndex < 0
+      ? ''
+      : remainingVisible[Math.min(visibleIndex, remainingVisible.length - 1)] ?? ''
+
+    removeInFlightRef.current = true
+    const requestId = ++removeRequestRef.current
+    setRemovingKey(key)
+    try {
+      const result = await api.removeTrainFiles(project.id, versionId, { files: [key] })
+      if (requestId !== removeRequestRef.current) return
+      if (!result.removed.includes(key) && !result.missing.includes(key)) {
+        toast(t('tagEdit.removeImageNotRemoved', { name: key }), 'error')
+        return
+      }
+
+      const removeMapEntry = <T,>(previous: Map<string, T>): Map<string, T> => {
+        if (!previous.has(key)) return previous
+        const next = new Map(previous)
+        next.delete(key)
+        return next
+      }
+      setCache(removeMapEntry)
+      setInitial(removeMapEntry)
+      setPendingTagDrafts(removeMapEntry)
+      setMeta(removeMapEntry)
+      setWorkspaceImages(removeMapEntry)
+      setKeys((previous) => previous.filter((candidate) => candidate !== key))
+      setSel((previous) => {
+        if (!previous.has(key)) return previous
+        const next = new Set(previous)
+        next.delete(key)
+        return next
+      })
+      setAnchor((previous) => previous === key ? null : previous)
+      setActiveKey((previous) => previous === key ? adjacentKey : previous)
+      tagRevisionByKeyRef.current.delete(key)
+      toast(t('tagEdit.removeImageRemoved', { name: key }), 'success')
+      await reload()
+    } catch (error) {
+      if (requestId !== removeRequestRef.current) return
+      toast(String(error), 'error')
+    } finally {
+      if (requestId === removeRequestRef.current) {
+        removeInFlightRef.current = false
+        setRemovingKey((previous) => previous === key ? '' : previous)
+      }
+    }
+  }
+
   const isEditing = Boolean(activeKey)
 
   return (
@@ -1035,7 +1108,7 @@ export default function TagEditPage() {
                 variant="ghost"
                 size="xs"
                 onClick={() => setInpaintOpen(true)}
-                disabled={!activeWorkspaceImage}
+                disabled={!activeWorkspaceImage || Boolean(removingKey)}
                 aria-haspopup="dialog"
               >
                 {t('tagEdit.inpaintAction')}
@@ -1048,6 +1121,25 @@ export default function TagEditPage() {
                 />
                 <span className="whitespace-nowrap">{t('tagEdit.showTrainingMask')}</span>
               </label>
+              <Button
+                variant="ghost"
+                size="xs"
+                iconOnly
+                className="shrink-0 text-err hover:text-err"
+                onClick={() => void removeActiveImage()}
+                disabled={Boolean(removingKey)}
+                loading={removingKey === activeKey}
+                aria-label={t('tagEdit.removeImage')}
+                title={t('tagEdit.removeImage')}
+              >
+                {removingKey !== activeKey && (
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M3 6h18" />
+                    <path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2" />
+                    <path d="M6 6l1 14a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-14" />
+                  </svg>
+                )}
+              </Button>
             </div>
             <div className="flex-1 relative p-2 min-h-0">
               {/* 原图分辨率 + zoom/pan（核对细节 tag 需要看清局部）；

@@ -65,6 +65,28 @@ def _validate_filename(name: str) -> None:
         )
 
 
+def _validate_train_relpath(name: str) -> tuple[str, str]:
+    """Validate and split an exact ``folder/image`` train-relative path."""
+    if not name or "\\" in name or name.startswith("/"):
+        raise CurationError(
+            f'Invalid train image path: "{name}"',
+            code="curation.train_path_invalid", details={"name": name},
+        )
+    parts = name.split("/")
+    if (
+        len(parts) != 2
+        or not parts[0]
+        or not parts[1]
+        or ".." in parts
+        or Path(parts[1]).suffix.lower() not in IMAGE_EXTS
+    ):
+        raise CurationError(
+            f'Invalid train image path: "{name}"',
+            code="curation.train_path_invalid", details={"name": name},
+        )
+    return parts[0], parts[1]
+
+
 def _project_dir(conn, project_id: int) -> tuple[dict[str, Any], Path]:
     p = projects.get_project(conn, project_id)
     if not p:
@@ -452,6 +474,64 @@ def remove_from_train(
         preprocess_manifest.train_remove_entries(
             pdir, v["label"], rels_to_pop,
         )
+    return {"removed": removed, "missing": missing}
+
+
+def remove_train_files(
+    conn,
+    project_id: int,
+    version_id: int,
+    files: list[str],
+) -> dict[str, list[str]]:
+    """Remove exact train images and their sidecars without touching siblings.
+
+    Unlike :func:`remove_from_train`, ``files`` contains train-relative paths,
+    not download-origin names.  This is used by TagEdit, where one fan-out crop
+    must be removable without deleting the other crops from the same source.
+    """
+    validated = [(name, *_validate_train_relpath(name)) for name in files]
+    p, v, train = _version_train_dir(conn, project_id, version_id)
+    pdir = projects.project_dir(p["id"], p["slug"])
+    preprocess_manifest.ensure_train_manifest(pdir, v["label"])
+
+    removed: list[str] = []
+    missing: list[str] = []
+    manifest_names: list[str] = []
+    try:
+        for rel_name, folder, filename in validated:
+            image = train / folder / filename
+            if image.is_file():
+                try:
+                    image.unlink()
+                except OSError as exc:
+                    raise CurationError(
+                        f'Failed to remove train image "{rel_name}": {exc}',
+                        code="curation.train_remove_failed",
+                        details={"name": rel_name, "reason": str(exc)},
+                        http_status=500,
+                    ) from exc
+                removed.append(rel_name)
+            else:
+                missing.append(rel_name)
+
+            # Once the image is absent, converge all of its exact sidecars and
+            # manifest metadata as well.  Failures here are intentionally best
+            # effort, matching the existing origin-level removal behavior.
+            for ext in _META_EXTS:
+                metadata = image.with_suffix(ext)
+                if metadata.exists():
+                    try:
+                        metadata.unlink()
+                    except OSError:
+                        pass
+            train_masks.delete_mask(train, rel_name)
+            manifest_names.append(rel_name)
+    finally:
+        if manifest_names:
+            preprocess_manifest.train_remove_entries(
+                pdir, v["label"], manifest_names,
+            )
+
     return {"removed": removed, "missing": missing}
 
 

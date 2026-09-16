@@ -22,6 +22,11 @@ class RemoveRequest(BaseModel):
     files: list[str]
 
 
+class RemoveTrainFilesRequest(BaseModel):
+    """Exact train-relative paths, for example ``1_data/image.png``."""
+    files: list[str]
+
+
 class CopyValidationRequest(BaseModel):
     """download → validation 复制（落固定 validation/1_data/，无 dest_folder）。"""
     files: list[str]

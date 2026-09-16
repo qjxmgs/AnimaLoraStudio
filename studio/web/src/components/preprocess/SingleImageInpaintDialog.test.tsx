@@ -149,13 +149,67 @@ describe('SingleImageInpaintDialog', () => {
     expect(within(dialog).getByRole('button', { name: '保存并关闭' })).toBeDisabled()
     expect(within(dialog).queryByText(/保存全部/)).not.toBeInTheDocument()
     expect(within(dialog).queryByText('自动头部遮罩')).not.toBeInTheDocument()
+    const header = dialog.querySelector('header')
+    expect(header).not.toBeNull()
+    const title = within(header as HTMLElement).getByRole('heading', { name: '单图涂抹' })
+    const imageTitle = within(header as HTMLElement).getByText('1_data/a.jpg · 640×480')
+    expect(title.parentElement).toContainElement(imageTitle)
+    expect(title.parentElement).toHaveClass('items-baseline')
+    expect(imageTitle).toHaveClass('truncate', 'font-mono')
+    expect(imageTitle.parentElement?.parentElement?.children).toHaveLength(1)
+    const historyActions = within(header as HTMLElement).getByTestId(
+      'single-image-inpaint-history-actions',
+    )
+    expect(within(historyActions).getByRole('button', { name: '撤销' })).toBeDisabled()
+    expect(within(historyActions).getByRole('button', { name: '重做' })).toBeDisabled()
+    expect(within(historyActions).getByRole('button', { name: '放弃当前修改' })).toBeDisabled()
+    const close = within(header as HTMLElement).getByRole('button', { name: '关闭' })
+    expect(close).toHaveClass('btn-sm', '-mr-4', '-mt-4')
+    expect(close.querySelector('svg')).toHaveAttribute('width', '18')
+    expect(historyActions.compareDocumentPosition(close) & Node.DOCUMENT_POSITION_FOLLOWING)
+      .toBeTruthy()
+
+    const editorRoot = within(dialog).getByTestId('single-image-inpaint-editor-root')
+    expect(editorRoot.parentElement).toHaveClass('!pt-2', '!pb-2')
     const main = within(dialog).getByTestId('single-image-inpaint-main')
     const statusHost = within(dialog).getByTestId('single-image-inpaint-status-host')
     const status = within(dialog).getByTestId('inpaint-canvas-status')
+    const toolFooter = within(dialog).getByTestId('inpaint-tool-panel-footer')
+    const toolScroll = within(dialog).getByTestId('inpaint-tool-panel-scroll')
     expect(main).toHaveClass('grid', 'flex-1')
+    expect(main.previousElementSibling).toBeNull()
     expect(main).not.toContainElement(status)
     expect(statusHost).toContainElement(status)
     expect(main.nextElementSibling).toBe(statusHost)
+    expect(toolFooter).toContainElement(within(dialog).getByRole('button', { name: '取消' }))
+    expect(toolFooter).toContainElement(within(dialog).getByRole('button', { name: '保存并关闭' }))
+    expect(toolScroll).not.toContainElement(toolFooter)
+    expect(dialog.querySelector('footer')).toBeNull()
+  })
+
+  it('keeps history actions working after moving them into the header', async () => {
+    const user = userEvent.setup()
+    render(
+      <SingleImageInpaintDialog
+        projectId={7}
+        versionId={11}
+        image={image}
+        onClose={() => {}}
+      />,
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Draw test stroke' }))
+    expect(screen.getByTestId('dialog-inpaint-canvas')).toHaveTextContent('paint:1 mask:0')
+
+    await user.click(screen.getByRole('button', { name: '撤销' }))
+    expect(screen.getByTestId('dialog-inpaint-canvas')).toHaveTextContent('paint:0 mask:0')
+
+    await user.click(screen.getByRole('button', { name: '重做' }))
+    expect(screen.getByTestId('dialog-inpaint-canvas')).toHaveTextContent('paint:1 mask:0')
+
+    await user.click(screen.getByRole('button', { name: '放弃当前修改' }))
+    expect(screen.getByTestId('dialog-inpaint-canvas')).toHaveTextContent('paint:0 mask:0')
+    expect(mocks.resetStrokeAnchor).toHaveBeenCalledTimes(3)
   })
 
   it('saves paint and mask in order, then closes', async () => {

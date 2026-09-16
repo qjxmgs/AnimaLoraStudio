@@ -10,6 +10,7 @@ routes：
     POST /api/projects/{pid}/versions/{vid}/preprocess/duplicates/apply  标记 manifest duplicate_removed
     POST /api/projects/{pid}/versions/{vid}/curation/copy                download → train/{folder}
     POST /api/projects/{pid}/versions/{vid}/curation/remove              train/{folder} → 删
+    POST /api/projects/{pid}/versions/{vid}/curation/remove-files        精确 train 相对路径 → 删
     POST /api/projects/{pid}/versions/{vid}/curation/folder              create/rename/delete folder
 """
 from __future__ import annotations
@@ -33,6 +34,7 @@ from ...schemas.curation import (
     DuplicateScanRequest,
     FolderOp,
     RemoveRequest,
+    RemoveTrainFilesRequest,
     RemoveValidationRequest,
 )
 from ._shared import _publish_project_state
@@ -436,6 +438,19 @@ def remove_from_train(
         result = curation.remove_from_train(
             conn, pid, vid, body.folder, body.files,
         )
+    return result
+
+
+@router.post("/api/projects/{pid}/versions/{vid}/curation/remove-files")
+def remove_train_files(
+    pid: int, vid: int, body: RemoveTrainFilesRequest,
+) -> dict[str, Any]:
+    """Remove exact train-relative images; download sources remain untouched."""
+    with db.connection_for() as conn:
+        result = curation.remove_train_files(conn, pid, vid, body.files)
+        project = projects.get_project(conn, pid)
+    if project:
+        _publish_project_state(project)
     return result
 
 

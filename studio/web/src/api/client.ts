@@ -3250,6 +3250,15 @@ export const api = {
       `/api/projects/${pid}/versions/${vid}/curation/remove`,
       { method: 'POST', body: JSON.stringify(body) }
     ),
+  removeTrainFiles: (
+    pid: number,
+    vid: number,
+    body: { files: string[] }
+  ) =>
+    req<{ removed: string[]; missing: string[] }>(
+      `/api/projects/${pid}/versions/${vid}/curation/remove-files`,
+      { method: 'POST', body: JSON.stringify(body) }
+    ),
   folderOp: (
     pid: number,
     vid: number,

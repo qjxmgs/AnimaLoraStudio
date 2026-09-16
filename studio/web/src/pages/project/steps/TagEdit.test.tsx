@@ -314,6 +314,7 @@ beforeEach(() => {
   mocks.inpaintProps.length = 0
   vi.spyOn(api, 'listCaptionsFull').mockResolvedValue(captions)
   vi.spyOn(api, 'listCropWorkspaceTrain').mockResolvedValue(cropWorkspace)
+  vi.spyOn(api, 'removeTrainFiles').mockResolvedValue({ removed: [], missing: [] })
   vi.spyOn(api, 'commitCaptions').mockResolvedValue({
     written: 1,
     skipped: [],
@@ -855,6 +856,108 @@ describe('TagEdit workspace', () => {
       '人物 A/a1.png',
     )
     expect(mocks.inpaintProps).toHaveLength(1)
+  })
+
+  it('places the remove button after the mask toggle and leaves the image untouched on cancel', async () => {
+    mocks.confirm.mockResolvedValueOnce(false)
+    const user = userEvent.setup()
+    renderPage()
+    await ready()
+    await user.click(screen.getByRole('button', { name: '打开 人物 A/a1.png' }))
+
+    const toggle = screen.getByRole('checkbox', { name: '显示遮罩' })
+    const remove = screen.getByRole('button', { name: '从训练集中移除当前图片' })
+    expect(toggle.compareDocumentPosition(remove) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(remove).toHaveClass('btn-ghost', 'text-err', 'btn-icon')
+
+    await user.click(remove)
+
+    expect(mocks.confirm).toHaveBeenCalledWith(
+      '确定要将「人物 A/a1.png」从训练集中移除吗？下载源图和同源的其他图片不会被删除。',
+      expect.objectContaining({
+        tone: 'danger',
+        title: '移除训练图片',
+        okText: '移除',
+      }),
+    )
+    expect(api.removeTrainFiles).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: '打开 人物 A/a1.png' })).toBeInTheDocument()
+  })
+
+  it('removes only the active image, discards its draft, and preserves other drafts', async () => {
+    vi.mocked(api.removeTrainFiles).mockResolvedValueOnce({
+      removed: ['人物 A/a1.png'],
+      missing: [],
+    })
+    const user = userEvent.setup()
+    renderPage()
+    await ready()
+    expect(screen.getByText('3 张')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: '打开 人物 A/a2.png' }))
+    await user.click(screen.getByRole('button', { name: '修改标签' }))
+    await user.click(screen.getByRole('button', { name: '打开 人物 A/a1.png' }))
+    await user.click(screen.getByRole('button', { name: '修改标签' }))
+    expect(screen.getByRole('button', { name: '保存（2）' })).toBeEnabled()
+
+    await user.click(screen.getByRole('button', { name: '从训练集中移除当前图片' }))
+
+    await waitFor(() => expect(api.removeTrainFiles).toHaveBeenCalledWith(7, 11, {
+      files: ['人物 A/a1.png'],
+    }))
+    expect(mocks.confirm).toHaveBeenCalledWith(
+      '确定要将「人物 A/a1.png」从训练集中移除吗？当前图片尚未保存的标签修改会被丢弃；下载源图和同源的其他图片不会被删除。',
+      expect.objectContaining({ title: '移除训练图片' }),
+    )
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: '打开 人物 A/a1.png' })).not.toBeInTheDocument()
+    })
+    expect(screen.getByText('2 张')).toBeInTheDocument()
+    expect(screen.getByTestId('preview-image')).toHaveTextContent('a2.png')
+    expect(screen.getByRole('button', { name: '保存（1）' })).toBeEnabled()
+    expect(mocks.toast).toHaveBeenCalledWith(
+      '已从训练集中移除「人物 A/a1.png」',
+      'success',
+    )
+
+    await user.click(screen.getByRole('button', { name: '保存（1）' }))
+    await waitFor(() => expect(api.commitCaptions).toHaveBeenCalledWith(7, 11, [{
+      folder: '人物 A',
+      name: 'a2.png',
+      tags: ['dog', 'edited'],
+    }]))
+  })
+
+  it('treats an externally missing image as removed and falls back to the previous image', async () => {
+    vi.mocked(api.removeTrainFiles).mockResolvedValueOnce({
+      removed: [],
+      missing: ['人物 B/b1.png'],
+    })
+    const user = userEvent.setup()
+    renderPage()
+    await ready()
+    await user.click(screen.getByRole('button', { name: '打开 人物 B/b1.png' }))
+
+    await user.click(screen.getByRole('button', { name: '从训练集中移除当前图片' }))
+
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: '打开 人物 B/b1.png' })).not.toBeInTheDocument()
+    })
+    expect(screen.getByTestId('preview-image')).toHaveTextContent('a2.png')
+  })
+
+  it('keeps the active image when exact train removal fails', async () => {
+    vi.mocked(api.removeTrainFiles).mockRejectedValueOnce(new Error('locked'))
+    const user = userEvent.setup()
+    renderPage()
+    await ready()
+    await user.click(screen.getByRole('button', { name: '打开 人物 A/a1.png' }))
+
+    await user.click(screen.getByRole('button', { name: '从训练集中移除当前图片' }))
+
+    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith('Error: locked', 'error'))
+    expect(screen.getByRole('button', { name: '打开 人物 A/a1.png' })).toBeInTheDocument()
+    expect(screen.getByTestId('preview-image')).toHaveTextContent('a1.png')
   })
 
   it('migrates the active image and pending tag draft when inpaint converts a jpg to png', async () => {

@@ -13,7 +13,7 @@ import pytest
 
 from studio import db
 from studio.services.dataset import curation
-from studio.services.preprocess import manifest as preprocess_manifest
+from studio.services.preprocess import manifest as preprocess_manifest, masks as train_masks
 from studio.services.projects import projects, versions
 
 
@@ -250,3 +250,74 @@ def test_remove_from_train_deletes_all_fan_out_derivatives(env) -> None:
     m = preprocess_manifest.train_load(_pdir(env), env["v"]["label"])
     assert "1_data/X_c0.png" not in m["images"]
     assert "1_data/X_c1.png" not in m["images"]
+
+
+def test_remove_train_files_deletes_only_the_exact_derivative(env) -> None:
+    """TagEdit removal keeps the download source and sibling fan-out crops."""
+    source = _dl(env, "X.jpg", blob=b"source")
+    train_sub = _train(env, "1_data")
+    train_sub.mkdir(parents=True, exist_ok=True)
+    first = train_sub / "X_c0.png"
+    sibling = train_sub / "X_c1.png"
+    first.write_bytes(b"c0")
+    sibling.write_bytes(b"c1")
+    first.with_suffix(".txt").write_text("first caption", encoding="utf-8")
+    first.with_suffix(".json").write_text('{"tags": ["first"]}', encoding="utf-8")
+    sibling.with_suffix(".txt").write_text("sibling caption", encoding="utf-8")
+    preprocess_manifest.train_replace_with_crops(
+        _pdir(env), env["v"]["label"],
+        source_name="1_data/X.jpg",
+        outputs=[
+            {"name": "1_data/X_c0.png", "origin": "X.jpg", "mtime": 1, "size": 10},
+            {"name": "1_data/X_c1.png", "origin": "X.jpg", "mtime": 1, "size": 10},
+        ],
+    )
+    mask = train_masks.mask_path_for(
+        _pdir(env) / "versions" / env["v"]["label"] / "train",
+        "1_data/X_c0.png",
+    )
+    mask.parent.mkdir(parents=True, exist_ok=True)
+    mask.write_bytes(b"mask")
+
+    with db.connection_for(env["db"]) as conn:
+        result = curation.remove_train_files(
+            conn, env["p"]["id"], env["v"]["id"], ["1_data/X_c0.png"],
+        )
+
+    assert result == {"removed": ["1_data/X_c0.png"], "missing": []}
+    assert not first.exists()
+    assert not first.with_suffix(".txt").exists()
+    assert not first.with_suffix(".json").exists()
+    assert not mask.exists()
+    assert sibling.read_bytes() == b"c1"
+    assert sibling.with_suffix(".txt").read_text(encoding="utf-8") == "sibling caption"
+    assert source.read_bytes() == b"source"
+    manifest = preprocess_manifest.train_load(_pdir(env), env["v"]["label"])
+    assert "1_data/X_c0.png" not in manifest["images"]
+    assert "1_data/X_c1.png" in manifest["images"]
+
+
+def test_remove_train_files_rejects_non_exact_paths(env) -> None:
+    with db.connection_for(env["db"]) as conn:
+        for invalid in ("X.png", "../X.png", "1_data/../../X.png", "1_data\\X.png"):
+            with pytest.raises(curation.CurationError):
+                curation.remove_train_files(
+                    conn, env["p"]["id"], env["v"]["id"], [invalid],
+                )
+
+
+def test_remove_train_files_converges_stale_missing_entries(env) -> None:
+    preprocess_manifest.train_add_processed(
+        _pdir(env), env["v"]["label"], "1_data/missing.png",
+        {"origin": "missing.jpg"},
+    )
+
+    with db.connection_for(env["db"]) as conn:
+        result = curation.remove_train_files(
+            conn, env["p"]["id"], env["v"]["id"], ["1_data/missing.png"],
+        )
+
+    assert result == {"removed": [], "missing": ["1_data/missing.png"]}
+    assert preprocess_manifest.train_get_entry(
+        _pdir(env), env["v"]["label"], "1_data/missing.png",
+    ) is None

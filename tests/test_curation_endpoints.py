@@ -132,6 +132,58 @@ def test_remove_only_deletes_train(client: TestClient) -> None:
     assert view["right"]["1_data"] == []
 
 
+def test_remove_files_deletes_exact_train_path_and_keeps_download(client: TestClient) -> None:
+    pid, vid = _make(client)
+    source = _drop(client, pid, "1.png")
+    client.post(
+        f"/api/projects/{pid}/versions/{vid}/curation/copy",
+        json={"files": ["1.png"], "dest_folder": "5_x"},
+    )
+    with db.connection_for() as conn:
+        project = projects.get_project(conn, pid)
+        version = versions.get_version(conn, vid)
+    train_image = versions.version_dir(
+        project["id"], project["slug"], version["label"],
+    ) / "train" / "5_x" / "1.png"
+    train_image.with_suffix(".txt").write_text("tag", encoding="utf-8")
+
+    before = client.get(f"/api/projects/{pid}").json()
+    before_version = next(v for v in before["versions"] if v["id"] == vid)
+    assert before_version["stats"]["train_image_count"] == 1
+    assert len(client.get(
+        f"/api/projects/{pid}/versions/{vid}/captions?full=1",
+    ).json()["items"]) == 1
+
+    response = client.post(
+        f"/api/projects/{pid}/versions/{vid}/curation/remove-files",
+        json={"files": ["5_x/1.png"]},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"removed": ["5_x/1.png"], "missing": []}
+    assert source.exists()
+    assert not train_image.exists()
+    assert not train_image.with_suffix(".txt").exists()
+    view = client.get(f"/api/projects/{pid}/versions/{vid}/curation").json()
+    assert _names(view["left"]) == ["1.png"]
+    assert view["right"]["5_x"] == []
+    assert client.get(
+        f"/api/projects/{pid}/versions/{vid}/captions?full=1",
+    ).json()["items"] == []
+    after = client.get(f"/api/projects/{pid}").json()
+    after_version = next(v for v in after["versions"] if v["id"] == vid)
+    assert after_version["stats"]["train_image_count"] == 0
+
+
+def test_remove_files_rejects_path_traversal(client: TestClient) -> None:
+    pid, vid = _make(client)
+    response = client.post(
+        f"/api/projects/{pid}/versions/{vid}/curation/remove-files",
+        json={"files": ["1_data/../../escape.png"]},
+    )
+    assert response.status_code == 400
+
+
 # ---------------------------------------------------------------------------
 # folder ops
 # ---------------------------------------------------------------------------
