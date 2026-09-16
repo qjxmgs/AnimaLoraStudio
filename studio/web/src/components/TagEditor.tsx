@@ -29,6 +29,8 @@ interface Props {
   /** Tags that stay visible in chip mode but are excluded from the saved value. */
   inactiveTags?: ReadonlySet<string>
   natural?: boolean
+  mode?: TagEditorMode
+  onModeChange?: (mode: TagEditorMode) => void
   onChange: (tags: string[], inactiveTags: ReadonlySet<string>) => void
   onSave?: () => void | Promise<void>
   saving?: boolean
@@ -43,7 +45,7 @@ interface Props {
   onReplaceCustomTags?: (tags: string[]) => void | Promise<void>
 }
 
-type Mode = 'chip' | 'text'
+export type TagEditorMode = 'chip' | 'text'
 
 const parseLine = (raw: string): string[] => {
   const next: string[] = []
@@ -256,6 +258,8 @@ export default function TagEditor({
   tags,
   inactiveTags = EMPTY_INACTIVE_TAGS,
   natural,
+  mode: controlledMode,
+  onModeChange,
   onChange,
   onSave,
   saving,
@@ -275,7 +279,12 @@ export default function TagEditor({
     [inactiveTags, tags],
   )
   const tagsJoined = useMemo(() => selectedTags.join(', '), [selectedTags])
-  const [mode, setMode] = useState<Mode>(natural ? 'text' : 'chip')
+  const [uncontrolledMode, setUncontrolledMode] = useState<TagEditorMode>(natural ? 'text' : 'chip')
+  const mode = controlledMode ?? uncontrolledMode
+  const setMode = (next: TagEditorMode) => {
+    if (controlledMode == null) setUncontrolledMode(next)
+    onModeChange?.(next)
+  }
   const [textBuf, setTextBuf] = useState(() => tagsJoined)
   const [activeTag, setActiveTag] = useState<string | null>(null)
   const [dropTarget, setDropTarget] = useState<TagDropTarget | null>(null)

@@ -21,7 +21,7 @@ import PaneResizer, { normalizePanePair } from '../../../components/PaneResizer'
 import SaveBar from '../../../components/SaveBar'
 import { SegmentedControl } from '../../../components/SelectionGroup'
 import StepShell from '../../../components/StepShell'
-import TagEditor from '../../../components/TagEditor'
+import TagEditor, { type TagEditorMode } from '../../../components/TagEditor'
 import TagStatsPanel from '../../../components/TagStatsPanel'
 import { useToast } from '../../../components/Toast'
 import ZoomableImage from '../../../components/ZoomableImage'
@@ -158,6 +158,7 @@ export default function TagEditPage() {
   const [customTagsBusy, setCustomTagsBusy] = useState(false)
 
   const [activeKey, setActiveKey] = useState<string>('')
+  const [tagEditorMode, setTagEditorMode] = useState<TagEditorMode>('chip')
   const [inpaintOpen, setInpaintOpen] = useState(false)
   const [inpaintDirty, setInpaintDirty] = useState(false)
   const [removingKey, setRemovingKey] = useState('')
@@ -1245,9 +1246,12 @@ export default function TagEditPage() {
               </header>
               <div className="p-2.5 flex-1 min-h-0 flex flex-col">
                 <TagEditor
+                  key={activeKey}
                   resetKey={activeKey}
                   tags={activeDisplayTags}
                   inactiveTags={activeInactiveTags}
+                  mode={tagEditorMode}
+                  onModeChange={setTagEditorMode}
                   onChange={updateActiveTags}
                   showTagCount={false}
                   customTags={customTags}

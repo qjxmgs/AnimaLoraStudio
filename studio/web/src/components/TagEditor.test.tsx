@@ -292,6 +292,41 @@ describe('TagEditor (PP4 chip mode)', () => {
     expect(screen.getByRole('radio', { name: '文本' })).toBeChecked()
   })
 
+  it('isolates all per-image editor state while a controlled mode survives remounting', async () => {
+    const user = userEvent.setup()
+    function ImageEditorHarness() {
+      const [image, setImage] = useState<'image-a' | 'image-b'>('image-a')
+      const [mode, setMode] = useState<'chip' | 'text'>('chip')
+      const tags = image === 'image-a' ? ['from-a'] : ['from-b']
+      return (
+        <>
+          <button type="button" onClick={() => setImage('image-b')}>Switch image</button>
+          <TagEditor
+            key={image}
+            resetKey={image}
+            tags={tags}
+            mode={mode}
+            onModeChange={setMode}
+            onChange={() => {}}
+          />
+        </>
+      )
+    }
+
+    render(<ImageEditorHarness />)
+    await user.click(screen.getByText('文本'))
+    const oldInput = screen.getByRole('textbox', { name: '以文本编辑标签' })
+    fireEvent.change(oldInput, { target: { value: 'stale from image a' } })
+
+    await user.click(screen.getByRole('button', { name: 'Switch image' }))
+
+    const newInput = screen.getByRole('textbox', { name: '以文本编辑标签' })
+    expect(newInput).not.toBe(oldInput)
+    expect(newInput).toHaveValue('from-b')
+    expect(screen.getByRole('radio', { name: '文本' })).toBeChecked()
+    expect(screen.queryByDisplayValue('stale from image a')).not.toBeInTheDocument()
+  })
+
   it('Enter adds a tag at the end (chip 拖拽心智 — 新东西落底部)', async () => {
     const user = userEvent.setup()
     const onChange = vi.fn()
