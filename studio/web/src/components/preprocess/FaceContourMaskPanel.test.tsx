@@ -22,7 +22,7 @@ vi.mock('../../lib/useEventStream', () => ({
 
 const job: Job = {
   id: 41, project_id: 2, version_id: 3, kind: 'preprocess', params: '{}',
-  params_decoded: { stage: 'head_mask' }, status: 'running', started_at: null,
+  params_decoded: { stage: 'head_mask', mask_targets: ['face_contour'] }, status: 'running', started_at: null,
   finished_at: null, pid: null, log_path: null, error_msg: null,
 }
 
@@ -35,13 +35,14 @@ const catalog = {
   },
   downloads: {},
   face_segmenter: { valid: true },
+  background_segmenter: { valid: true },
 } as unknown as ModelsCatalog
 
 const proposals: HeadMaskProposals = {
   schema_version: 1,
   job_id: 41,
   model: { revision: '06604f', path: 'model.onnx', input_size: [640, 640], provider: 'CPUExecutionProvider' },
-  parameters: { confidence: 0.413, iou_threshold: 0.7, padding_ratio: 0.1, feather_ratio: 0.03 },
+  parameters: { mask_mode: 'face_contour', confidence: 0.413, iou_threshold: 0.7, padding_ratio: 0.1, feather_ratio: 0.03 },
   created_at: 1,
   stale_count: 0,
   undo_available: false,
@@ -88,6 +89,90 @@ beforeEach(() => {
 })
 
 describe('FaceContourMaskPanel', () => {
+  it('allows background-only detection without either head model and blocks an empty target list', async () => {
+    vi.mocked(api.getModelsCatalog).mockResolvedValue({ ...catalog, head_detector: undefined, face_segmenter: undefined })
+    renderPanel()
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('checkbox', { name: '脸部 · 精细轮廓' }))
+    expect(screen.getByRole('button', { name: '检测当前' })).toBeDisabled()
+    await user.click(screen.getByRole('checkbox', { name: '背景 · 二次元人物分割' }))
+    expect(screen.queryByRole('button', { name: /下载头部检测/ })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '检测当前' }))
+    expect(api.startHeadMaskDetection).toHaveBeenCalledWith(2, 3, expect.objectContaining({
+      mask_targets: ['background'], filenames: ['1_data/A.png'], scope: 'selected',
+    }))
+  })
+
+  it('reports every missing dependency for combined targets', async () => {
+    vi.mocked(api.getModelsCatalog).mockResolvedValue({ ...catalog,
+      head_detector: undefined, face_segmenter: undefined, background_segmenter: undefined })
+    renderPanel()
+    await userEvent.click(screen.getByRole('checkbox', { name: '背景 · 二次元人物分割' }))
+    expect(screen.getByRole('button', { name: /下载头部检测/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '下载并准备脸部分割模型' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /下载背景分割模型/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '检测全部' })).toBeDisabled()
+  })
+
+  it('keeps a successful background selectable when face detection failed', async () => {
+    const background = { ...proposals.images[0].regions[0], id: 'bg', target: 'background' as const, coverage: .652, score: undefined }
+    vi.mocked(api.getHeadMaskProposals).mockResolvedValue({ ...proposals, schema_version: 3,
+      parameters: { ...proposals.parameters, mask_targets: ['face_contour', 'background'] },
+      images: [{ ...proposals.images[0], regions: [background], review_status: 'needs_review', target_statuses: {
+        face_contour: { status: 'failed', reason: 'detection_failed', count: 0 },
+        background: { status: 'done', reason: 'ready', count: 1 },
+      } }],
+    })
+    const state = vi.fn(), filter = vi.fn()
+    renderPanel({ onStateChange: state, onShowUndetected: filter })
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('checkbox', { name: '背景 · 二次元人物分割' }))
+    await user.click(screen.getByRole('button', { name: '检测全部' }))
+    act(() => mocks.onEvent?.({ type: 'job_state_changed', job_id: 41, status: 'done' }))
+    const region = await screen.findByRole('checkbox', { name: '背景 · 遮罩面积 65.2%' })
+    expect(region).toBeChecked()
+    await user.click((await screen.findAllByRole('button', { name: '未检测 / 需检查（1）' }))[0])
+    expect(filter).toHaveBeenCalledWith(['1_data/A.png'])
+    await user.click(region)
+    expect(screen.getByRole('button', { name: '应用所选（0）' })).toBeDisabled()
+    await user.click(region)
+    await user.click(screen.getByRole('button', { name: '应用所选（1）' }))
+    expect(api.applyHeadMaskProposals).toHaveBeenCalledWith(2, 3, 41, { '1_data/A.png': ['bg'] })
+  })
+
+  it('submits all three targets and rejects invalid background parameters', async () => {
+    renderPanel()
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('checkbox', { name: '头部 · 矩形' }))
+    await user.click(screen.getByRole('checkbox', { name: '背景 · 二次元人物分割' }))
+    await user.click(screen.getByText('检测参数'))
+    const threshold = screen.getByRole('spinbutton', { name: '人物阈值' })
+    await user.clear(threshold)
+    expect(screen.getByRole('button', { name: '检测全部' })).toBeDisabled()
+    await user.type(threshold, '0.6')
+    await user.click(screen.getByRole('button', { name: '检测全部' }))
+    expect(api.startHeadMaskDetection).toHaveBeenCalledWith(2, 3, expect.objectContaining({
+      mask_targets: ['face_contour', 'head_box', 'background'], background_threshold: .6,
+    }))
+  })
+
+  it('ignores events and delayed results owned by a previous workspace', async () => {
+    let resolve!: (value: HeadMaskProposals) => void
+    vi.mocked(api.getHeadMaskProposals).mockReturnValue(new Promise((done) => { resolve = done }))
+    const state = vi.fn()
+    const props = { projectId: 2, versionId: 3, activeName: '1_data/A.png', unsavedCount: 0,
+      onStateChange: state, onShowUndetected: vi.fn(), onWorkspaceChanged: vi.fn() }
+    const { rerender } = render(<FaceContourMaskPanel {...props} />)
+    await userEvent.click(await screen.findByRole('button', { name: '检测全部' }))
+    act(() => mocks.onEvent?.({ type: 'job_state_changed', job_id: 41, project_id: 99, status: 'done' }))
+    expect(api.getHeadMaskProposals).not.toHaveBeenCalled()
+    act(() => mocks.onEvent?.({ type: 'job_state_changed', job_id: 41, project_id: 2, status: 'done' }))
+    rerender(<FaceContourMaskPanel {...props} projectId={5} versionId={6} />)
+    await act(async () => resolve(proposals))
+    expect(state).toHaveBeenLastCalledWith(null)
+    expect(screen.queryByRole('button', { name: /应用所选/ })).not.toBeInTheDocument()
+  })
+
   it('gates apply and undo while strokes are unsaved', async () => {
     vi.mocked(api.getPreprocessStatusTrain).mockResolvedValue({ job: { ...job, status: 'done' }, log_tail: '', summary: { image_count: 2 } })
     vi.mocked(api.getHeadMaskProposals).mockResolvedValue({ ...proposals, undo_available: true })
@@ -124,7 +209,7 @@ describe('FaceContourMaskPanel', () => {
     vi.spyOn(api, 'startModelDownload').mockResolvedValue({ key: 'face_segmenter', status: 'running' })
     const user = userEvent.setup()
     renderPanel()
-    expect(await screen.findByRole('combobox')).toHaveValue('face_contour')
+    expect(await screen.findByRole('checkbox', { name: '脸部 · 精细轮廓' })).toBeChecked()
     expect(screen.getByRole('button', { name: '检测全部' })).toBeDisabled()
     await user.click(screen.getByRole('button', { name: '下载并准备脸部分割模型' }))
     expect(api.startModelDownload).toHaveBeenCalledWith({ model_id: 'face_segmenter' })
@@ -137,9 +222,9 @@ describe('FaceContourMaskPanel', () => {
     const filter = vi.fn()
     const user = userEvent.setup()
     renderPanel({ onShowUndetected: filter })
-    await user.click(await screen.findByRole('button', { name: '未检测到（2）' }))
+    await user.click((await screen.findAllByRole('button', { name: '未检测 / 需检查（2）' }))[0])
     expect(filter).toHaveBeenCalledWith(['1_data/A.png', '1_data/B.png'])
-    expect(screen.getByText(/不会用方框代替/)).toBeInTheDocument()
+    expect(screen.getByText(/成功区域仍可审核和应用/)).toBeInTheDocument()
   })
 
   it('blocks detection while manual strokes are unsaved', async () => {
@@ -156,7 +241,7 @@ describe('FaceContourMaskPanel', () => {
     })
     renderPanel({ previewState: 'error' })
     expect(await screen.findByRole('button', { name: '应用所选（2）' })).toBeDisabled()
-    expect(screen.getByRole('alert')).toHaveTextContent('轮廓预览加载失败')
+    expect(screen.getByRole('alert')).toHaveTextContent('遮罩预览加载失败')
   })
 
   it('makes it explicit that selecting contour mode does not convert a legacy proposal', async () => {
@@ -164,7 +249,9 @@ describe('FaceContourMaskPanel', () => {
       job: { ...job, status: 'done' }, log_tail: '', summary: { image_count: 2 },
     })
     renderPanel()
-    expect(await screen.findByText(/切换模式不会改变旧结果/)).toBeInTheDocument()
+    await userEvent.click(await screen.findByRole('checkbox', { name: '背景 · 二次元人物分割' }))
+    expect(await screen.findByText(/修改设置不会改变旧结果/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '应用所选（2）' })).toBeDisabled()
     expect(api.startHeadMaskDetection).not.toHaveBeenCalled()
   })
 
@@ -177,13 +264,14 @@ describe('FaceContourMaskPanel', () => {
       scope: 'all', confidence: 0.413, iou_threshold: 0.7,
       model: 'builtin',
       padding_ratio: 0.1, feather_ratio: 0.03,
-      mask_mode: 'face_contour', face_confidence: 0.25, mask_threshold: 0.5, feather_px: 0,
+      mask_targets: ['face_contour'], face_confidence: 0.25, mask_threshold: 0.5, feather_px: 0,
+      background_threshold: 0.5, background_protect_px: 0, background_feather_px: 0,
     })
     act(() => {
       mocks.onEvent?.({ type: 'head_mask_progress', job_id: 41, idx: 1, total: 2, status: 'done', detections: 2 })
       mocks.onEvent?.({ type: 'job_state_changed', job_id: 41, status: 'done' })
     })
-    expect(await screen.findByText(/2 张图 · 2 个头部 · 已选 2 个/)).toBeInTheDocument()
+    expect(await screen.findByText(/2 张图 · 2 个区域 · 已选 2 个/)).toBeInTheDocument()
     await waitFor(() => expect(onStateChange).toHaveBeenLastCalledWith(expect.objectContaining({
       selections: { '1_data/A.png': ['a', 'b'], '1_data/B.png': [] },
     })))
@@ -196,7 +284,7 @@ describe('FaceContourMaskPanel', () => {
     const user = userEvent.setup()
     const changed = vi.fn().mockResolvedValue(undefined)
     renderPanel({ onWorkspaceChanged: changed })
-    const regions = await screen.findAllByRole('checkbox')
+    const regions = await screen.findAllByRole('checkbox', { name: /脸部 [12] ·/ })
     await user.click(regions[0])
     vi.mocked(api.getHeadMaskProposals).mockResolvedValue({ ...proposals, undo_available: true })
     await user.click(screen.getByRole('button', { name: '应用所选（1）' }))

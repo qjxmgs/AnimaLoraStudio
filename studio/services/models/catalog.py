@@ -11,7 +11,7 @@ from typing import Any, Optional
 from ... import secrets
 from .. import eval_registry
 from .downloader import get_status_snapshot, head_detector_status
-from . import face_segmenter
+from . import face_segmenter, background_segmenter
 from .families import FAMILY_ASSETS
 from .paths import (
     CLTAGGER_VERSIONS,
@@ -645,6 +645,11 @@ def build_catalog(root: Optional[Path] = None) -> dict[str, Any]:
             "expected_size": HEAD_DETECTOR_SIZE,
             "expected_sha256": HEAD_DETECTOR_SHA256,
             **head_status,
+        },
+        "background_segmenter": {
+            "id": "background_segmenter", "name": "Anime Background Segmenter",
+            "repo": background_segmenter.REPO, "revision": background_segmenter.REVISION,
+            "license": "Apache-2.0", **background_segmenter.status(r),
         },
         "face_segmenter": {
             "id": "face_segmenter", "name": "Anime Face Contour Segmenter",

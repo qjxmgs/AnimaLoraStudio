@@ -151,6 +151,12 @@ def _run_head_mask_train(
     emit_event: Callable[..., None],
 ) -> int:
     """Detect every cartoon head and persist reviewable proposals only."""
+    if params.get("mask_targets") is not None:
+        from studio.services.preprocess.auto_mask import run_job
+        sources = preprocess.resolve_targets_train(project, version["label"],
+            mode=str(params.get("scope") or "all"), names=params.get("names") or None)
+        return run_job(job_id, preprocess.version_train_dir(project, version["label"]),
+                       sources, params, log, emit_event, lambda: _stop_requested)
     from studio.services.models import face_segmenter
     from studio.services.preprocess.face_contour import FaceSegmenter
     mask_mode = params.get("mask_mode", "head_box")

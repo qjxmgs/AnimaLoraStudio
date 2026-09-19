@@ -114,6 +114,29 @@ beforeEach(() => {
 })
 
 describe('Auto mask direct-edit setup', () => {
+  it('does not adopt a multi-target review job even when it only contains heads', async () => {
+    vi.mocked(api.getPreprocessStatusTrain).mockResolvedValue({
+      job: { ...job, params_decoded: { stage: 'head_mask', mask_targets: ['head_box'] } },
+      log_tail: '', summary: { image_count: 2 },
+    })
+    renderPanel({ setupOpen: false })
+    await waitFor(() => expect(api.getPreprocessStatusTrain).toHaveBeenCalled())
+    act(() => mocks.onEvent?.({ type: 'job_state_changed', job_id: job.id, status: 'done' }))
+    expect(results).not.toHaveBeenCalled()
+    expect(api.getHeadMaskProposals).not.toHaveBeenCalled()
+  })
+
+  it('never incorporates a multi-target response into unsaved rectangle edits', async () => {
+    vi.mocked(api.getHeadMaskProposals).mockResolvedValue({ ...proposals,
+      parameters: { ...proposals.parameters, mask_targets: ['head_box', 'background'] },
+    })
+    renderPanel()
+    await userEvent.click(screen.getByRole('button', { name: '开始' }))
+    act(() => mocks.onEvent?.({ type: 'job_state_changed', job_id: job.id, status: 'done' }))
+    await waitFor(() => expect(api.getHeadMaskProposals).toHaveBeenCalled())
+    expect(results).not.toHaveBeenCalled()
+  })
+
   it('does not adopt a contour job from the independent review workflow', async () => {
     vi.mocked(api.getPreprocessStatusTrain).mockResolvedValue({
       job: { ...job, params_decoded: { stage: 'head_mask', mask_mode: 'face_contour' } },

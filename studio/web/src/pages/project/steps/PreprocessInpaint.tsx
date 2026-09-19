@@ -11,6 +11,7 @@ import {
 import ActionGroup from '../../../components/ActionGroup'
 import Button from '../../../components/Button'
 import Filmstrip from '../../../components/preprocess/Filmstrip'
+import { needsMaskReview } from '../../../components/preprocess/autoMaskReview'
 import AutoHeadMaskPanel from '../../../components/preprocess/AutoHeadMaskPanel'
 import FaceContourMaskPanel, { type AutoHeadMaskState } from '../../../components/preprocess/FaceContourMaskPanel'
 import InpaintCanvas, {
@@ -113,6 +114,7 @@ function InpaintWorkspace() {
   const [quickJobId, setQuickJobId] = useState<number>()
   const [faceReviewMounted, setFaceReviewMounted] = useState(false)
   useEffect(() => { if (mode === 'mask') setFaceReviewMounted(true) }, [mode])
+  const [reviewNames, setReviewNames] = useState<string[] | null>(null)
   const [headMaskState, setHeadMaskState] = useState<AutoHeadMaskState | null>(null)
   const [previewState, setPreviewState] = useState<'loading' | 'ready' | 'error'>('ready')
 
@@ -157,9 +159,11 @@ function InpaintWorkspace() {
 
   const counts = useMemo(() => {
     const edited = images.filter((im) => (historyByImage[im.name] ?? []).length > 0).length
-    const undetected = headMaskState?.images.filter((im) => im.regions.length === 0 || im.review_status === 'needs_review').length ?? 0
+    const undetected = headMaskState?.images.filter((im) => reviewNames ? reviewNames.includes(im.name) : needsMaskReview(im)).length ?? 0
     return { all: images.length, pending: images.length - edited, edited, undetected }
-  }, [images, historyByImage, headMaskState])
+  }, [images, historyByImage, headMaskState, reviewNames])
+
+  useEffect(() => { setReviewNames(null) }, [headMaskState?.images])
 
   const filteredImages = useMemo(() => images.filter((im) => {
     const n = (historyByImage[im.name] ?? []).length
@@ -167,10 +171,10 @@ function InpaintWorkspace() {
     if (filter === 'edited') return n > 0
     if (filter === 'undetected') {
       const proposal = headMaskState?.images.find((item) => item.name === im.name)
-      return proposal?.regions.length === 0 || proposal?.review_status === 'needs_review'
+      return reviewNames ? reviewNames.includes(im.name) : !!proposal && needsMaskReview(proposal)
     }
     return true
-  }), [images, filter, historyByImage, headMaskState])
+  }), [images, filter, historyByImage, headMaskState, reviewNames])
 
   const activeProposalRegions = useMemo<HeadMaskOverlayRegion[]>(() => {
     if (!activeName || !headMaskState) return []
@@ -179,6 +183,7 @@ function InpaintWorkspace() {
     return item?.regions.map((region) => ({ ...region, selected: selected.has(region.id) })) ?? []
   }, [activeName, headMaskState])
   const showUndetected = useCallback((names: string[]) => {
+    setReviewNames(names)
     setFilter('undetected')
     if (names.length) setActiveName(names[0])
   }, [])

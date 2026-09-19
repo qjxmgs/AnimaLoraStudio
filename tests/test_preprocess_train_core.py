@@ -9,6 +9,7 @@ key 和这些函数的 `name` 参数都用 POSIX 相对路径（`"1_data/X.png"`
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -327,6 +328,24 @@ def test_list_crop_workspace_processed_flag(isolated) -> None:
     by_name = {it["name"]: it for it in out}
     assert by_name[_rel("up.png")]["processed"] is True
     assert by_name[_rel("raw.png")]["processed"] is False
+
+
+def test_list_crop_workspace_backfills_stable_import_time(isolated) -> None:
+    p = isolated["project"]
+    image = isolated["sub"] / "legacy.png"
+    _write_png(image)
+    os.utime(image, (123, 123))
+
+    first = preprocess.list_crop_workspace_train(p, "v1")
+    first_item = next(item for item in first if item["name"] == _rel("legacy.png"))
+    assert first_item["imported_at"] == 123
+    assert first_item["mtime"] == 123
+
+    os.utime(image, (999, 999))
+    second = preprocess.list_crop_workspace_train(p, "v1")
+    second_item = next(item for item in second if item["name"] == _rel("legacy.png"))
+    assert second_item["imported_at"] == 123
+    assert second_item["mtime"] == 999
 
 
 # ---------------------------------------------------------------------------

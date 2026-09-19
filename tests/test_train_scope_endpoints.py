@@ -59,6 +59,39 @@ def _make_pv(client: TestClient) -> tuple[dict, dict]:
     return p, v
 
 
+def test_background_only_does_not_require_head_models(client, monkeypatch):
+    from studio.services.models import background_segmenter
+    p, v = _make_pv(client)
+    url = f"/api/projects/{p['id']}/versions/{v['id']}/preprocess/head-mask/detect"
+    monkeypatch.setattr(background_segmenter, "status", lambda: {"valid": True})
+    def unexpected(*args):
+        pytest.fail("Background-only requests must not resolve head models")
+    monkeypatch.setattr(model_downloader, "resolve_head_detector", unexpected)
+    response = client.post(url, json={"mask_targets": ["background"], "mask_mode": "face_contour"})
+    assert response.status_code == 200
+    params = response.json()["params_decoded"]
+    assert params["mask_targets"] == ["background"]
+    assert params["background_threshold"] == .5
+    for invalid in ({"mask_targets": []}, {"mask_targets": ["unknown"]},
+                    {"mask_targets": ["background"], "background_protect_px": -1},
+                    {"mask_targets": ["background"], "background_threshold": 1}):
+        assert client.post(url, json=invalid).status_code == 422
+
+
+def test_combined_requests_report_all_missing_models(client, monkeypatch):
+    from studio.services.models import background_segmenter, face_segmenter
+    p, v = _make_pv(client)
+    url = f"/api/projects/{p['id']}/versions/{v['id']}/preprocess/head-mask/detect"
+    monkeypatch.setattr(background_segmenter, "status", lambda: {"valid": False})
+    monkeypatch.setattr(face_segmenter, "status", lambda: {"valid": False})
+    monkeypatch.setattr(model_downloader, "head_detector_status", lambda: {"valid": False})
+    response = client.post(url, json={"mask_targets": ["face_contour", "head_box", "background"]})
+    assert response.status_code == 409
+    assert set(response.json()["error"]["details"]["model_ids"]) == {
+        "face_segmenter", "head_detector", "background_segmenter",
+    }
+
+
 def test_face_mode_requires_prepared_model_and_validates_mode(client, monkeypatch):
     from studio.services.models import face_segmenter
     p, v = _make_pv(client)

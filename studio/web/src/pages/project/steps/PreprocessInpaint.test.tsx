@@ -80,7 +80,7 @@ vi.mock('../../../components/preprocess/InpaintCanvas', async () => {
 
 const image: CropWorkspaceItem = {
   name: '1_data/a.png', source: 'a.png', w: 1000, h: 800,
-  mtime: 1, size: 100, processed: false, mask_mtime: null,
+  mtime: 1, imported_at: 1, size: 100, processed: false, mask_mtime: null,
 }
 
 function renderPage(projectId = 1) {

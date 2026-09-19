@@ -13,6 +13,7 @@ import {
   type XformersStatus,
 } from '../../../api/client'
 import { useDialog } from '../../../components/Dialog'
+import Button from '../../../components/Button'
 import { useShowTagTranslation, useTagAutocompleteEnabled } from '../../../tagDict/prefs'
 import { useTagDict, reloadDict } from '../../../tagDict/store'
 import { useToast } from '../../../components/Toast'
@@ -451,9 +452,11 @@ export function HeadDetectorSection({
   t: TFunction
 }) {
   const { toast } = useToast()
-  const { runSave, startDownload, downloadBusy } = useSettingsData()
+  const { runSave, startDownload, downloadBusy, deleteAsset } = useSettingsData()
   const face = catalog?.face_segmenter
   const faceDownload = catalog?.downloads.face_segmenter
+  const background = catalog?.background_segmenter
+  const backgroundDownload = catalog?.downloads.background_segmenter
 
   const pickDetector = async (identity: string) => {
     try {
@@ -519,6 +522,30 @@ export function HeadDetectorSection({
           )}
         </div>
       )}
+      {background && <ModelGroupCard title={t('preprocessInpaint.faceMask.target_background')}
+        helpTooltip={<p>{t('preprocessInpaint.faceMask.backgroundHelp')}</p>}>
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          <div className="flex-1 min-w-0">
+            <code className="block truncate">{background.repo}</code>
+            <span className="text-fg-tertiary">{background.revision.slice(0, 12)} · {background.license}</span>
+          </div>
+          <ModelStatusBadge exists={background.valid} size={background.size} status={backgroundDownload?.status} />
+          <Button variant="secondary" size="sm"
+            disabled={background.valid || downloadBusy.has('background_segmenter') || backgroundDownload?.status === 'running'}
+            onClick={() => void startDownload('background_segmenter')}>
+            {t('preprocessInpaint.faceMask.downloadBackgroundModel')}
+          </Button>
+          {background.exists && <Button variant="danger" size="sm"
+            disabled={downloadBusy.has('background_segmenter') || backgroundDownload?.status === 'running'}
+            onClick={() => void deleteAsset('background_segmenter', undefined, background.name)}>
+            {t('common.delete')}
+          </Button>}
+        </div>
+        {backgroundDownload?.message && <p className="text-xs text-err">{backgroundDownload.message}</p>}
+        {backgroundDownload?.log_tail && <details className="text-xs"><summary>{t('preprocessInpaint.faceMask.prepareLog')}</summary>
+          <pre className="max-h-48 overflow-auto whitespace-pre-wrap">{backgroundDownload.log_tail.join('\n')}</pre>
+        </details>}
+      </ModelGroupCard>}
       {face && <ModelGroupCard title={t('preprocessInpaint.faceMask.faceMode')}
         helpTooltip={<p>{t('preprocessInpaint.faceMask.faceHelp')}</p>}>
         <div className="flex items-center gap-2 text-xs">

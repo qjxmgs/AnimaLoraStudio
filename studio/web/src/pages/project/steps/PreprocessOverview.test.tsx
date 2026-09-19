@@ -21,7 +21,7 @@ vi.mock('react-virtuoso', () => ({
   ),
 }))
 
-const image = (name: string, processed: boolean): CropWorkspaceItem => ({ name, processed, source: name.slice(name.lastIndexOf('/') + 1), w: 512, h: 512, size: 100, mtime: 1, mask_mtime: null })
+const image = (name: string, processed: boolean): CropWorkspaceItem => ({ name, processed, source: name.slice(name.lastIndexOf('/') + 1), w: 512, h: 512, size: 100, mtime: 1, imported_at: 1, mask_mtime: null })
 const images = [image('1_data/processed.png', true), image('1_data/original.png', false)]
 
 function renderPage(activeVersion: Version | null = { id: 2 } as Version) {

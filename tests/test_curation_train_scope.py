@@ -49,7 +49,10 @@ def _train(env, folder: str = "1_data") -> Path:
 # ---------------------------------------------------------------------------
 
 
-def test_copy_download_to_train_writes_manifest_entry(env) -> None:
+def test_copy_download_to_train_writes_manifest_entry(
+    env, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(curation.time, "time", lambda: 1_800_000_000.0)
     _dl(env, "X.jpg", blob=b"orig" * 10)
     with db.connection_for(env["db"]) as conn:
         result = curation.copy_download_to_train(
@@ -66,6 +69,7 @@ def test_copy_download_to_train_writes_manifest_entry(env) -> None:
     assert entry is not None
     assert entry["origin"] == "X.jpg"
     assert entry["size"] == 40
+    assert entry["imported_at"] == 1_800_000_000.0
 
 
 def test_copy_download_to_train_copies_caption(env) -> None:

@@ -87,6 +87,7 @@ const image: CropWorkspaceItem = {
   w: 640,
   h: 480,
   mtime: 1,
+  imported_at: 1,
   size: 10,
   processed: false,
   mask_mtime: 3,

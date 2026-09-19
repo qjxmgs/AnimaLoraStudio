@@ -980,6 +980,9 @@ def delete_asset(model_id: str, variant: Optional[str] = None) -> None:
         key = f"head_detector:custom:{save_name}"
     elif model_id == "head_detector":
         target = head_detector_target(root)
+    elif model_id == "background_segmenter":
+        from .background_segmenter import model_path
+        target = model_path(root)
     elif model_id == "cltagger_custom":
         # fork repo 专属根目录整删（与官方 repo 目录隔离，安全）
         if not variant:
@@ -1166,6 +1169,11 @@ def trigger(model_id: str, variant: Optional[str] = None) -> str:
         start_download_async(
             key, lambda log: download_head_detector(root, on_log=log)
         )
+        return key
+    if model_id == "background_segmenter":
+        from .background_segmenter import download
+        key = "background_segmenter"
+        start_download_async(key, lambda log: download(root, on_log=log))
         return key
     if model_id == "face_segmenter":
         from .face_segmenter import prepare

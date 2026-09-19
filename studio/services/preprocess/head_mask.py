@@ -28,7 +28,7 @@ from studio.services.tagging.onnx_base import silenced_fd_stderr
 
 logger = logging.getLogger(__name__)
 
-AUTO_HEAD_MASK_FEATURE_LEVEL = 2
+AUTO_HEAD_MASK_FEATURE_LEVEL = 3
 INPUT_SIZE = 640
 DEFAULT_CONFIDENCE = 0.413
 DEFAULT_IOU_THRESHOLD = 0.7
@@ -105,7 +105,9 @@ def with_outcomes(result: dict[str, Any]) -> dict[str, Any]:
     skipped = sum(item["status"] == "skipped" for item in images)
     return {
         **result, "images": images,
-        "status": "partial" if failed or skipped else "complete",
+        "status": "partial" if failed or skipped or any(
+            image.get("review_status") == "needs_review" for image in images
+        ) else "complete",
         "succeeded": succeeded, "failed": failed, "skipped": skipped,
     }
 
@@ -291,8 +293,9 @@ def decode_output(
 class HeadDetector:
     """One ONNX session with CUDA -> DirectML -> CPU creation/inference fallback."""
 
-    def __init__(self, model_path: Path | None = None) -> None:
+    def __init__(self, model_path: Path | None = None, *, input_size: int = INPUT_SIZE) -> None:
         self.model_path = model_path or head_detector_target()
+        self.input_size = input_size
         self.session: Any = None
         self.input_name = ""
         self.provider = ""
@@ -342,13 +345,13 @@ class HeadDetector:
             )
         shape = getattr(inputs[0], "shape", None)
         if isinstance(shape, (list, tuple)) and len(shape) == 4:
-            expected = (3, INPUT_SIZE, INPUT_SIZE)
+            expected = (3, self.input_size, self.input_size)
             actual = tuple(shape[-3:])
             for got, want in zip(actual, expected):
                 if isinstance(got, int) and got != want:
                     raise RuntimeError(
                         "incompatible head detector input shape: "
-                        f"expected [N, 3, {INPUT_SIZE}, {INPUT_SIZE}], got {shape}"
+                        f"expected [N, 3, {self.input_size}, {self.input_size}], got {shape}"
                     )
         self.input_name = inputs[0].name
         actual = list(self.session.get_providers())

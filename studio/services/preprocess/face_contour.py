@@ -85,8 +85,8 @@ def bitmap_path(job_id: int, mask_id: str) -> Path:
 
 
 def save_bitmap(job_id: int, name: str, index: int, origin: tuple[int, int],
-                weights: np.ndarray) -> dict:
-    mask_id = hashlib.sha256(f"{name}:{index}".encode()).hexdigest()[:32]
+                weights: np.ndarray, *, target: str = "face_contour") -> dict:
+    mask_id = hashlib.sha256(f"{target}:{name}:{index}".encode()).hexdigest()[:32]
     path = bitmap_path(job_id, mask_id)
     path.parent.mkdir(parents=True, exist_ok=True)
     Image.fromarray(weights).save(path, "PNG")

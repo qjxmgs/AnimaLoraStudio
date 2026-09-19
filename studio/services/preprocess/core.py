@@ -463,6 +463,10 @@ def start_head_mask_job_train(
     padding_ratio: float,
     feather_ratio: float,
     mask_mode: str = "head_box",
+    mask_targets: list[str] | None = None,
+    background_threshold: float = 0.5,
+    background_protect_px: int = 0,
+    background_feather_px: int = 0,
     face_confidence: float = 0.25,
     mask_threshold: float = 0.5,
     feather_px: int = 0,
@@ -501,6 +505,11 @@ def start_head_mask_job_train(
         "padding_ratio": float(padding_ratio),
         "feather_ratio": float(feather_ratio),
     }
+    if mask_targets is not None:
+        params.update(mask_targets=list(dict.fromkeys(mask_targets)),
+                      background_threshold=background_threshold,
+                      background_protect_px=background_protect_px,
+                      background_feather_px=background_feather_px)
     if names:
         params["names"] = list(dict.fromkeys(names))
     return project_jobs.create_job(
@@ -542,7 +551,7 @@ def list_crop_workspace_train(
         pdir, version_label
     )
 
-    items: list[dict[str, Any]] = []
+    candidates: list[tuple[str, Path, dict[str, Any], Any]] = []
     for rel, f in _train_images_listing(train_dir):
         entry = entries.get(rel, {})
         if preprocess_manifest.is_duplicate_removed_entry(entry):
@@ -551,17 +560,32 @@ def list_crop_workspace_train(
         if origin in removed_origins:
             continue
         try:
+            st = f.stat()
+        except OSError:
+            continue
+        candidates.append((rel, f, entry, st))
+
+    imported_at_by_name = preprocess_manifest.train_backfill_imported_at(
+        pdir,
+        version_label,
+        {rel: st.st_mtime for rel, _, _, st in candidates},
+    )
+
+    items: list[dict[str, Any]] = []
+    for rel, f, entry, st in candidates:
+        origin = preprocess_manifest.entry_origin(entry, rel)
+        try:
             with Image.open(f) as im:
                 w, h = im.size
         except (OSError, ValueError):
             continue
-        st = f.stat()
         mask_info = train_masks.mask_stat(train_dir, rel)
         items.append({
             "name": rel,
             "source": origin,
             "w": w, "h": h,
             "mtime": st.st_mtime,
+            "imported_at": imported_at_by_name.get(rel, st.st_mtime),
             "size": st.st_size,
             "processed": _is_processed(entry),
             # 训练 mask sidecar：无 mask 时 None。前端用它画角标 + 决定

@@ -996,6 +996,7 @@ export interface ModelsCatalog {
   head_detector?: HeadDetectorCatalog
   face_segmenter?: { id: string; name: string; repo: string; revision: string;
     target_path: string; valid: boolean; exists: boolean; size: number; license: string }
+  background_segmenter?: ModelsCatalog['face_segmenter']
   /** 统一来源候选行（泛化候选卡消费；键 = domain：wd14 / eval_clip / ...）。 */
   model_sources?: Record<string, ModelSourceRow[]>
   /** 按类型的下载源选项：current = 当前选中，available = 可选源（长度 1 = 固定单源）。 */
@@ -1160,6 +1161,8 @@ export interface CropWorkspaceItem {
   w: number
   h: number
   mtime: number
+  /** Unix seconds when this lineage first entered the current version's train set. */
+  imported_at: number
   size: number
   processed: boolean
   /** 训练 mask sidecar 的 mtime；无 mask 时 null。兼作角标判据 + cache-buster。 */
@@ -1176,11 +1179,21 @@ export interface InpaintSaveResult {
   h: number
 }
 
+export type MaskTarget = 'face_contour' | 'head_box' | 'background'
+export interface MaskTargetStatus {
+  status: 'done' | 'empty' | 'partial' | 'failed' | 'skipped'
+  reason: string
+  count: number
+  error?: string
+}
+
 export interface HeadMaskRegion {
+  target?: MaskTarget
+  coverage?: number
   kind?: 'bitmap'
   bitmap?: { id: string; origin: [number, number]; size: [number, number]; sha256: string; url: string }
   id: string
-  score: number
+  score?: number
   /** Source-image pixel coordinates: x1, y1, x2, y2. */
   box: [number, number, number, number]
   mask_region: {
@@ -1190,6 +1203,7 @@ export interface HeadMaskRegion {
 }
 
 export interface HeadMaskProposalImage {
+  target_statuses?: Partial<Record<MaskTarget, MaskTargetStatus>>
   review_status?: 'ready' | 'needs_review' | 'no_face'
   issues?: { head_index: number; reason: string; error?: string }[]
   name: string
@@ -1211,7 +1225,8 @@ export interface HeadMaskProposals {
   failed?: number
   skipped?: number
   job_id: number
-  model: {
+  models?: Record<string, { path: string; revision?: string; sha256: string; provider: string; input_size: [number, number] }>
+  model?: {
     /** Catalog identity used for this job (absent on legacy v1 results). */
     identity?: string
     revision: string
@@ -1221,6 +1236,10 @@ export interface HeadMaskProposals {
     builtin?: boolean
   }
   parameters: {
+    mask_targets?: MaskTarget[]
+    background_threshold?: number
+    background_protect_px?: number
+    background_feather_px?: number
     mask_mode?: 'head_box' | 'face_contour'
     face_confidence?: number
     mask_threshold?: number
@@ -2888,6 +2907,10 @@ export const api = {
     vid: number,
     body: {
       scope: 'all' | 'selected'
+      mask_targets?: MaskTarget[]
+      background_threshold?: number
+      background_protect_px?: number
+      background_feather_px?: number
       mask_mode?: 'head_box' | 'face_contour'
       face_confidence?: number
       mask_threshold?: number

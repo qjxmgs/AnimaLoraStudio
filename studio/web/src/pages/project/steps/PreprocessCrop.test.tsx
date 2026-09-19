@@ -33,7 +33,7 @@ vi.mock('../../../lib/cropClustering', () => ({
 
 const image: CropWorkspaceItem = {
   name: '1_data/a.png', source: 'a.png', w: 1000, h: 800,
-  mtime: 1, size: 100, processed: false, mask_mtime: null,
+  mtime: 1, imported_at: 1, size: 100, processed: false, mask_mtime: null,
 }
 const job: Job = {
   id: 7, project_id: 1, version_id: 2, kind: 'preprocess', params: '{}', params_decoded: { stage: 'crop' },

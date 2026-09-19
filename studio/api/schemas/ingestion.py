@@ -63,6 +63,12 @@ class PreprocessCropRequest(BaseModel):
 
 
 class HeadMaskDetectRequest(BaseModel):
+    mask_targets: Optional[list[Literal["head_box", "face_contour", "background"]]] = Field(
+        None, min_length=1, max_length=3,
+    )
+    background_threshold: float = Field(0.5, ge=0.01, le=0.99)
+    background_protect_px: int = Field(0, ge=0, le=64)
+    background_feather_px: int = Field(0, ge=0, le=32)
     mask_mode: Literal["head_box", "face_contour"] = "head_box"
     face_confidence: float = Field(0.25, ge=0.01, le=0.99)
     mask_threshold: float = Field(0.5, ge=0.01, le=0.99)

@@ -1,4 +1,41 @@
-# Automatic head masks
+# Automatic masks: faces, heads and background
+
+## Multi-target review
+
+In **Preprocess → Inpaint → Training mask**, select any combination of **Face ·
+precise contour**, **Head · rectangle** and **Background · anime characters** in
+the right-hand **Automatic masks** panel. Only faces are selected by default.
+The header's quick Auto mask action remains an independent rectangle workflow.
+
+1. Download the required models. Background segmentation uses SkyTNT's roughly
+   168 MiB `isnetis.onnx`, locally with ONNX Runtime and no conversion environment.
+   Background-only detection needs neither head nor face models.
+2. Save manual edits, then choose **Detect current** or **Detect all**. Detection
+   creates proposals without saving training masks.
+3. Review by target. Faces and heads are individually selectable; each image has
+   one background proposal showing its masked-area percentage. Preview uses the
+   actual pixelwise union, with no extra opacity on overlapping proposals.
+4. **Apply selected** unions the proposals with existing manual masks. Continue
+   repairing with brush/eraser. **Undo this auto mask** restores the entire prior
+   application, including all targets; subsequent manual edits block automatic undo.
+
+The model attempts to preserve every anime character, hair, clothing and character
+accessories. Review small figures, fine hair, lighting and props manually. A failed
+target does not discard successful peers. The review filters work per target.
+No character means no whole-image background mask; no background is a no-op.
+
+Background controls are under Detection parameters: foreground threshold defaults
+to 0.5 (0.01–0.99; lower retains more foreground), foreground protection defaults to
+0 (0–64 source pixels), and background-side feather defaults to 0 (0–32 source
+pixels). Protection expands the preserved foreground; feather stays outside it.
+Changing targets or effective parameters requires detecting again.
+
+Replacement reconstructs the entire previous automatic application on selected
+images, not individual target layers. It previews differences and validates source
+images, current masks and backups. Legacy proposals remain readable. Source images,
+captions and training settings are unchanged.
+
+## Previous workflows and model details
 
 The local v0.27 distribution keeps two entry points. The header **Auto mask** is
 the upstream quick rectangle workflow. The right-hand review panel in **Training

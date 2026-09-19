@@ -9,6 +9,7 @@ const image: CropWorkspaceItem = {
   w: 320,
   h: 240,
   mtime: 1,
+  imported_at: 1,
   size: 10,
   processed: false,
   mask_mtime: 5,
@@ -91,4 +92,3 @@ describe('saveInpaintEdits', () => {
     expect(stages).toEqual([{ kind: 'mask', name: image.name, maskMtime: null }])
   })
 })
-

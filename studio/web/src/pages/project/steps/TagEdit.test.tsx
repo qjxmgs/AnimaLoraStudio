@@ -270,9 +270,9 @@ const captions = {
 
 const cropWorkspace = {
   images: [
-    { name: '人物 A/a1.png', source: 'a1.png', w: 640, h: 480, mtime: 1, size: 10, processed: false, mask_mtime: 123 },
-    { name: '人物 A/a2.png', source: 'a2.png', w: 640, h: 480, mtime: 1, size: 10, processed: false, mask_mtime: null },
-    { name: '人物 B/b1.png', source: 'b1.png', w: 480, h: 640, mtime: 1, size: 10, processed: false, mask_mtime: 456 },
+    { name: '人物 A/a1.png', source: 'a1.png', w: 640, h: 480, mtime: 10, imported_at: 30, size: 10, processed: false, mask_mtime: 123 },
+    { name: '人物 A/a2.png', source: 'a2.png', w: 640, h: 480, mtime: 30, imported_at: 10, size: 10, processed: false, mask_mtime: null },
+    { name: '人物 B/b1.png', source: 'b1.png', w: 480, h: 640, mtime: 20, imported_at: 20, size: 10, processed: false, mask_mtime: 456 },
   ],
 }
 
@@ -303,6 +303,12 @@ function renderPage(projectOverrides: Partial<ProjectDetail> = {}) {
 
 async function ready() {
   return screen.findByRole('grid', { name: '训练图片标签编辑列表' })
+}
+
+function openImageOrder(): string[] {
+  return within(screen.getByRole('grid', { name: '训练图片标签编辑列表' }))
+    .getAllByRole('button', { name: /^打开 / })
+    .map((button) => button.textContent?.replace(/^打开 /, '') ?? '')
 }
 
 beforeEach(() => {
@@ -565,6 +571,7 @@ describe('TagEdit workspace', () => {
 
     await user.click(screen.getByRole('radio', { name: /人物 B/ }))
     expect(screen.queryByTestId('preview-image')).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '训练图片（1 张）' })).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '选择 cat 图片' }))
 
     expect(screen.getByTestId('stats-selection')).toHaveTextContent('人物 B/b1.png')
@@ -892,7 +899,7 @@ describe('TagEdit workspace', () => {
     const user = userEvent.setup()
     renderPage()
     await ready()
-    expect(screen.getByText('3 张')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '训练图片（3 张）' })).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: '打开 人物 A/a2.png' }))
     await user.click(screen.getByRole('button', { name: '修改标签' }))
@@ -912,7 +919,7 @@ describe('TagEdit workspace', () => {
     await waitFor(() => {
       expect(screen.queryByRole('button', { name: '打开 人物 A/a1.png' })).not.toBeInTheDocument()
     })
-    expect(screen.getByText('2 张')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '训练图片（2 张）' })).toBeInTheDocument()
     expect(screen.getByTestId('preview-image')).toHaveTextContent('a2.png')
     expect(screen.getByRole('button', { name: '保存（1）' })).toBeEnabled()
     expect(mocks.toast).toHaveBeenCalledWith(
@@ -971,7 +978,7 @@ describe('TagEdit workspace', () => {
     const jpgWorkspace = {
       images: [{
         name: '人物 A/a1.jpg', source: 'a1.jpg', w: 640, h: 480,
-        mtime: 1, size: 10, processed: false, mask_mtime: 123,
+        mtime: 1, imported_at: 7, size: 10, processed: false, mask_mtime: 123,
       }],
     }
     vi.mocked(api.listCropWorkspaceTrain).mockResolvedValue(jpgWorkspace)
@@ -1019,6 +1026,12 @@ describe('TagEdit workspace', () => {
     const user = userEvent.setup()
     renderPage()
     await ready()
+    await user.selectOptions(screen.getByRole('combobox', { name: '图片排序' }), 'edited-desc')
+    await waitFor(() => expect(openImageOrder()).toEqual([
+      '人物 B/b1.png',
+      '人物 A/a1.png',
+      '人物 A/a2.png',
+    ]))
     await user.click(screen.getByRole('button', { name: '打开 人物 A/a1.png' }))
     await screen.findByTestId('training-mask-overlay')
 
@@ -1033,6 +1046,11 @@ describe('TagEdit workspace', () => {
       'data-src',
       `${api.maskUrl(7, 11, '人物 A/a1.png')}&_=999`,
     ))
+    expect(openImageOrder()).toEqual([
+      '人物 A/a1.png',
+      '人物 B/b1.png',
+      '人物 A/a2.png',
+    ])
     expect(api.listCaptionsFull).toHaveBeenCalledTimes(1)
   })
 
@@ -1047,6 +1065,101 @@ describe('TagEdit workspace', () => {
     expect(screen.getByRole('checkbox', { name: '显示遮罩' })).toBeChecked()
     expect(screen.queryByTestId('training-mask-overlay')).not.toBeInTheDocument()
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('puts the visible count beside the title and offers all stable sort modes', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await ready()
+
+    expect(screen.getByRole('heading', { name: '训练图片（3 张）' })).toBeInTheDocument()
+    const sort = screen.getByRole('combobox', { name: '图片排序' })
+    expect(sort).toHaveValue('filename-asc')
+    expect(within(sort).getAllByRole('option').map((option) => option.textContent)).toEqual([
+      '文件名（正序）',
+      '文件名（倒序）',
+      '导入时间（最早优先）',
+      '导入时间（最新优先）',
+      '编辑时间（最早优先）',
+      '编辑时间（最新优先）',
+    ])
+    expect(openImageOrder()).toEqual([
+      '人物 A/a1.png',
+      '人物 A/a2.png',
+      '人物 B/b1.png',
+    ])
+
+    await user.selectOptions(sort, 'filename-desc')
+    expect(openImageOrder()).toEqual([
+      '人物 B/b1.png',
+      '人物 A/a2.png',
+      '人物 A/a1.png',
+    ])
+
+    await user.selectOptions(sort, 'imported-asc')
+    await waitFor(() => expect(openImageOrder()).toEqual([
+      '人物 A/a2.png',
+      '人物 B/b1.png',
+      '人物 A/a1.png',
+    ]))
+
+    await user.selectOptions(sort, 'edited-asc')
+    expect(openImageOrder()).toEqual([
+      '人物 A/a2.png',
+      '人物 A/a1.png',
+      '人物 B/b1.png',
+    ])
+  })
+
+  it('persists the sort across projects and repairs an invalid stored value', async () => {
+    localStorage.setItem('studio:tagEdit:sort', JSON.stringify('invalid'))
+    const user = userEvent.setup()
+    const first = renderPage()
+    await ready()
+    const sort = screen.getByRole('combobox', { name: '图片排序' })
+    expect(sort).toHaveValue('filename-asc')
+    await waitFor(() => expect(localStorage.getItem('studio:tagEdit:sort')).toBe(
+      JSON.stringify('filename-asc'),
+    ))
+
+    await user.selectOptions(sort, 'edited-desc')
+    first.unmount()
+    renderPage({ id: 8 })
+    await ready()
+    expect(screen.getByRole('combobox', { name: '图片排序' })).toHaveValue('edited-desc')
+    await waitFor(() => expect(openImageOrder()).toEqual([
+      '人物 B/b1.png',
+      '人物 A/a1.png',
+      '人物 A/a2.png',
+    ]))
+  })
+
+  it('falls back to filename order when time metadata is unavailable', async () => {
+    vi.mocked(api.listCropWorkspaceTrain).mockRejectedValueOnce(new Error('offline'))
+    const user = userEvent.setup()
+    renderPage()
+    await ready()
+
+    await user.selectOptions(screen.getByRole('combobox', { name: '图片排序' }), 'edited-desc')
+    expect(openImageOrder()).toEqual([
+      '人物 A/a1.png',
+      '人物 A/a2.png',
+      '人物 B/b1.png',
+    ])
+  })
+
+  it('uses the sorted order for the single-image navigation controls', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await ready()
+
+    await user.selectOptions(screen.getByRole('combobox', { name: '图片排序' }), 'filename-desc')
+    await user.click(screen.getByRole('button', { name: '打开 人物 B/b1.png' }))
+    expect(screen.getByText('1/3')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '下一张' }))
+    expect(screen.getByTestId('preview-image')).toHaveTextContent('a2.png')
+    fireEvent.keyDown(window, { code: 'KeyD', key: 'd' })
+    expect(screen.getByTestId('preview-image')).toHaveTextContent('a1.png')
   })
 
   it('keeps an inactive tag visible until save and excludes it from the commit payload', async () => {

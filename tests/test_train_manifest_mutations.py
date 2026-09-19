@@ -86,7 +86,7 @@ def test_duplicate_removed_origins_collects_all(project_dir: Path) -> None:
 
 
 def test_add_processed_stores_minimal_schema(project_dir: Path) -> None:
-    """新 schema 只采纳 origin/mtime/size；过程字段全丢。"""
+    """新 schema 只采纳 origin/mtime/size/imported_at；过程字段全丢。"""
     _train_path(project_dir, "X.png").write_bytes(b"\x89PNG" + b"x" * 100)
     pm.train_add_processed(project_dir, "v1", "X.png", {
         "origin": "X.jpg",
@@ -95,12 +95,14 @@ def test_add_processed_stores_minimal_schema(project_dir: Path) -> None:
         "action": "upscale",       # 过程信息
         "src_size": [512, 512],    # 过程信息
         "mtime": 1731000000,
+        "imported_at": 1730000000,
     })
 
     m = pm.train_load(project_dir, "v1")
     entry = m["images"]["X.png"]
     assert entry["origin"] == "X.jpg"
     assert entry["mtime"] == 1731000000
+    assert entry["imported_at"] == 1730000000
     assert entry["size"] == 104  # stat'd train/X.png
     # 过程字段不应进 entry
     assert "model" not in entry
@@ -129,6 +131,49 @@ def test_add_processed_origin_fallback_to_name(project_dir: Path) -> None:
     assert entry["origin"] == "Z.jpg"
 
 
+def test_add_processed_preserves_existing_import_time(project_dir: Path) -> None:
+    _train_path(project_dir, "stable.png").write_bytes(b"before")
+    pm.train_add_processed(
+        project_dir, "v1", "stable.png",
+        {"origin": "stable.jpg", "mtime": 20, "imported_at": 10},
+    )
+    _train_path(project_dir, "stable.png").write_bytes(b"after")
+    pm.train_add_processed(
+        project_dir, "v1", "stable.png",
+        {
+            "origin": "stable.jpg",
+            "mtime": 30,
+            "imported_at": 999,
+            "processed": True,
+        },
+    )
+
+    entry = pm.train_get_entry(project_dir, "v1", "stable.png")
+    assert entry is not None
+    assert entry["mtime"] == 30
+    assert entry["imported_at"] == 10
+
+
+def test_backfill_import_time_is_persisted_once(project_dir: Path) -> None:
+    path = _train_path(project_dir, "1_data/legacy.png")
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b"legacy")
+
+    first = pm.train_backfill_imported_at(
+        project_dir, "v1", {"1_data/legacy.png": 123.0},
+    )
+    second = pm.train_backfill_imported_at(
+        project_dir, "v1", {"1_data/legacy.png": 999.0},
+    )
+
+    assert first == {"1_data/legacy.png": 123.0}
+    assert second == first
+    entry = pm.train_get_entry(project_dir, "v1", "1_data/legacy.png")
+    assert entry is not None
+    assert entry["origin"] == "legacy.png"
+    assert entry["imported_at"] == 123.0
+
+
 # ---------------------------------------------------------------------------
 # train_replace_with_crops
 # ---------------------------------------------------------------------------
@@ -139,7 +184,10 @@ def test_replace_with_crops_removes_source_and_writes_fan_out(
 ) -> None:
     # 老 entry：X.png 是 X.jpg 的 upscale 产物
     _train_path(project_dir, "X.png").write_bytes(b"x" * 10)
-    pm.train_add_processed(project_dir, "v1", "X.png", {"origin": "X.jpg"})
+    pm.train_add_processed(
+        project_dir, "v1", "X.png",
+        {"origin": "X.jpg", "imported_at": 77},
+    )
 
     # multi-crop: X.png → X_c0.png / X_c1.png
     pm.train_replace_with_crops(
@@ -156,6 +204,8 @@ def test_replace_with_crops_removes_source_and_writes_fan_out(
     assert m["images"]["X_c0.png"]["origin"] == "X.jpg"
     assert m["images"]["X_c1.png"]["origin"] == "X.jpg"
     assert m["images"]["X_c1.png"]["size"] == 110
+    assert m["images"]["X_c0.png"]["imported_at"] == 77
+    assert m["images"]["X_c1.png"]["imported_at"] == 77
 
 
 def test_replace_with_crops_origin_fallback_to_source(
@@ -242,12 +292,19 @@ def test_restore_duplicate_removed_unwinds_mark(project_dir: Path) -> None:
     (project_dir / "download" / "D.png").write_bytes(b"d-original")
     (project_dir / "download" / "D.txt").write_text("tag", encoding="utf-8")
     _train_path(project_dir, "D.png").write_bytes(b"d-train")
+    pm.train_add_processed(
+        project_dir, "v1", "D.png",
+        {"origin": "D.png", "imported_at": 88},
+    )
     pm.train_mark_duplicate_removed(project_dir, "v1", ["D.png"])
     assert not _train_path(project_dir, "D.png").exists()  # mark 已删
 
     result = pm.train_restore_duplicate_removed(project_dir, "v1", ["D.png"])
     assert result == {"restored": ["D.png"], "missing": [], "no_origin": []}
-    assert pm.train_get_entry(project_dir, "v1", "D.png") is None
+    entry = pm.train_get_entry(project_dir, "v1", "D.png")
+    assert entry is not None
+    assert entry.get("kind") is None
+    assert entry["imported_at"] == 88
     assert _train_path(project_dir, "D.png").read_bytes() == b"d-original"
     assert _train_path(project_dir, "D.txt").read_text(encoding="utf-8") == "tag"
 
@@ -289,7 +346,10 @@ def test_restore_copies_from_download_overwriting_train(
     """已 upscale 产物 X.png（origin=X.jpg）→ restore 写 X.jpg + 清老 entry。"""
     _download_path(project_dir, "X.jpg").write_bytes(b"orig" * 10)
     _train_path(project_dir, "X.png").write_bytes(b"upscaled" * 100)
-    pm.train_add_processed(project_dir, "v1", "X.png", {"origin": "X.jpg"})
+    pm.train_add_processed(
+        project_dir, "v1", "X.png",
+        {"origin": "X.jpg", "imported_at": 66},
+    )
 
     result = pm.train_restore(project_dir, "v1", ["X.png"])
 
@@ -302,6 +362,7 @@ def test_restore_copies_from_download_overwriting_train(
     assert entry is not None
     assert entry["origin"] == "X.jpg"
     assert entry["size"] == 40
+    assert entry["imported_at"] == 66
 
 
 def test_restore_collapses_fan_out_to_single_origin(

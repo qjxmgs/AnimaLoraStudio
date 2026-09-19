@@ -612,26 +612,45 @@ def start_head_mask_detection(
 ) -> dict[str, Any]:
     """Queue proposal-only cartoon head detection; source images stay untouched."""
     _resolve_pv_or_404(pid, vid)
-    if body.mask_mode == "face_contour" and not face_segmenter.status()["valid"]:
+    targets = body.mask_targets if body.mask_targets is not None else [body.mask_mode]
+    missing = []
+    if "face_contour" in targets and not face_segmenter.status()["valid"]:
+        missing.append("face_segmenter")
+    if "background" in targets:
+        from ....services.models import background_segmenter
+        if not background_segmenter.status()["valid"]:
+            missing.append("background_segmenter")
+    if missing and body.mask_targets is None:
         raise ConflictError("Face segmenter is not prepared", code="preprocess.head_mask_model_missing",
                             details={"model_id": "face_segmenter"})
     requested_model = body.model.strip() if body.model else None
-    try:
-        model_identity, _model_path, builtin = model_downloader.resolve_head_detector(
-            requested_model
-        )
-    except ValueError as exc:
+    model_identity = "builtin"
+    if any(t in targets for t in ("head_box", "face_contour")):
+        try:
+            model_identity, _model_path, builtin = model_downloader.resolve_head_detector(requested_model)
+        except ValueError as exc:
+            if body.mask_targets is None:
+                raise ConflictError(
+                    "Selected head detector is missing or is no longer registered",
+                    code="preprocess.head_mask_model_missing",
+                    details={"model": requested_model or "global", "reason": str(exc)},
+                ) from exc
+            missing.append("head_detector")
+        else:
+            status = model_downloader.head_detector_status() if builtin else {"valid": True}
+            if not status.get("valid"):
+                if body.mask_targets is None:
+                    raise ConflictError(
+                        "Anime head detector is not downloaded or failed integrity validation",
+                        code="preprocess.head_mask_model_missing",
+                        details={"model_id": "head_detector", **status},
+                    )
+                missing.append("head_detector")
+    if missing:
         raise ConflictError(
-            "Selected head detector is missing or is no longer registered",
+            "Download and prepare all models required by the selected mask targets",
             code="preprocess.head_mask_model_missing",
-            details={"model": requested_model or "global", "reason": str(exc)},
-        ) from exc
-    status = model_downloader.head_detector_status()
-    if builtin and not status.get("valid"):
-        raise ConflictError(
-            "Anime head detector is not downloaded or failed integrity validation",
-            code="preprocess.head_mask_model_missing",
-            details={"model_id": "head_detector", **status},
+            details={"model_ids": missing},
         )
     with db.connection_for() as conn:
         job = preprocess_svc.start_head_mask_job_train(
@@ -645,6 +664,10 @@ def start_head_mask_detection(
             padding_ratio=body.padding_ratio,
             feather_ratio=body.feather_ratio,
             mask_mode=body.mask_mode,
+            mask_targets=body.mask_targets,
+            background_threshold=body.background_threshold,
+            background_protect_px=body.background_protect_px,
+            background_feather_px=body.background_feather_px,
             face_confidence=body.face_confidence,
             mask_threshold=body.mask_threshold,
             feather_px=body.feather_px,

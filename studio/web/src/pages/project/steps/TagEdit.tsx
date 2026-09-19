@@ -15,7 +15,7 @@ import Button from '../../../components/Button'
 import Card from '../../../components/Card'
 import { useDialog } from '../../../components/Dialog'
 import EmptyState from '../../../components/EmptyState'
-import { Checkbox } from '../../../components/FormControl'
+import { Checkbox, Select } from '../../../components/FormControl'
 import ImageGrid, { applySelection } from '../../../components/ImageGrid'
 import PaneResizer, { normalizePanePair } from '../../../components/PaneResizer'
 import SaveBar from '../../../components/SaveBar'
@@ -69,6 +69,58 @@ interface PendingTagDraft {
 }
 
 type GridDirection = 'up' | 'down' | 'left' | 'right'
+type TagEditSortMode =
+  | 'filename-asc'
+  | 'filename-desc'
+  | 'imported-asc'
+  | 'imported-desc'
+  | 'edited-asc'
+  | 'edited-desc'
+
+const TAG_EDIT_SORT_STORAGE_KEY = 'studio:tagEdit:sort'
+const DEFAULT_TAG_EDIT_SORT: TagEditSortMode = 'filename-asc'
+const TAG_EDIT_SORT_MODES = new Set<TagEditSortMode>([
+  'filename-asc',
+  'filename-desc',
+  'imported-asc',
+  'imported-desc',
+  'edited-asc',
+  'edited-desc',
+])
+
+function isTagEditSortMode(value: unknown): value is TagEditSortMode {
+  return typeof value === 'string' && TAG_EDIT_SORT_MODES.has(value as TagEditSortMode)
+}
+
+function compareTagEditKeys(
+  a: string,
+  b: string,
+  mode: TagEditSortMode,
+  workspaceImages: ReadonlyMap<string, CropWorkspaceItem>,
+): number {
+  const pathOrder = compareImagePath(a, b)
+  if (mode === 'filename-asc') return pathOrder
+  if (mode === 'filename-desc') return -pathOrder
+
+  const timestampFor = (key: string): number | null => {
+    const image = workspaceImages.get(key)
+    if (!image) return null
+    if (mode === 'imported-asc' || mode === 'imported-desc') {
+      return Number.isFinite(image.imported_at) ? image.imported_at : null
+    }
+    const editedAt = Math.max(image.mtime, image.mask_mtime ?? 0)
+    return Number.isFinite(editedAt) ? editedAt : null
+  }
+  const aTime = timestampFor(a)
+  const bTime = timestampFor(b)
+  if (aTime == null || bTime == null) {
+    if (aTime == null && bTime == null) return pathOrder
+    return aTime == null ? 1 : -1
+  }
+  const timeOrder = aTime - bTime
+  if (timeOrder === 0) return pathOrder
+  return mode.endsWith('-asc') ? timeOrder : -timeOrder
+}
 
 const NON_TEXT_INPUT_TYPES = new Set([
   'button',
@@ -168,6 +220,17 @@ export default function TagEditPage() {
   // '' = 全部；否则限定到该 folder（1_data / 2_data ...）。命名特意区分于下面
   // editing 时用的 `activeFolder`（那个是当前编辑图所在 folder，纯展示）。
   const [folderFilter, setFolderFilter] = useState<string>('')
+  const [storedSortMode, setStoredSortMode] = useLocalStorageState<string>(
+    TAG_EDIT_SORT_STORAGE_KEY,
+    DEFAULT_TAG_EDIT_SORT,
+  )
+  const sortMode = isTagEditSortMode(storedSortMode)
+    ? storedSortMode
+    : DEFAULT_TAG_EDIT_SORT
+
+  useEffect(() => {
+    if (storedSortMode !== sortMode) setStoredSortMode(sortMode)
+  }, [setStoredSortMode, sortMode, storedSortMode])
 
   // 左栏（图片网格）/ 右栏（标签工作区）各占整行宽度的百分比，两条分隔条可拖；
   // 中间预览栏 flex-1 吃掉剩余空间。默认 40 / 32 = 改造前写死的 flex 1.5 : 1 : 32%。
@@ -419,9 +482,27 @@ export default function TagEditPage() {
     return keys.filter((k) => meta.get(k)?.folder === folderFilter)
   }, [keys, meta, folderFilter])
 
+  const orderedKeys = useMemo(() => {
+    const needsImportedAt = sortMode === 'imported-asc' || sortMode === 'imported-desc'
+    const needsEditedAt = sortMode === 'edited-asc' || sortMode === 'edited-desc'
+    const hasCompleteTimeMetadata = filteredKeys.every((key) => {
+      const image = workspaceImages.get(key)
+      if (!image) return false
+      if (needsImportedAt) return Number.isFinite(image.imported_at)
+      if (needsEditedAt) return Number.isFinite(image.mtime)
+      return true
+    })
+    const effectiveMode = (needsImportedAt || needsEditedAt) && !hasCompleteTimeMetadata
+      ? DEFAULT_TAG_EDIT_SORT
+      : sortMode
+    return [...filteredKeys].sort((a, b) =>
+      compareTagEditKeys(a, b, effectiveMode, workspaceImages)
+    )
+  }, [filteredKeys, sortMode, workspaceImages])
+
   const captionItems = useMemo(
     () =>
-      filteredKeys.map((k) => {
+      orderedKeys.map((k) => {
         const m = meta.get(k)!
         const tags = cache.get(k) ?? []
         const imageMtime = workspaceImages.get(k)?.mtime
@@ -437,14 +518,14 @@ export default function TagEditPage() {
           badgeTone: dirtyKeySet.has(k) ? 'warning' as const : undefined,
         }
       }),
-    [filteredKeys, meta, cache, dirtyKeySet, project.id, activeVersion, t, workspaceImages]
+    [orderedKeys, meta, cache, dirtyKeySet, project.id, activeVersion, t, workspaceImages]
   )
 
   const selectedKeys = useMemo(
-    () => filteredKeys.filter((k) => sel.has(k)),
-    [filteredKeys, sel]
+    () => orderedKeys.filter((k) => sel.has(k)),
+    [orderedKeys, sel]
   )
-  const navKeys = activeKey && selectedKeys.includes(activeKey) ? selectedKeys : filteredKeys
+  const navKeys = activeKey && selectedKeys.includes(activeKey) ? selectedKeys : orderedKeys
   const activeIndex = activeKey ? navKeys.indexOf(activeKey) : -1
 
   useEffect(() => {
@@ -471,16 +552,16 @@ export default function TagEditPage() {
       const direction = directionByCode[event.code]
       if (!direction) return
 
-      const current = filteredKeys.indexOf(activeKey)
-      const next = nextGridIndex(current, filteredKeys.length, gridColumnCount, direction)
+      const current = orderedKeys.indexOf(activeKey)
+      const next = nextGridIndex(current, orderedKeys.length, gridColumnCount, direction)
       if (next === current || next < 0) return
       event.preventDefault()
-      setActiveKey(filteredKeys[next])
+      setActiveKey(orderedKeys[next])
     }
 
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [activeKey, filteredKeys, gridColumnCount])
+  }, [activeKey, orderedKeys, gridColumnCount])
 
   const tagSuggestions = useMemo(() => {
     const set = new Set<string>()
@@ -491,13 +572,13 @@ export default function TagEditPage() {
   const handlePickTag = useCallback(
     (tag: string) => {
       const matched = new Set<string>()
-      for (const k of filteredKeys) {
+      for (const k of orderedKeys) {
         if ((cache.get(k) ?? []).includes(tag)) matched.add(k)
       }
       setSel(matched); setAnchor(null)
       toast(t('tagEdit.selectedContaining', { tag, n: matched.size }), 'success')
     },
-    [filteredKeys, cache, toast, t]
+    [orderedKeys, cache, toast, t]
   )
 
   if (!activeVersion) {
@@ -513,7 +594,7 @@ export default function TagEditPage() {
   }
 
   const handleClick = (key: string, e: React.MouseEvent) => {
-    const r = applySelection(sel, key, e, filteredKeys, anchor)
+    const r = applySelection(sel, key, e, orderedKeys, anchor)
     setSel(r.next); setAnchor(r.anchor)
   }
 
@@ -787,6 +868,7 @@ export default function TagEditPage() {
             source: stage.result.origin,
             processed: true,
             mask_mtime: null,
+            imported_at: stage.result.mtime,
           }),
           name: newKey,
           source: stage.result.origin,
@@ -882,8 +964,8 @@ export default function TagEditPage() {
     )
     if (!confirmed || removeInFlightRef.current) return
 
-    const visibleIndex = filteredKeys.indexOf(key)
-    const remainingVisible = filteredKeys.filter((candidate) => candidate !== key)
+    const visibleIndex = orderedKeys.indexOf(key)
+    const remainingVisible = orderedKeys.filter((candidate) => candidate !== key)
     const adjacentKey = visibleIndex < 0
       ? ''
       : remainingVisible[Math.min(visibleIndex, remainingVisible.length - 1)] ?? ''
@@ -1047,10 +1129,30 @@ export default function TagEditPage() {
         >
           <div className="px-field py-related flex flex-col gap-related shrink-0 border-b border-subtle">
             <div className="flex items-center gap-related min-w-0">
-              <h2 className="type-panel-title m-0 flex-1">{t('tagEdit.imageListTitle')}</h2>
-              <span className="text-xs text-fg-tertiary tnum">
-                {t('tagEdit.visibleCount', { n: filteredKeys.length })}
-              </span>
+              <h2
+                className="type-panel-title m-0 flex-1 min-w-0 truncate"
+                aria-label={`${t('tagEdit.imageListTitle')}${t('tagEdit.imageListCount', { n: orderedKeys.length })}`}
+              >
+                {t('tagEdit.imageListTitle')}
+                <span className="text-xs font-normal text-fg-tertiary tnum">
+                  {t('tagEdit.imageListCount', { n: orderedKeys.length })}
+                </span>
+              </h2>
+              <Select
+                controlSize="sm"
+                className="shrink-0 max-w-[11rem]"
+                value={sortMode}
+                onChange={(event) => setStoredSortMode(event.target.value)}
+                aria-label={t('tagEdit.sortLabel')}
+                title={t('tagEdit.sortLabel')}
+              >
+                <option value="filename-asc">{t('tagEdit.sortFilenameAsc')}</option>
+                <option value="filename-desc">{t('tagEdit.sortFilenameDesc')}</option>
+                <option value="imported-asc">{t('tagEdit.sortImportedAsc')}</option>
+                <option value="imported-desc">{t('tagEdit.sortImportedDesc')}</option>
+                <option value="edited-asc">{t('tagEdit.sortEditedAsc')}</option>
+                <option value="edited-desc">{t('tagEdit.sortEditedDesc')}</option>
+              </Select>
             </div>
             {folderNames.length > 1 && (
               <SegmentedControl
@@ -1273,8 +1375,8 @@ export default function TagEditPage() {
                 onApply={applyBulkUpdates}
                 tagSuggestions={tagSuggestions}
                 onClearSelection={() => setSel(new Set())}
-                onSelectAll={() => setSel(new Set(filteredKeys))}
-                totalCount={filteredKeys.length}
+                onSelectAll={() => setSel(new Set(orderedKeys))}
+                totalCount={orderedKeys.length}
               />
               <TagStatsPanel
                 cache={cache}

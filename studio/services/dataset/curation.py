@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import re
 import shutil
+import time
 from pathlib import Path
 from typing import Any
 
@@ -380,7 +381,13 @@ def copy_download_to_train(
                     pass
         # 写 train manifest entry，key = "{folder}/{name}"
         rel = f"{dest_folder}/{name}"
-        meta: dict[str, Any] = {"origin": name}
+        meta: dict[str, Any] = {
+            "origin": name,
+            # copy2 intentionally preserves the download file's mtime.  Keep
+            # version-inclusion time separately so later image edits do not
+            # rewrite the user's import-order history.
+            "imported_at": time.time(),
+        }
         try:
             st = dst.stat()
             meta["mtime"] = st.st_mtime

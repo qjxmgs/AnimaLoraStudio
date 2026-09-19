@@ -69,7 +69,7 @@ function HeadMaskWorkspace({
       ) return
       incorporatedJobs.current.add(jobId)
       // Contours require the custom bitmap preview and transactional Apply path.
-      if (result.parameters.mask_mode === 'face_contour') return
+      if (result.parameters.mask_targets || result.parameters.mask_mode === 'face_contour') return
       setError('')
       onResults(result)
     } catch (e) {
@@ -83,7 +83,7 @@ function HeadMaskWorkspace({
   const acceptJob = useCallback((next: Job | null) => {
     if (!mounted.current) return
     if (next && !ownsPreprocessJob(next, projectId, versionId, 'head_mask')) return
-    if (next?.params_decoded?.mask_mode === 'face_contour') return
+    if (next?.params_decoded?.mask_targets || next?.params_decoded?.mask_mode === 'face_contour') return
     const previous = jobRef.current
     if (
       next

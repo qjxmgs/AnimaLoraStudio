@@ -17,6 +17,15 @@
 
 ## 模型与权重
 
+### SkyTNT / anime-seg — 背景分割
+
+- **来源**：[模型](https://huggingface.co/skytnt/anime-seg)、[作者实现](https://github.com/SkyTNT/anime-segmentation)。
+- **许可标记**：Apache-2.0（模型卡与作者仓库）。权重按需下载到本机，不随源码分发。
+- **固定资产**：`isnetis.onnx`，revision `493cb60893f47441b26ec4fb9a306bce9e342982`，176,069,933 bytes。
+- **SHA-256**：`f15622d853e8260172812b657053460e20806f04b9e05147d49af7bed31a6e99`。
+- Studio 以 NumPy/SciPy 实现作者的 RGB 归一化、等比例缩放、居中补边和原尺寸还原；
+  输出转为训练背景忽略权重，不包含作者的训练代码或 OpenCV 依赖。
+
 ### Anzhc / Anzhcs_YOLOs face segmentation (AGPL-3.0，用户本地转换)
 
 - 来源：[作者模型卡](https://huggingface.co/Anzhc/Anzhcs_YOLOs#face-segmentation)。

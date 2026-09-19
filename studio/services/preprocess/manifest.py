@@ -13,15 +13,17 @@ schema（写入用）— 极简：
 
     {
       "images": {
-        "1_data/X.png":    {"origin": "X.png",  "mtime": ..., "size": ..., "processed": true},
-        "1_data/Y_c0.png": {"origin": "Y.png",  "mtime": ..., "size": ...},
-        "1_data/Y_c1.png": {"origin": "Y.png",  "mtime": ..., "size": ...}
+        "1_data/X.png":    {"origin": "X.png",  "mtime": ..., "size": ..., "imported_at": ..., "processed": true},
+        "1_data/Y_c0.png": {"origin": "Y.png",  "mtime": ..., "size": ..., "imported_at": ...},
+        "1_data/Y_c1.png": {"origin": "Y.png",  "mtime": ..., "size": ..., "imported_at": ...}
       }
     }
 
 字段：
 - entry key = train/ 下的 POSIX 相对路径 `"{folder}/{filename}"`
 - `origin` = 该图回溯到 `download/` 里的源文件名（multi-crop 派生共享 origin）
+- `imported_at` = 该图所属 lineage 首次加入当前 version 训练集的 unix 秒；
+  裁剪 / 放大 / 格式转换 / restore 继承，不随文件 mtime 改变
 - `processed` = 是否经过 upscale / crop（worker 写 True；curate 复制不写）
 - `kind: "duplicate_removed"` 标记人工审核确认跳过；不删 train/ 物理文件
 
@@ -108,6 +110,27 @@ def entry_origin(entry: dict[str, Any], fallback_name: str) -> str:
     缺 `origin` 则用 entry 自身的 key（1:1 同名兜底）。
     """
     return entry.get("origin") or fallback_name
+
+
+def _positive_timestamp(value: Any) -> Optional[float]:
+    if (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and value > 0
+    ):
+        return float(value)
+    return None
+
+
+def entry_imported_at(
+    entry: Optional[dict[str, Any]], fallback: Any = None,
+) -> Optional[float]:
+    """Read a valid lineage import timestamp with an optional legacy fallback."""
+    if entry:
+        value = _positive_timestamp(entry.get("imported_at"))
+        if value is not None:
+            return value
+    return _positive_timestamp(fallback)
 
 
 def is_duplicate_removed_entry(entry: Optional[dict[str, Any]]) -> bool:
@@ -387,6 +410,43 @@ def train_duplicate_removed_origins(
     }
 
 
+def train_backfill_imported_at(
+    project_dir: Path,
+    version_label: str,
+    fallbacks: dict[str, float],
+) -> dict[str, float]:
+    """Ensure current train images have stable lineage import timestamps.
+
+    Old manifests predate ``imported_at`` and the exact historical inclusion
+    time cannot be recovered.  The caller supplies the current train-file
+    mtime as a one-time approximation.  Persisting it here makes subsequent
+    image and mask edits independent from import-time sorting.
+    """
+    ensure_train_manifest(project_dir, version_label)
+    target = train_manifest_path(project_dir, version_label)
+    resolved: dict[str, float] = {}
+    changed = False
+    now = time.time()
+    with _LOCK:
+        manifest = _read_train_target(target)
+        entries = manifest["images"]
+        for name, fallback in fallbacks.items():
+            entry = entries.get(name)
+            if not isinstance(entry, dict):
+                entry = {"origin": Path(name).name}
+                entries[name] = entry
+                changed = True
+            imported_at = entry_imported_at(entry)
+            if imported_at is None:
+                imported_at = _positive_timestamp(fallback) or now
+                entry["imported_at"] = imported_at
+                changed = True
+            resolved[name] = imported_at
+        if changed:
+            _atomic_write(target, manifest)
+    return resolved
+
+
 # ---- mutation（必须 with _LOCK）-----------------------------------------
 
 
@@ -398,7 +458,7 @@ def train_add_processed(
 ) -> None:
     """记录一张已处理图（train scope）。
 
-    schema：采纳 `origin / mtime / size / processed`，其他字段（model/scale/
+    schema：采纳 `origin / mtime / size / imported_at / processed`，其他字段（model/scale/
     action/...）丢弃。size 兜底 stat `train/{name}`。
 
     `processed: bool`（ADR 0010 fixup 2026-06-04）：worker upscale/crop 完成
@@ -410,10 +470,20 @@ def train_add_processed(
     target = train_manifest_path(project_dir, version_label)
     with _LOCK:
         m = _read_train_target(target)
+        previous = m["images"].get(name)
         origin = meta.get("origin") or name
+        imported_at = (
+            entry_imported_at(
+                previous,
+                previous.get("mtime") if isinstance(previous, dict) else None,
+            )
+            or _positive_timestamp(meta.get("imported_at"))
+            or time.time()
+        )
         entry: dict[str, Any] = {
             "origin": origin,
             "mtime": meta.get("mtime", time.time()),
+            "imported_at": imported_at,
         }
         if "size" in meta:
             entry["size"] = meta["size"]
@@ -452,6 +522,18 @@ def train_replace_with_crops(
         for nm, entry in m["images"].items():
             if entry_origin(entry, nm) == source_name:
                 to_remove.add(nm)
+        inherited_imported_at = min(
+            (
+                imported_at
+                for nm in to_remove
+                if (imported_at := entry_imported_at(
+                    m["images"].get(nm),
+                    (m["images"].get(nm) or {}).get("mtime"),
+                ))
+                is not None
+            ),
+            default=None,
+        )
         for nm in to_remove:
             m["images"].pop(nm, None)
         now = time.time()
@@ -460,6 +542,11 @@ def train_replace_with_crops(
                 "origin": o.get("origin") or source_name,
                 "mtime": o.get("mtime", now),
                 "size": int(o.get("size", 0)),
+                "imported_at": (
+                    inherited_imported_at
+                    or _positive_timestamp(o.get("imported_at"))
+                    or now
+                ),
             }
             # crop 派生本质是处理操作（ADR 0010 fixup）
             if o.get("processed", True):
@@ -499,18 +586,28 @@ def train_mark_duplicate_removed(
                 skipped.append(name)
                 continue
             src = train_dir / name
+            source_mtime: Optional[float] = None
             if entry is not None:
                 origin = entry_origin(entry, name)
                 size = int(entry.get("size", 0) or 0)
             elif src.is_file():
                 origin = name
                 try:
-                    size = src.stat().st_size
+                    source_stat = src.stat()
+                    size = source_stat.st_size
+                    source_mtime = source_stat.st_mtime
                 except OSError:
                     size = 0
             else:
                 missing.append(name)
                 continue
+            imported_at = (
+                entry_imported_at(
+                    entry,
+                    (entry or {}).get("mtime") or source_mtime,
+                )
+                or now
+            )
             # 物理删图 + caption sidecar + mask sidecar
             if src.is_file():
                 try:
@@ -530,6 +627,7 @@ def train_mark_duplicate_removed(
                 "origin": origin,
                 "mtime": now,
                 "size": size,
+                "imported_at": imported_at,
             }
             removed.append(name)
         _atomic_write(target, m)
@@ -542,7 +640,7 @@ def train_restore_duplicate_removed(
     names: list[str],
 ) -> dict[str, list[str]]:
     """撤销去重移除：从 `download/{entry.origin}` 复制图 + caption 覆盖回
-    `train/{name}`，并删 manifest entry。
+    `train/{name}`，并把 tombstone 恢复成保留导入时间的普通 manifest entry。
 
     返回三组：
     - `restored`：成功复原（download 原图存在并已复制覆盖）
@@ -587,7 +685,22 @@ def train_restore_duplicate_removed(
                         shutil.copy2(cap_src, dst.with_suffix(ext))
                     except OSError:
                         pass
-            del m["images"][name]
+            try:
+                restored_stat = dst.stat()
+                restored_mtime = restored_stat.st_mtime
+                restored_size = restored_stat.st_size
+            except OSError:
+                restored_mtime = time.time()
+                restored_size = int(entry.get("size", 0) or 0)
+            m["images"][name] = {
+                "origin": origin,
+                "mtime": restored_mtime,
+                "size": restored_size,
+                "imported_at": (
+                    entry_imported_at(entry, entry.get("mtime"))
+                    or time.time()
+                ),
+            }
             restored.append(name)
         _atomic_write(target, m)
     return {"restored": restored, "missing": missing, "no_origin": no_origin}
@@ -648,6 +761,17 @@ def train_restore(
                 if (k.rsplit("/", 1)[0] if "/" in k else "") == folder
                 and entry_origin(e, k) == origin
             ]
+            imported_at = min(
+                (
+                    value
+                    for member in group
+                    if (value := entry_imported_at(
+                        m["images"].get(member),
+                        (m["images"].get(member) or {}).get("mtime"),
+                    )) is not None
+                ),
+                default=time.time(),
+            )
             dst_rel = f"{folder}/{origin}" if folder else origin
             dst = train_dir / dst_rel
             # 删 sibling 物理 + caption（dst 本身先不删——下面 copy 会覆盖）
@@ -694,9 +818,13 @@ def train_restore(
                     "origin": origin,
                     "mtime": int(st.st_mtime),
                     "size": st.st_size,
+                    "imported_at": imported_at,
                 }
             except OSError:
-                m["images"][dst_rel] = {"origin": origin}
+                m["images"][dst_rel] = {
+                    "origin": origin,
+                    "imported_at": imported_at,
+                }
             restored.append(name)
             handled.update(group)
         _atomic_write(target, m)
@@ -715,18 +843,28 @@ def train_swap_entry(
     给 worker 在 upscale 输出扩展名变化时用（如 src=`1_data/X.jpg` →
     dst=`1_data/X.png`），避免 manifest 残留 dangling 老 entry。
 
-    `meta` 跟 `train_add_processed` 一致——只采纳 origin/mtime/size，其他丢弃。
+    `meta` 跟 `train_add_processed` 一致——只采纳
+    origin/mtime/size/imported_at，其他丢弃。
     size 兜底 stat `train/{new_name}`。
     """
     ensure_train_manifest(project_dir, version_label)
     target = train_manifest_path(project_dir, version_label)
     with _LOCK:
         m = _read_train_target(target)
+        previous = m["images"].get(old_name)
         m["images"].pop(old_name, None)
         origin = meta.get("origin") or new_name
         entry: dict[str, Any] = {
             "origin": origin,
             "mtime": meta.get("mtime", time.time()),
+            "imported_at": (
+                entry_imported_at(
+                    previous,
+                    previous.get("mtime") if isinstance(previous, dict) else None,
+                )
+                or _positive_timestamp(meta.get("imported_at"))
+                or time.time()
+            ),
         }
         if "size" in meta:
             entry["size"] = meta["size"]
