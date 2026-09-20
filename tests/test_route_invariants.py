@@ -28,7 +28,7 @@ def test_route_count_in_sane_range() -> None:
     # tests/_route_helpers.py），直接 len(app.routes) 在新版只数 wrapper 不数
     # 内部 APIRoute；递归展开后才是真实路由数。
     n = sum(1 for _ in iter_leaf_routes(app.routes))
-    assert 100 <= n <= 250, f"app.routes 展开后 = {n}，超出合理区间 [100, 250]"
+    assert 100 <= n <= 300, f"app.routes 展开后 = {n}，超出合理区间 [100, 300]"
 
 
 def test_decorator_count_matches_api_routes() -> None:

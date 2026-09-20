@@ -1,7 +1,7 @@
 {
   "version": 1,
   "generated_from": "studio.server.app",
-  "count": 243,
+  "count": 250,
   "routes": [
     {
       "path": "/",
@@ -658,6 +658,22 @@
       "type": "APIRoute"
     },
     {
+      "path": "/api/projects/archive-batch",
+      "methods": [
+        "POST"
+      ],
+      "name": "archive_projects_endpoint",
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/projects/delete-batch",
+      "methods": [
+        "POST"
+      ],
+      "name": "delete_projects_endpoint",
+      "type": "APIRoute"
+    },
+    {
       "path": "/api/projects/import-bundle",
       "methods": [
         "POST"
@@ -679,6 +695,14 @@
         "POST"
       ],
       "name": "import_train_zip",
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/projects/unarchive-batch",
+      "methods": [
+        "POST"
+      ],
+      "name": "unarchive_projects_endpoint",
       "type": "APIRoute"
     },
     {
@@ -1010,6 +1034,14 @@
       "type": "APIRoute"
     },
     {
+      "path": "/api/projects/{pid}/versions/{vid}/curation/remove-files",
+      "methods": [
+        "POST"
+      ],
+      "name": "remove_train_files",
+      "type": "APIRoute"
+    },
+    {
       "path": "/api/projects/{pid}/versions/{vid}/curation/validation",
       "methods": [
         "GET"
@@ -1219,7 +1251,9 @@
     },
     {
       "path": "/api/projects/{pid}/versions/{vid}/preprocess/head-mask/applications",
-      "methods": ["GET"],
+      "methods": [
+        "GET"
+      ],
       "name": "get_head_mask_applications",
       "type": "APIRoute"
     },
@@ -1249,13 +1283,17 @@
     },
     {
       "path": "/api/projects/{pid}/versions/{vid}/preprocess/head-mask/proposals/{job_id}/masks/{mask_id}",
-      "methods": ["GET"],
+      "methods": [
+        "GET"
+      ],
       "name": "get_face_mask_bitmap",
       "type": "APIRoute"
     },
     {
       "path": "/api/projects/{pid}/versions/{vid}/preprocess/head-mask/replace-preview",
-      "methods": ["POST"],
+      "methods": [
+        "POST"
+      ],
       "name": "preview_head_mask_replacement",
       "type": "APIRoute"
     },

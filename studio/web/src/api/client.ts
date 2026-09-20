@@ -1965,7 +1965,7 @@ export interface QueueHoldState {
 /** `GET /api/logs/{id}` 分页响应（docs/design/logging-target-state.md §3.4）。
  *  `lines[].offset` = 该行起始字节；`end_offset` = 最后一行结束后的偏移，既是
  *  「往后补拉」的 after 游标，也与 SSE task_log_appended.end_offset 同坐标系；
- *  `start_offset` 给「加载更早」当 before。末尾半行不返回。 */
+ *  `start_offset` 是「加载全部」的 before 游标。末尾半行不返回。 */
 export interface LogPage {
   task_id: number
   lines: { offset: number; text: string }[]
@@ -1975,7 +1975,7 @@ export interface LogPage {
   has_more_before: boolean
 }
 
-/** 分页查询参数：tail / before / after 三选一（都不给 = tail，服务端默认 500 行）。 */
+/** 分页查询参数：tail / before / after 三选一（都不给 = tail，服务端默认 2000 行）。 */
 export type LogPageQuery =
   | { tail?: number }
   | { before: number; limit?: number }
@@ -2649,8 +2649,26 @@ export const api = {
   /** 归档（软隐藏，可逆）：目录 / versions / 任务全部原样。 */
   archiveProject: (pid: number) =>
     req<ProjectDetail>(`/api/projects/${pid}/archive`, { method: 'POST' }),
+  archiveProjects: (projectIds: number[]) =>
+    req<{ updated: number[] }>('/api/projects/archive-batch', {
+      method: 'POST',
+      body: JSON.stringify({ project_ids: projectIds }),
+    }),
   unarchiveProject: (pid: number) =>
     req<ProjectDetail>(`/api/projects/${pid}/unarchive`, { method: 'POST' }),
+  unarchiveProjects: (projectIds: number[]) =>
+    req<{ updated: number[] }>('/api/projects/unarchive-batch', {
+      method: 'POST',
+      body: JSON.stringify({ project_ids: projectIds }),
+    }),
+  deleteProjects: (projectIds: number[]) =>
+    req<{
+      deleted: number[]
+      failed: Array<{ id: number; code: string; message: string }>
+    }>('/api/projects/delete-batch', {
+      method: 'POST',
+      body: JSON.stringify({ project_ids: projectIds }),
+    }),
 
   listVersions: (pid: number) =>
     req<{ items: Version[] }>(`/api/projects/${pid}/versions`).then(

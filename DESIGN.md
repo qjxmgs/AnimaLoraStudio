@@ -113,8 +113,9 @@ loading. Use no more than `400`, `500`, and `600` for normal UI hierarchy.
 | Page description | `.type-page-description`: `text-md`, secondary, relaxed, max `68ch` | A concise explanation directly below the page title |
 | Section title | `.type-section-title`: `text-lg`, 600, primary | A major region inside a page or dialog |
 | Panel title | `.type-panel-title`: `text-sm`, 600, primary | A card, settings group, or compact panel |
-| Section label | `.type-section-label`: `text-xs`, 600, tertiary, tracked uppercase | A direct category heading such as queue status; never an eyebrow above another heading |
+| Section label | `.type-section-label`: `text-xs`, 600, secondary, tracked uppercase | A direct category heading such as queue status; never an eyebrow above another heading |
 | Field label | `.type-field-label`: `text-sm`, 500, secondary | The human-readable name of a form control |
+| Data label | `.type-data-label`: `text-xs`, 500, secondary | The label of a value in a read-only property or definition list; not a form-control label |
 | Field help | `.type-field-help`: `text-xs`, tertiary, relaxed | Optional supporting copy below a field |
 | Metadata | `text-xs` + tertiary | Timestamps, counts, and passive context |
 | Technical data | `font-mono`; add `.tnum` for comparable numbers | Code, paths, identifiers, logs, and measurements—not generic UI chrome |
@@ -608,6 +609,32 @@ or select retains its own label. The Pattern is presentational: query debounce,
 persistence, active-filter dots, sorting, API parameters, paging resets, result counts,
 refresh, clear behavior, and list mutations remain page-owned. Do not add unused result
 or clear slots until a repeated product behavior has been established.
+
+### Ordinary-list batch selection
+
+An ordinary list enters bulk selection through an explicit, labelled mode; permanent
+or high-impact mutations never appear as an always-on action beside ordinary page
+creation and navigation. While the mode is active, the list's normal open/edit actions
+yield to native selection controls and the whole row or card may become a larger pointer
+target for that same selection. Keyboard users retain one labelled checkbox per item;
+selection state must not rely on color alone.
+
+The contextual bulk bar sits after the optional `ListToolbar` and before the collection,
+never inside either the list toolbar or `PageHeader`. It has two visually separated
+clusters: selected count plus select-current-results and clear controls on the leading
+side, and domain mutations on the trailing side. Do not mix reversible domain actions
+such as restore into the selection-control cluster. Within the mutation cluster,
+reversible actions precede the final destructive action. “Select all” means the current
+filtered result set and must say so; changing the filter prunes hidden selections, while
+sorting preserves them. Leaving the view or bulk mode clears selection. During a
+submitted mutation, selection, scope changes, and duplicate execution are disabled.
+Completion produces one aggregate result, not one notification per item, and focus
+returns to a surviving bulk-mode entry point.
+
+Projects is the representative card-list adoption: active projects support batch
+archive; archived projects support batch restore and permanent delete. The backend
+validates the full selection's lifecycle state before mutating it. Permanent deletion
+continues to require one confirmation naming the count and consequences.
 
 ## 14. Async-state and progress contract
 
