@@ -244,8 +244,9 @@ export default function ProjectsPage() {
   const filtering = query.trim() !== '' || statusFilter !== 'all'
 
   return (
-    <div className="fade-in">
+    <div className="fade-in theme-projects-page">
       <PageHeader
+        welcome
         title={t('projects.title')}
         subtitle={t('projects.description')}
         sticky
@@ -597,7 +598,7 @@ export function ProjectCard({
       interactive
       padding="md"
       aria-labelledby={titleId}
-      className={`group relative flex w-full flex-col gap-field text-left ${archived ? 'opacity-70' : ''}`}
+      className={`theme-project-card group relative flex w-full flex-col gap-field text-left ${archived ? 'opacity-70' : ''}`}
     >
       <button
         type="button"

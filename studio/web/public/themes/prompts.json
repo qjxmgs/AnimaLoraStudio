@@ -1,0 +1,50 @@
+{
+  "generator": "Built-in image_gen",
+  "reference": "../icons/noal_smug.png",
+  "characters": [
+    {
+      "id": "sky",
+      "prompt": "Use case: stylized-concept. Asset type: transparent anime game UI mascot half-body cutout. Input image: character identity reference, preserve the red layered bob hair, red animal ears, gold eyes and mischievous warm personality. Draw a polished adult anime mascot, charming compact proportions but not a child, shoulders to waist fully visible, both ears and hands completely within frame, facing slightly left toward page content, no legs needed. Sky club theme: blue and white varsity club jacket, little yellow star pin, headphones around neck, holding a slim sketch tablet with no writing, friendly confident smile. Clean hand-painted Japanese mobile-game illustration, crisp linework, soft cel shading, restrained small highlights, premium charming finish. Portrait composition, centered with 5 percent breathing room. Genuine transparent alpha background, no floor, no rectangle, no checkerboard drawn into image. No words, letters, watermark, logos, borders or UI. Maintain the same character as the reference; only outfit and pose differ."
+    },
+    {
+      "id": "sakura",
+      "prompt": "Use case: stylized-concept. Asset type: transparent anime game UI mascot half-body cutout. Input image: character identity reference, preserve the red layered bob hair, red animal ears, gold eyes and mischievous warm personality. Draw a polished adult anime mascot, charming compact proportions but not a child, shoulders to waist fully visible, both ears and hands completely within frame, facing slightly left toward page content, no legs needed. Sakura idol theme: tasteful pink and berry-red idol stage jacket with cream blouse, large ribbon bow and small gold star accessories, one hand lightly waving, bright encouraging smile. Clean hand-painted Japanese mobile-game illustration, crisp linework, soft cel shading, restrained small highlights, premium charming finish. Portrait composition, centered with 5 percent breathing room. Genuine transparent alpha background, no floor, no rectangle, no checkerboard drawn into image. No words, letters, watermark, logos, borders or UI. Maintain the same character as the reference; only outfit and pose differ."
+    },
+    {
+      "id": "star",
+      "prompt": "Use case: stylized-concept. Asset type: transparent anime game UI mascot half-body cutout. Input image: character identity reference, preserve the red layered bob hair, red animal ears, gold eyes and mischievous warm personality. Draw a polished adult anime mascot, charming compact proportions but not a child, shoulders to waist fully visible, both ears and hands completely within frame, facing slightly left toward page content, no legs needed. Orbital terminal theme: futuristic navy cropped utility jacket over a fully covered white tech shirt, cyan luminous piping and magenta accessories, holding a small floating holographic tablet without writing, confident playful smile. Clean hand-painted Japanese mobile-game illustration, crisp linework, soft cel shading, restrained small highlights, premium charming finish. Portrait composition, centered with 5 percent breathing room. Genuine transparent alpha background, no floor, no rectangle, no checkerboard drawn into image. No words, letters, watermark, logos, borders or UI. Maintain the same character as the reference; only outfit and pose differ."
+    }
+  ],
+  "scenes": [
+    {
+      "id": "sky",
+      "mode": "light",
+      "prompt": "Use case: stylized-concept. Asset type: wide background illustration for an anime creative-workbench application's welcome banner. Scene: sunlit creative school-club atelier with wide open windows, blue sky and puffy clouds, sketchbooks, headphones, art easel and yellow stationery accents. Sky blue and warm white. Polished Japanese anime game background painting, expressive crisp architecture, painterly soft light, beautiful richly illustrated environment. Wide cinematic landscape composition, 3:1 ratio, large calm uncluttered LEFT two-thirds reserved for separately rendered UI text and controls, most detail concentrated in RIGHT third and far edges. No people or animals, no readable text, no typography, no logos, no watermarks, no UI elements. This is an environment layer only."
+    },
+    {
+      "id": "sky",
+      "mode": "dark",
+      "prompt": "Use case: stylized-concept. Asset type: wide background illustration for an anime creative-workbench application's welcome banner. Scene: the same cozy creative club atelier at blue hour, navy blue sky outside broad windows, distant warm city lights, desk lamp, sketchbooks and art easel. Deep ocean blue with gentle amber lighting. Polished Japanese anime game background painting, expressive crisp architecture, painterly soft light, beautiful richly illustrated environment. Wide cinematic landscape composition, 3:1 ratio, large calm uncluttered LEFT two-thirds reserved for separately rendered UI text and controls, most detail concentrated in RIGHT third and far edges. No people or animals, no readable text, no typography, no logos, no watermarks, no UI elements. This is an environment layer only."
+    },
+    {
+      "id": "sakura",
+      "mode": "light",
+      "prompt": "Use case: stylized-concept. Asset type: wide background illustration for an anime creative-workbench application's welcome banner. Scene: charming idol dressing room with an arched vanity mirror and soft round bulb lights, pastel pink ribbons, a few gold star ornaments, cream upholstery, luminous pale pink daylight. Playful but elegant anime backstage atmosphere. Polished Japanese anime game background painting, expressive crisp architecture, painterly soft light, beautiful richly illustrated environment. Wide cinematic landscape composition, 3:1 ratio, large calm uncluttered LEFT two-thirds reserved for separately rendered UI text and controls, most detail concentrated in RIGHT third and far edges. No people or animals, no readable text, no typography, no logos, no watermarks, no UI elements. This is an environment layer only."
+    },
+    {
+      "id": "sakura",
+      "mode": "dark",
+      "prompt": "Use case: stylized-concept. Asset type: wide background illustration for an anime creative-workbench application's welcome banner. Scene: charming idol backstage dressing room at night, arched vanity mirror glowing with golden round bulbs, berry-purple walls, pink ribbon decorations, soft peach stage lights spilling from the right, subtle gold stars. Polished Japanese anime game background painting, expressive crisp architecture, painterly soft light, beautiful richly illustrated environment. Wide cinematic landscape composition, 3:1 ratio, large calm uncluttered LEFT two-thirds reserved for separately rendered UI text and controls, most detail concentrated in RIGHT third and far edges. No people or animals, no readable text, no typography, no logos, no watermarks, no UI elements. This is an environment layer only."
+    },
+    {
+      "id": "star",
+      "mode": "light",
+      "prompt": "Use case: stylized-concept. Asset type: wide background illustration for an anime creative-workbench application's welcome banner. Scene: bright futuristic orbital observation studio, panoramic window opening onto a blue planet and stars, white curved architectural panels, cobalt console accents with a touch of magenta and cyan, soft high-key daylight. Polished Japanese anime game background painting, expressive crisp architecture, painterly soft light, beautiful richly illustrated environment. Wide cinematic landscape composition, 3:1 ratio, large calm uncluttered LEFT two-thirds reserved for separately rendered UI text and controls, most detail concentrated in RIGHT third and far edges. No people or animals, no readable text, no typography, no logos, no watermarks, no UI elements. This is an environment layer only."
+    },
+    {
+      "id": "star",
+      "mode": "dark",
+      "prompt": "Use case: stylized-concept. Asset type: wide background illustration for an anime creative-workbench application's welcome banner. Scene: futuristic orbital observation studio at night, panoramic windows opening onto deep navy starfields and planet horizon, geometric console silhouettes, a few thin cyan light strips and magenta light accents, atmospheric dark indigo. Polished Japanese anime game background painting, expressive crisp architecture, painterly soft light, beautiful richly illustrated environment. Wide cinematic landscape composition, 3:1 ratio, large calm uncluttered LEFT two-thirds reserved for separately rendered UI text and controls, most detail concentrated in RIGHT third and far edges. No people or animals, no readable text, no typography, no logos, no watermarks, no UI elements. This is an environment layer only."
+    }
+  ]
+}

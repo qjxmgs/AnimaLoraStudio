@@ -116,7 +116,7 @@ type TagToneStyle = React.CSSProperties & { '--tag-tone': string }
 
 const tagToneStyle = (index: number): TagToneStyle => ({
   '--tag-tone': TAG_TONES[index % TAG_TONES.length],
-  color: 'color-mix(in srgb, var(--tag-tone) 72%, var(--fg-primary))',
+  color: 'color-mix(in srgb, var(--tag-tone) var(--tag-text-tone-weight, 72%), var(--fg-primary))',
   backgroundColor: 'color-mix(in srgb, var(--tag-tone) 22%, var(--bg-surface))',
   borderColor: 'var(--tag-tone)',
 })
@@ -807,7 +807,7 @@ function SortableChip({
         tag={id}
         layout="stacked"
         missingTranslation="-"
-        translationClassName="text-current opacity-70"
+        translationClassName="tag-chip-translation text-current opacity-70"
       />
     </button>
   )

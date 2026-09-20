@@ -3,7 +3,8 @@ import { useTranslation } from 'react-i18next'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { api, PHASE_ORDER, PHASE_SKIPPABLE, type Version, type VersionPhase, type VersionStatus } from '../api/client'
 import { useSettingsDrawer } from '../lib/SettingsDrawer'
-import { getStoredTheme, toggleTheme, type Theme } from '../lib/theme'
+import { toggleTheme, useAppearance } from '../lib/theme'
+import { ThemeBrandAvatar, ThemeSignature } from './ThemeDecor'
 import Button from './Button'
 import { useToast } from './Toast'
 
@@ -89,6 +90,7 @@ const STATUS_DOT: Record<VersionStatus, string> = {
 
 // ── logo ───────────────────────────────────────────────────────────────────
 function Logo({ collapsed }: { collapsed: boolean }) {
+  const { preset } = useAppearance()
   const [version, setVersion] = useState<string | null>(null)
   useEffect(() => {
     let alive = true
@@ -96,15 +98,16 @@ function Logo({ collapsed }: { collapsed: boolean }) {
     return () => { alive = false }
   }, [])
   return (
-    <div className="flex items-center gap-2.5">
-      <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden>
+    <div className="theme-brand flex items-center gap-2.5">
+      <ThemeBrandAvatar />
+      {preset === 'classic' && <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden>
         <rect x="2" y="2" width="22" height="22" rx="5" fill="var(--accent)" />
         <path d="M8 18 L13 7 L18 18" stroke="var(--accent-fg)" strokeWidth="2" fill="none" strokeLinejoin="round" strokeLinecap="round" />
         <line x1="10.5" y1="14" x2="15.5" y2="14" stroke="var(--accent-fg)" strokeWidth="2" strokeLinecap="round" />
-      </svg>
+      </svg>}
       {!collapsed && (
         <div className="flex flex-col leading-[1.1]">
-          <span className="font-semibold text-md tracking-[-0.01em]">Anima</span>
+          <span className="flex items-center gap-2 font-semibold text-md tracking-[-0.01em]">Anima<ThemeSignature compact /></span>
           <span className="text-xs text-fg-tertiary font-mono">
             lora studio{version ? ` · ${version}` : ''}
           </span>
@@ -117,7 +120,7 @@ function Logo({ collapsed }: { collapsed: boolean }) {
 // ── nav item ───────────────────────────────────────────────────────────────
 function navItemClass(active: boolean, collapsed: boolean, prominent: boolean): string {
   return [
-    'flex w-full items-center gap-2.5 rounded-md no-underline transition-colors relative bg-transparent border-none cursor-pointer',
+    'theme-nav-item flex w-full items-center gap-2.5 rounded-md no-underline transition-colors relative bg-transparent border-none cursor-pointer',
     prominent ? 'text-md' : 'text-sm',
     collapsed
       ? 'py-[9px] px-0 justify-center'
@@ -623,10 +626,10 @@ function ProjectStepperNav({ pid, activeVid, currentStep, version, collapsed, in
 // ── theme toggle ───────────────────────────────────────────────────────────
 function ThemeToggle({ collapsed }: { collapsed: boolean }) {
   const { t } = useTranslation()
-  const [theme, setTheme] = useState<Theme>(() => getStoredTheme())
+  const { theme } = useAppearance()
 
   const handleToggle = () => {
-    setTheme(toggleTheme())
+    toggleTheme()
   }
 
   const isDark = theme === 'dark'

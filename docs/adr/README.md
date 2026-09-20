@@ -28,6 +28,7 @@
 | Local 0018 | [Use instance segmentation for face-only loss masks](0018-face-contour-masks.md) | Accepted | 2026-09-07 |
 | 0019 | [在 stable 升级前开放受限的 Triton 实验通道](0019-restricted-triton-opt-in.md) | Accepted | 2026-09-12 |
 | 0020 | [在任务边界解析随机种子并冻结比较组](0020-task-scoped-random-seeds.md) | Accepted | 2026-09-12 |
+| 0021 | [独立保存主题风格与明暗模式](0021-independent-theme-presets.md) | Accepted | 2026-09-19 |
 
 ## 状态值
 

@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { ThemeSignature, ThemeWelcomeArt } from './ThemeDecor'
 
 interface Props {
   title: string
@@ -10,16 +11,19 @@ interface Props {
    *  专用于 PhaseHeaderNav 等"位置必须固定在右上"的辅助导航。 */
   topRight?: ReactNode
   sticky?: boolean
+  welcome?: boolean
 }
 
-export default function PageHeader({ title, subtitle, tabs, actions, topRight, sticky }: Props) {
+export default function PageHeader({ title, subtitle, tabs, actions, topRight, sticky, welcome }: Props) {
   return (
-    <div className={`ui-page-header px-page pt-page-start pb-section bg-canvas border-b border-subtle ${sticky ? 'sticky top-0 z-[5]' : ''}`}>
+    <div className={`ui-page-header px-page pt-page-start pb-section bg-canvas border-b border-subtle ${sticky ? 'sticky top-0 z-[5]' : ''} ${welcome ? 'theme-welcome' : ''}`}>
+      {welcome && <ThemeWelcomeArt />}
       {topRight && (
         <div className="ui-page-header-top-right">{topRight}</div>
       )}
       <div className="ui-page-header-layout">
         <div className="ui-page-header-copy">
+          {welcome && <ThemeSignature />}
           <h1 className="type-page-title">{title}</h1>
           {/* tabs 在主标题下方取代 subtitle 位置；两者互斥（tabs 优先）。 */}
           {tabs ? (

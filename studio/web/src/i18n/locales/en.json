@@ -1,4 +1,15 @@
 {
+  "appearance": {
+    "preset": "Theme style",
+    "effects": "Decorative motion",
+    "effectsDescription": "Animate the welcome scene and controls (respects reduced motion)",
+    "presets": {
+      "classic": { "name": "Classic", "description": "The familiar warm studio" },
+      "sakura": { "name": "Sakura Encore", "description": "Ribbons, starlight and a candy-colored stage" },
+      "sky": { "name": "Sky Club", "description": "A sunlit club room for your next idea" },
+      "star": { "name": "Star Terminal", "description": "An observatory for creative exploration" }
+    }
+  },
   "nav": {
     "projects": "Projects",
     "queue": "Queue",

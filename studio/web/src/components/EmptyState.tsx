@@ -1,5 +1,6 @@
 import type { HTMLAttributes, ReactNode } from 'react'
 import Card from './Card'
+import { ThemeMascot } from './ThemeDecor'
 
 export type EmptyStateSize = 'md' | 'sm'
 
@@ -30,6 +31,7 @@ export default function EmptyState({
   const Container = embedded ? 'div' : Card
   return (
     <Container {...rest} className={classes}>
+      <ThemeMascot mood="empty" className="theme-empty-mascot" />
       {title && <p className="empty-state-title">{title}</p>}
       <p className="empty-state-description">{description}</p>
       {action && <div className="empty-state-action">{action}</div>}

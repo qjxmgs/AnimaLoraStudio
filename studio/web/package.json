@@ -4,6 +4,7 @@
   "version": "0.27.0",
   "type": "module",
   "scripts": {
+    "assets:themes": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-theme-assets.ps1",
     "dev": "vite",
     "build": "npm run lint && tsc -b && vite build",
     "lint": "eslint src",

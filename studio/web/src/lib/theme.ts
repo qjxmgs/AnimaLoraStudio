@@ -1,72 +1,103 @@
-/** 主题 + 字号密度的 runtime 切换。
- *
- * tokens.css 里定义了三组 CSS variable layer：
- *   - .theme-dark  → 暗色调色板（不加这个类即为日间默认）
- *   - .density-tight / .density-loose → 紧凑 / 宽松字号 + 间距（无类即默认）
- *
- * 这个模块负责把用户选择持久化到 localStorage，并在 boot 时（main.tsx 里
- * `initTheme()`）和 Settings 页里手动切换时把对应类挂在 documentElement 上。
- */
+import { useSyncExternalStore } from 'react'
 
 export type Theme = 'light' | 'dark'
 export type Density = 'tight' | 'default' | 'loose'
+export type ThemePreset = 'classic' | 'sakura' | 'sky' | 'star'
+export interface Appearance {
+  theme: Theme
+  density: Density
+  preset: ThemePreset
+  effects: boolean
+}
 
-const KEY_THEME = 'studio.theme'
-const KEY_DENSITY = 'studio.density'
+export const THEME_PRESETS: readonly ThemePreset[] = ['sakura', 'sky', 'star', 'classic']
+const KEYS = {
+  theme: 'studio.theme', density: 'studio.density',
+  preset: 'studio.themePreset', effects: 'studio.themeEffects',
+} as const
 
-const DEFAULT_THEME: Theme = 'light'
-const DEFAULT_DENSITY: Density = 'default'
-
+// Preferences still work for this session when browser storage is disabled.
+const fallback = new Map<string, string>()
 function safeGet(key: string): string | null {
-  try { return localStorage.getItem(key) } catch { return null }
+  try { return localStorage.getItem(key) } catch { return fallback.get(key) ?? null }
 }
-function safeSet(key: string, val: string) {
-  try { localStorage.setItem(key, val) } catch { /* ignore */ }
-}
-
-// ── theme ──────────────────────────────────────────────────────────────────
-export function getStoredTheme(): Theme {
-  const v = safeGet(KEY_THEME)
-  return v === 'dark' ? 'dark' : 'light'
+function safeSet(key: string, value: string): void {
+  fallback.set(key, value)
+  try { localStorage.setItem(key, value) } catch { /* session-only preference */ }
 }
 
-export function setStoredTheme(t: Theme): void {
-  safeSet(KEY_THEME, t)
-}
-
-export function applyTheme(t: Theme): void {
-  const root = document.documentElement
-  if (t === 'dark') root.classList.add('theme-dark')
-  else root.classList.remove('theme-dark')
-}
-
-export function toggleTheme(): Theme {
-  const next: Theme = getStoredTheme() === 'dark' ? 'light' : 'dark'
-  setStoredTheme(next)
-  applyTheme(next)
-  return next
-}
-
-// ── density ────────────────────────────────────────────────────────────────
+export function getStoredTheme(): Theme { return safeGet(KEYS.theme) === 'dark' ? 'dark' : 'light' }
 export function getStoredDensity(): Density {
-  const v = safeGet(KEY_DENSITY)
-  return v === 'tight' || v === 'loose' ? v : 'default'
+  const value = safeGet(KEYS.density)
+  return value === 'tight' || value === 'loose' ? value : 'default'
+}
+export function getStoredThemePreset(): ThemePreset {
+  const value = safeGet(KEYS.preset)
+  if (value === null) return 'sky'
+  return THEME_PRESETS.includes(value as ThemePreset) ? value as ThemePreset : 'classic'
+}
+export function getStoredThemeEffects(): boolean { return safeGet(KEYS.effects) !== 'false' }
+
+function readAppearance(): Appearance {
+  return { theme: getStoredTheme(), density: getStoredDensity(), preset: getStoredThemePreset(), effects: getStoredThemeEffects() }
 }
 
-export function setStoredDensity(d: Density): void {
-  safeSet(KEY_DENSITY, d)
-}
+let snapshot = readAppearance()
+const listeners = new Set<() => void>()
 
-export function applyDensity(d: Density): void {
+function apply(next: Appearance): void {
   const root = document.documentElement
-  root.classList.remove('density-tight', 'density-loose')
-  if (d === 'tight') root.classList.add('density-tight')
-  else if (d === 'loose') root.classList.add('density-loose')
-  // 'default' 不加类
+  root.classList.toggle('theme-dark', next.theme === 'dark')
+  root.classList.toggle('density-tight', next.density === 'tight')
+  root.classList.toggle('density-loose', next.density === 'loose')
+  root.dataset.themePreset = next.preset
+  root.dataset.themeEffects = String(next.effects)
+  if (Object.keys(KEYS).every((key) => snapshot[key as keyof Appearance] === next[key as keyof Appearance])) return
+  snapshot = next
+  listeners.forEach((listener) => listener())
 }
 
-// ── boot ───────────────────────────────────────────────────────────────────
-export function initTheme(): void {
-  applyTheme(getStoredTheme() || DEFAULT_THEME)
-  applyDensity(getStoredDensity() || DEFAULT_DENSITY)
+/** Changes CSS and subscribed chrome only; never keys/remounts route content. */
+export function setAppearance(patch: Partial<Appearance>): void {
+  for (const key of Object.keys(patch) as Array<keyof Appearance>) {
+    const value = patch[key]
+    if (value !== undefined) safeSet(KEYS[key], String(value))
+  }
+  apply({ ...snapshot, ...patch })
+}
+
+function onStorage(event: StorageEvent): void {
+  if (event.key === null || Object.values(KEYS).some((key) => key === event.key)) initTheme()
+}
+function subscribe(listener: () => void): () => void {
+  if (listeners.size === 0) window.addEventListener('storage', onStorage)
+  listeners.add(listener)
+  return () => {
+    listeners.delete(listener)
+    if (listeners.size === 0) window.removeEventListener('storage', onStorage)
+  }
+}
+export function useAppearance(): Appearance {
+  return useSyncExternalStore(subscribe, () => snapshot, () => snapshot)
+}
+
+// Retain the existing persistence/apply API for callers outside appearance UI.
+export function setStoredTheme(theme: Theme): void { safeSet(KEYS.theme, theme) }
+export function applyTheme(theme: Theme): void { apply({ ...snapshot, theme }) }
+export function setStoredDensity(density: Density): void { safeSet(KEYS.density, density) }
+export function applyDensity(density: Density): void { apply({ ...snapshot, density }) }
+export function toggleTheme(): Theme {
+  const theme = snapshot.theme === 'dark' ? 'light' : 'dark'
+  setAppearance({ theme })
+  return theme
+}
+export function initTheme(): void { apply(readAppearance()) }
+
+export type ThemeAsset = 'character-avatar' | 'character-avatar@2x'
+  | 'character-card' | 'character-hero' | 'character-hero@2x'
+  | `scene-${Theme}-1280` | `scene-${Theme}-1920`
+
+export function themeAsset(preset: Exclude<ThemePreset, 'classic'>, asset: ThemeAsset): string {
+  const extension = asset.startsWith('scene-') ? 'jpg' : 'png'
+  return `/themes/${preset}/${asset}.${extension}`
 }

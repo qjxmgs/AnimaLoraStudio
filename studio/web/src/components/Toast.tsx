@@ -7,6 +7,7 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import Alert, { type AlertTone } from './Alert'
+import { ThemeMascot } from './ThemeDecor'
 
 type Kind = 'info' | 'success' | 'error'
 
@@ -53,7 +54,10 @@ export function ToastProvider({ children }: { children: ReactNode }) {
               aria-atomic="true"
               className="shadow-lg"
             >
-              {t.message}
+              <div className="flex items-center gap-2">
+                <ThemeMascot mood={t.kind === 'info' ? 'welcome' : t.kind} className="theme-toast-mascot" />
+                <span>{t.message}</span>
+              </div>
             </Alert>
           ))}
         </div>,

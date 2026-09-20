@@ -18,7 +18,8 @@ import { useShowTagTranslation, useTagAutocompleteEnabled } from '../../../tagDi
 import { useTagDict, reloadDict } from '../../../tagDict/store'
 import { useToast } from '../../../components/Toast'
 import { useSettingsData } from '../../../lib/SettingsData'
-import { applyDensity, applyTheme, getStoredDensity, getStoredTheme, setStoredDensity, setStoredTheme, type Density, type Theme } from '../../../lib/theme'
+import { setAppearance, useAppearance, type Density, type Theme } from '../../../lib/theme'
+import ThemePicker from '../../../components/ThemePicker'
 import i18n, { getStoredLangWithDefault, setStoredLang } from '../../../i18n'
 import { MODEL_DESCRIPTION_KEYS, textInputClass, translatedCatalogText, UPSCALER_DESCRIPTION_KEYS, type Section } from './constants'
 import { DepSection, DepVariantList, DepVersionRow, type DepLevel, type DepNotice } from './DepSection'
@@ -1665,20 +1666,15 @@ export function SaveTestImagesSection({
 
 export function DisplaySection() {
   const { t } = useTranslation()
-  const [theme, setTheme] = useState<Theme>(() => getStoredTheme())
-  const [density, setDensity] = useState<Density>(() => getStoredDensity())
+  const { theme, density, effects } = useAppearance()
   const [lang, setLang] = useState<string>(() => getStoredLangWithDefault())
 
   const handleThemeChange = (t: Theme) => {
-    setTheme(t)
-    setStoredTheme(t)
-    applyTheme(t)
+    setAppearance({ theme: t })
   }
 
   const handleDensityChange = (d: Density) => {
-    setDensity(d)
-    setStoredDensity(d)
-    applyDensity(d)
+    setAppearance({ density: d })
   }
 
   const handleLangChange = (newLang: string) => {
@@ -1708,6 +1704,10 @@ export function DisplaySection() {
         />
       </SettingsField>
 
+      <SettingsField label={t('appearance.preset')}>
+        <ThemePicker />
+      </SettingsField>
+
       <SettingsField label={t('settings.theme')}>
         <PillRadioGroup
           options={(['light', 'dark'] as Theme[]).map((themeOption) => ({
@@ -1717,6 +1717,13 @@ export function DisplaySection() {
           value={theme}
           onChange={handleThemeChange}
         />
+      </SettingsField>
+
+      <SettingsField label={t('appearance.effects')} helpTooltip={<p>{t('appearance.effectsDescription')}</p>}>
+        <label className="flex items-center gap-2 text-sm text-fg-secondary">
+          <input type="checkbox" aria-label={t('appearance.effects')} checked={effects} onChange={(e) => setAppearance({ effects: e.target.checked })} />
+          {t('settings.boolEnabled')}
+        </label>
       </SettingsField>
 
       <SettingsField

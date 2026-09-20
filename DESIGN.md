@@ -6,10 +6,10 @@ this file defines how those behaviors are presented consistently.
 
 ## 1. Direction
 
-AnimaLoraStudio is a focused creative workbench, not a marketing surface. Its visual
-world is warm ivory, restrained orange, precise typography, and compact technical
-controls. Light and dark themes express the same hierarchy. Changes should evolve
-this world rather than replace it.
+AnimaLoraStudio is a focused creative workbench with selectable anime-inspired
+visual worlds: Sakura Encore, Sky Club, Star Terminal, and the original warm-ivory
+Classic. Each has light and dark modes, independent of density. They share the
+same information hierarchy, task semantics, and compact technical controls.
 
 The interface serves two audiences at once:
 
@@ -24,6 +24,7 @@ surface has identical density.
 | Layer | Authority | Responsibility |
 | --- | --- | --- |
 | Foundation | `studio/web/src/styles/tokens.css` | Color, type, spacing, radius, shadow, motion, control states |
+| Theme layer | `studio/web/src/styles/themes.css`, `studio/web/src/lib/theme.ts` | Named light/dark palettes, shared appearance state, decorative shapes and local artwork |
 | Utility bridge | `studio/web/tailwind.config.js` | Maps CSS tokens into Tailwind utilities |
 | Primitives | `studio/web/src/components/Button.tsx`, `Badge.tsx`, `Card.tsx`, `EmptyState.tsx`, `FormControl.tsx`, `Alert.tsx`, `ProgressBar.tsx` | Typed, accessible component APIs |
 | Patterns | `PageHeader`, `StepShell`, `ActionGroup`, `SaveIndicator`, `SaveBar`, `ListToolbar`, `Dialog`, `Modal`, `Drawer`, `Tabs`, `SegmentedControl`, `Toast`, `Field` | Repeated page and interaction structures |
@@ -59,6 +60,31 @@ chosen rule should apply across the app. If those answers are unknown, continue
 the audit instead of entering implementation.
 
 ## 3. Foundations
+
+### Named themes and decorative surfaces
+
+- Theme preset, light/dark mode, density and decorative motion are independent
+  browser-local preferences. Missing preset defaults to Sky Club while retaining
+  the previous light/dark preference; invalid presets fall back to Classic.
+- Settings > Appearance and the sidebar subscribe to one appearance store.
+  Applying appearance never remounts a route, resets drafts, or changes task state.
+- Shared component tokens and chrome carry the theme across every route. Retain
+  semantic status colors, neutral image-preview planes and tag category meanings.
+- The project collection alone uses the `PageHeader` welcome variant: a local
+  scene and mascot behind a left-aligned title and action group. It is an entry
+  surface rather than an editor, so it can devote approximately 160–220px to art.
+  The mascot is hidden below 900px of available content width. Dense workbenches
+  keep their original geometry and do not reserve space for large illustrations.
+- Illustrations are non-interactive and aria-hidden; text remains real UI. Only
+  the current preset/mode's large assets load. Preview tiles use small Q portraits.
+- Theme signatures and preview names may use weight 700; rounded display fonts
+  use local fallbacks only. The compact sidebar signature is a decorative 9px
+  label constrained by the existing 52px brand track, never required navigation.
+- Decorative motion is opt-out and honors reduced motion. Ambient loops are
+  limited to the welcome surface; functional progress remains available.
+
+See [ADR 0021](docs/adr/0021-independent-theme-presets.md) and the
+[appearance guide](docs/user-guide/appearance.md).
 
 ### Color
 

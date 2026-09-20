@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -13,6 +13,7 @@ import type { ProjectDetail, Version } from '../api/client'
 import { DialogProvider } from './Dialog'
 import { ToastProvider } from './Toast'
 import Sidebar from './Sidebar'
+import { setAppearance } from '../lib/theme'
 
 function renderAt(path: string, sticky: SelectedProjectValue | null = null) {
   return render(
@@ -114,6 +115,24 @@ describe('Sidebar (PP0)', () => {
     // 设置不再是路由 link，而是打开右侧抽屉的 button；没有 href
     expect(screen.getByRole('button', { name: /设置/ })).toBeInTheDocument()
     expect(screen.queryByRole('link', { name: /设置/ })).toBeNull()
+  })
+
+  it('uses the current theme portrait in the brand and updates it immediately', () => {
+    setAppearance({ preset: 'sky' })
+    const { container } = renderAt('/')
+    const avatar = container.querySelector<HTMLImageElement>('.theme-brand-avatar')
+    expect(avatar).toHaveAttribute('src', '/themes/sky/character-avatar.png')
+    expect(avatar).toHaveAttribute(
+      'srcset',
+      '/themes/sky/character-avatar.png 1x, /themes/sky/character-avatar@2x.png 2x',
+    )
+
+    act(() => setAppearance({ preset: 'star' }))
+    expect(avatar).toHaveAttribute('src', '/themes/star/character-avatar.png')
+
+    act(() => setAppearance({ preset: 'classic' }))
+    expect(container.querySelector('.theme-brand-avatar')).toBeNull()
+    expect(container.querySelector('.theme-brand svg')).toBeInTheDocument()
   })
 
   it('provides a scrollable primary navigation and exposes collapse state', () => {

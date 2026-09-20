@@ -1,4 +1,15 @@
 {
+  "appearance": {
+    "preset": "主题风格",
+    "effects": "装饰动效",
+    "effectsDescription": "启用首页氛围与控件动效（跟随系统减少动态效果设置）",
+    "presets": {
+      "classic": { "name": "经典", "description": "熟悉的暖色工作室" },
+      "sakura": { "name": "樱糖应援", "description": "蝴蝶结、星光与甜系舞台" },
+      "sky": { "name": "晴空社团", "description": "把灵感写进晴天的社团手册" },
+      "star": { "name": "星轨终端", "description": "驶向灵感宇宙的观测站" }
+    }
+  },
   "nav": {
     "projects": "项目",
     "queue": "队列",
@@ -928,7 +939,7 @@
     "tabMonitor": "监控",
     "tabGenerate": "测试",
     "tabCredentials": "密钥",
-    "tabAppearance": "页面",
+    "tabAppearance": "外观",
     "tabSystem": "系统",
     "credHuggingface": "HuggingFace",
     "credModelscope": "ModelScope",

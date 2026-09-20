@@ -5,6 +5,7 @@
 @import './styles/version-section.css';
 @import './styles/preprocess-crop.css';
 @import './styles/responsive.css';
+@import './styles/themes.css';
 @tailwind base;
 @tailwind components;
 @tailwind utilities;

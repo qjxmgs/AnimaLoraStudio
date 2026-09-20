@@ -72,7 +72,7 @@ export default function ZoomableImage({
         onDoubleClick={() => (zp.zoomPct === 100 ? zp.fit() : zp.reset100())}
         className={
           'relative flex-1 min-h-0 overflow-hidden' +
-          (dark ? '' : ' rounded border border-subtle bg-sunken')
+          (dark ? '' : ' theme-image-plane rounded border border-subtle bg-sunken')
         }
         style={{ touchAction: 'none', cursor: 'grab' }}
       >
