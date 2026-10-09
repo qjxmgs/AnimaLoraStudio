@@ -9,11 +9,12 @@ import { createPortal } from 'react-dom'
 import Alert, { type AlertTone } from './Alert'
 import { ThemeMascot } from './ThemeDecor'
 
-type Kind = 'info' | 'success' | 'error'
+type Kind = 'info' | 'success' | 'warning' | 'error'
 
 const ALERT_TONE: Record<Kind, AlertTone> = {
   info: 'info',
   success: 'success',
+  warning: 'warning',
   error: 'danger',
 }
 
@@ -37,7 +38,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     setItems((arr) => [...arr, { id, kind, message }])
     window.setTimeout(() => {
       setItems((arr) => arr.filter((t) => t.id !== id))
-    }, kind === 'error' ? 6000 : 3000)
+    }, kind === 'error' || kind === 'warning' ? 6000 : 3000)
   }, [])
 
   return (

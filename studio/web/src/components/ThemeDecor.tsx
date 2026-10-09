@@ -58,11 +58,11 @@ export function ThemeBrandAvatar() {
 }
 
 export function ThemeMascot({ mood = 'welcome', className = '' }: {
-  mood?: 'welcome' | 'empty' | 'success' | 'error'
+  mood?: 'welcome' | 'empty' | 'success' | 'warning' | 'error'
   className?: string
 }) {
   const { preset } = useAppearance()
   if (preset === 'classic') return null
-  const expression = { welcome: 'smug', empty: 'conf2', success: 'heart', error: 'confused' }[mood]
+  const expression = { welcome: 'smug', empty: 'conf2', success: 'heart', warning: 'confused', error: 'confused' }[mood]
   return <img className={`theme-mascot ${className}`} src={`/icons/noal_${expression}.png`} alt="" aria-hidden="true" />
 }

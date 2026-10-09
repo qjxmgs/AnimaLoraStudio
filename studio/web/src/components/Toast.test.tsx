@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import Drawer from './Drawer'
 import { ToastProvider, useToast } from './Toast'
 
-type Kind = 'info' | 'success' | 'error'
+type Kind = 'info' | 'success' | 'warning' | 'error'
 
 function ToastTrigger({ kind }: { kind: Kind }) {
   const { toast } = useToast()
@@ -46,6 +46,7 @@ describe('ToastProvider', () => {
   it.each([
     ['info', 'alert-info', 'status'],
     ['success', 'alert-success', 'status'],
+    ['warning', 'alert-warning', 'status'],
     ['error', 'alert-danger', 'alert'],
   ] as const)('maps %s feedback onto the shared Alert contract', (kind, toneClass, role) => {
     vi.useFakeTimers()
@@ -65,6 +66,7 @@ describe('ToastProvider', () => {
   it.each([
     ['info', 3000],
     ['success', 3000],
+    ['warning', 6000],
     ['error', 6000],
   ] as const)('keeps the %s timeout at %i ms', (kind, timeout) => {
     vi.useFakeTimers()

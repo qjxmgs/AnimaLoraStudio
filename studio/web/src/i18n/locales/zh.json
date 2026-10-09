@@ -343,7 +343,7 @@
     "loading": "加载中…",
     "empty": "模型设置里还没有已下载的可选模型 —— 去设置页下载，或在输入框手填路径",
     "group": {
-      "official": "官方",
+      "official": "内置",
       "custom": "自定义"
     },
     "note": {
@@ -1453,7 +1453,7 @@
       "blocksToSwapLabel": "Block 交换",
       "blocksToSwapSuffix": "层",
       "blocksToSwapOffHint": "关闭",
-      "blocksToSwapHelp": "把 DiT 靠后的若干层权重常驻内存，算到该层才搬进显存，算完立即让出。与「显存策略」分工不同：显存策略管多个模型之间谁让位，本项管单个模型内部——当单个模型自己就装不下显存时，这是唯一的办法。代价是每一步出图都要把换出的层搬一遍，步数越多累计耗时越长。需要等量的可用内存（Krea 2 每层约 0.4GB fp8 底模 / 0.8GB bf16 底模，Anima 每层约 0.13GB），且这部分内存会被锁定、其他程序无法使用。Krea 2 与 Anima 共 28 层，超过总层数按全部换出处理（0 = 关闭）；显存不够时从 14 开始试。"
+      "blocksToSwapHelp": "把 DiT 靠后的若干层权重常驻内存，算到该层才搬进显存，算完立即让出。与「显存策略」分工不同：显存策略管多个模型之间谁让位，本项管单个模型内部——当单个模型自己就装不下显存时，这是唯一的办法。代价是每一步出图都要把换出的层搬一遍，步数越多累计耗时越长。需要等量的可用内存（Krea 2 每层约 0.4GB fp8 底模 / 0.8GB bf16 底模，Anima 每层约 0.13GB），且这部分内存会被锁定、其他程序无法使用。层数由底模文件决定（底模列表里标有「N 层」），超过总层数按全部换出处理（0 = 关闭）；显存不够时从 14 开始试。"
     },
     "krea2TeCardTitle": "Krea 2 · Qwen3-VL 文本编码器",
     "deleteAsset": "删除",
@@ -1657,6 +1657,9 @@
     "latestHint": "（最新 running，没有则显示空）"
   },
   "generate": {
+    "warning": {
+      "lora_base_layers_maybe_mismatch": "{{lora}} 没有记录训练底模层数，权重只覆盖前 {{lora_blocks}} 层，当前底模 {{base_blocks}} 层：若它训练自层数更少的底模，生成结果会错位"
+    },
     "singleMode": "单图",
     "xyMode": "XY 矩阵",
     "viewModes": "生成模式",
@@ -1994,7 +1997,7 @@
       "regSet": "正则集",
       "regCount": "{{n}} 张",
       "emptyCurate": "请先在 ③ 筛选中选择训练图",
-      "emptyTag": "请先在 ④ 打标中生成 caption",
+      "emptyTag": "暂无标签分布；无 Caption 的训练图片仍以空文本参与训练",
       "emptyResolution": "在 ② 预处理 → 放大页查看详细分布",
       "emptyAspect": "在 ② 预处理 → 裁剪页查看分桶统计",
       "emptyReg": "在 ⑥ 正则集生成或显式跳过",
@@ -2187,6 +2190,8 @@
     "nextImage": "下一张",
     "closeEdit": "关闭编辑",
     "unsavedBadge": "未保存",
+    "untaggedBadge": "未打标",
+    "untaggedCaption": "未打标 · 缺失或空 Caption 仍以空文本参与训练，可用“跳过已有”生成",
     "noImagesWithTag": "没有图含「{{tag}}」",
     "noImagesHint": "还没有图。请先在筛选和打标步骤完成操作。",
     "selectedContaining": "已选含「{{tag}}」的 {{n}} 张",
@@ -3509,7 +3514,13 @@
     "purpose": {
       "training": "训练",
       "inference": "推理"
-    }
+    },
+    "layers": "{{n}} 层"
+  },
+  "lora": {
+    "baseLayers": "训练底模 {{n}} 层",
+    "baseLayersMismatch": "此 LoRA 训练自 {{lora}} 层底模，当前底模 {{base}} 层：层与层对不上，会被拒绝挂载",
+    "baseLayersMaybe": "此 LoRA 只覆盖前 {{lora}} 层（无底模层数元数据），当前底模 {{base}} 层：若它训练自层数更少的底模，挂上去会错位"
   },
   "llmPreset": {
     "title": "编辑 LLM 预设",

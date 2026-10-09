@@ -343,7 +343,7 @@
     "loading": "Loading…",
     "empty": "No downloaded models available — download one in Settings, or type a path directly",
     "group": {
-      "official": "Official",
+      "official": "Built-in",
       "custom": "Custom"
     },
     "note": {
@@ -1453,7 +1453,7 @@
       "blocksToSwapLabel": "Block swap",
       "blocksToSwapSuffix": "layers",
       "blocksToSwapOffHint": "off",
-      "blocksToSwapHelp": "Keeps the weights of the last N DiT layers in system RAM, moving each one onto the GPU only when it is that layer's turn and releasing it right after. This is a different job from VRAM policy: that one decides which model yields to which, this one works inside a single model — when one model alone does not fit in VRAM, this is the only way. The cost is that every sampling step has to move all swapped layers again, so more steps means more total time. Needs an equal amount of free RAM (Krea 2: about 0.4GB per layer for an fp8 base model, 0.8GB for bf16; Anima: about 0.13GB per layer), and that RAM is locked so other programs cannot use it. Krea 2 and Anima have 28 layers; values above the layer count swap out everything (0 = off). Start around 14 if you are short on VRAM."
+      "blocksToSwapHelp": "Keeps the weights of the last N DiT layers in system RAM, moving each one onto the GPU only when it is that layer's turn and releasing it right after. This is a different job from VRAM policy: that one decides which model yields to which, this one works inside a single model — when one model alone does not fit in VRAM, this is the only way. The cost is that every sampling step has to move all swapped layers again, so more steps means more total time. Needs an equal amount of free RAM (Krea 2: about 0.4GB per layer for an fp8 base model, 0.8GB for bf16; Anima: about 0.13GB per layer), and that RAM is locked so other programs cannot use it. The layer count comes from the base model file (shown as \"N layers\" in the base model list); values above the layer count swap out everything (0 = off). Start around 14 if you are short on VRAM."
     },
     "krea2TeCardTitle": "Krea 2 · Qwen3-VL text encoder",
     "deleteAsset": "Delete",
@@ -1657,6 +1657,9 @@
     "latestHint": "(Latest running task, empty if none)"
   },
   "generate": {
+    "warning": {
+      "lora_base_layers_maybe_mismatch": "{{lora}} has no base-model layer metadata and only covers the first {{lora_blocks}} layers, while the current base model has {{base_blocks}}: if it was trained on a shallower base, results will be misaligned"
+    },
     "singleMode": "Single",
     "xyMode": "XY Matrix",
     "viewModes": "Generation mode",
@@ -1994,7 +1997,7 @@
       "regSet": "Regularization set",
       "regCount": "{{n}} images",
       "emptyCurate": "Pick training images in ③ Curate first",
-      "emptyTag": "Generate captions in ④ Tag first",
+      "emptyTag": "No tag distribution yet; training images without Captions still train with empty text",
       "emptyResolution": "See details in ② Preprocess → Upscale",
       "emptyAspect": "See bucket stats in ② Preprocess → Crop",
       "emptyReg": "Generate reg set or explicitly skip in ⑥ Reg",
@@ -2187,6 +2190,8 @@
     "nextImage": "Next",
     "closeEdit": "Close edit",
     "unsavedBadge": "Unsaved",
+    "untaggedBadge": "Untagged",
+    "untaggedCaption": "Untagged · Missing or empty Captions still train with empty text; skip existing to generate",
     "noImagesWithTag": "No images contain «{{tag}}»",
     "noImagesHint": "No images yet. Complete the curation and tagging steps first.",
     "selectedContaining": "Selected {{n}} images containing «{{tag}}»",
@@ -3509,7 +3514,13 @@
     "purpose": {
       "training": "training",
       "inference": "inference"
-    }
+    },
+    "layers": "{{n}} layers"
+  },
+  "lora": {
+    "baseLayers": "Trained on a {{n}}-layer base",
+    "baseLayersMismatch": "This LoRA was trained on a {{lora}}-layer base; the current base has {{base}} layers — layers won't line up and loading will be refused",
+    "baseLayersMaybe": "This LoRA only covers the first {{lora}} layers (no base-layer metadata); the current base has {{base}} layers — if it was trained on a smaller base, layers won't line up"
   },
   "llmPreset": {
     "title": "Edit LLM preset",

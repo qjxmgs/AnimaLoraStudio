@@ -18,7 +18,9 @@ from pathlib import Path
 from typing import Any, Optional
 
 from . import projects
+from ...services.dataset import tagedit
 from ...services.dataset.scan import IMAGE_EXTS
+from ...services.inference.lora_compat import read_lora_base_arch_cached
 
 # ADR-0007 §11.3-B：versions 状态机用 status + phase 两个正交字段。
 # 老 stage 已在 PR-5 移除（PR-5 commit 2 删 VALID_STAGES / advance_stage）。
@@ -239,12 +241,20 @@ def list_lora_ckpts(vdir: Path) -> list[dict[str, Any]]:
                 kind = "final"
                 label = "final"
         try:
-            mtime = f.stat().st_mtime
+            st = f.stat()
+            mtime = st.st_mtime
+            size = st.st_size
         except OSError:
             mtime = 0.0
+            size = -1
+        arch = read_lora_base_arch_cached(str(f), size, mtime)
         items.append({
             "kind": kind, "value": value, "label": label,
             "path": str(f), "mtime": mtime,
+            # lora_compat 契约：训练底模层数（元数据 / 键扫描下界 / 未知），前端
+            # 据此标记「28 层 / 40 层」并与当前底模比对
+            "base_num_blocks": arch.num_blocks,
+            "base_arch_source": arch.source,
         })
 
     # 排序：final 顶部；step/epoch 按 value 降序；other 按 label 自然序升序
@@ -616,7 +626,7 @@ def activate_version(
 
 
 def _scan_caption_dataset(root: Path) -> tuple[list[dict[str, Any]], int, int]:
-    """扫 root/<folder>/ 的图片数与已打标数（.txt / .json sidecar）。
+    """扫 root/<folder>/ 的图片数与有效 caption 覆盖数。
 
     train/ 与 validation/ 同构（validation 镜像 train 的子文件夹布局），共用一套扫描。
     返回 (folders, total, tagged)。
@@ -632,7 +642,7 @@ def _scan_caption_dataset(root: Path) -> tuple[list[dict[str, Any]], int, int]:
                     if not (f.is_file() and f.suffix.lower() in IMAGE_EXTS):
                         continue
                     cnt += 1
-                    if f.with_suffix(".txt").exists() or f.with_suffix(".json").exists():
+                    if tagedit.has_effective_caption(f):
                         tagged += 1
                 folders.append({"name": sub.name, "image_count": cnt})
                 total += cnt
@@ -679,7 +689,7 @@ def compute_bucket_histogram(
     训练数量不符：
     - 根目录散图按 repeat=1 + config 分辨率列表计入；
     - 子文件夹**递归**（``rglob``）扫，按文件夹名 px 覆盖 / repeat 解析；
-    - **只计有 caption 的图**（无 ``.json``/``.txt``/``.caption`` 的会被 trainer 丢弃）。
+    - 图片是否有 caption 不影响入选；缺失或空 caption 使用空文本训练。
 
     每张图按其分辨率 fan-out 落桶，count = 有效样本数（含 repeat × 分辨率档数）。
     复用 runtime 的 ``BucketManager`` + ``_parse_folder_meta``，不引入桶算法第三份拷贝。
@@ -697,17 +707,9 @@ def compute_bucket_histogram(
             mgrs[reso] = BucketManager(int(reso), aspect_ratio_limit=aspect_ratio_limit)
         return mgrs[reso]
 
-    def has_caption(img_path: Path) -> bool:
-        # 镜像 _make_sample：prefer_json 且 .json 存在 → json；否则要 .txt 或 .caption。
-        if prefer_json and img_path.with_suffix(".json").exists():
-            return True
-        return img_path.with_suffix(".txt").exists() or img_path.with_suffix(".caption").exists()
-
     hist: dict[int, dict[tuple[int, int], int]] = {}
 
     def add_image(img_path: Path, repeat: int, resos: list[int]) -> None:
-        if not has_caption(img_path):
-            return
         try:
             with Image.open(img_path) as im:
                 w, h = im.size
@@ -776,7 +778,7 @@ def compute_navit_pack_estimate(
     """NaViT 打包模式的 epoch 包数预估（= 优化器 steps/epoch 的分子）。
 
     扫描规则与 ``compute_bucket_histogram`` 同源（镜像 ``ImageDataset._scan``：
-    根目录散图 → 子文件夹 sorted+rglob、只计有 caption 的图、repeat 展开），逐图
+    根目录散图 → 子文件夹 sorted+rglob、所有图片、repeat 展开），逐图
     token 数与打包全部复用 runtime 真实现：
 
     - ``native_resolution=True``：``plan_native_fit_image``（floor-16 + 超预算
@@ -816,19 +818,12 @@ def compute_navit_pack_estimate(
             mgrs[reso] = BucketManager(int(reso), aspect_ratio_limit=aspect_ratio_limit)
         return mgrs[reso]
 
-    def has_caption(img_path: Path) -> bool:
-        if prefer_json and img_path.with_suffix(".json").exists():
-            return True
-        return img_path.with_suffix(".txt").exists() or img_path.with_suffix(".caption").exists()
-
     token_counts: list[int] = []
     size_hist: dict[tuple[int, int], int] = {}
     downscaled = 0
 
     def add_image(img_path: Path, repeat: int, resos: list[int]) -> None:
         nonlocal downscaled
-        if not has_caption(img_path):
-            return
         try:
             with Image.open(img_path) as im:
                 w, h = im.size
