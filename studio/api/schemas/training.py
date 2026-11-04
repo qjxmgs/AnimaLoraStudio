@@ -6,6 +6,10 @@ from typing import Any, Optional
 from pydantic import BaseModel
 
 
+class RevealTrainImageRequest(BaseModel):
+    path: str
+
+
 class Wd14Overrides(BaseModel):
     """打标页对 wd14 设置的「本次任务覆盖」—— 仅在 worker 进程内生效，
     不写回 secrets.json。"""

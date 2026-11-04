@@ -2,6 +2,7 @@ import { memo, useEffect, useRef, useState, type SyntheticEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { VirtuosoGrid, type VirtuosoGridHandle } from 'react-virtuoso'
 import ImageSelectionFrame from './ImageSelectionFrame'
+import { useImageContextMenu } from './useImageContextMenu'
 
 export interface ImageGridItem {
   name: string
@@ -27,6 +28,8 @@ export interface ImageGridProps {
   onHover?: (name: string) => void
   /** 全屏 modal 预览，由 cell 上的放大镜按钮触发（可选）。 */
   onPreview?: (name: string) => void
+  /** 定位当前项的实际文件；未提供时保留浏览器原生右键菜单。 */
+  onReveal?: (name: string) => void
   /** 主点击行为：默认选择；activate 模式下普通点击交给外部打开/激活。 */
   onActivate?: (name: string) => void
   clickMode?: 'select' | 'activate'
@@ -126,6 +129,7 @@ export default function ImageGrid({
   onSelect,
   onHover,
   onPreview,
+  onReveal,
   onActivate,
   clickMode = 'select',
   emptyHint,
@@ -137,6 +141,7 @@ export default function ImageGrid({
   contentClassName = '',
 }: ImageGridProps) {
   const { t } = useTranslation()
+  const contextMenu = useImageContextMenu(onReveal, items)
   const rootRef = useRef<HTMLDivElement>(null)
   const virtuosoRef = useRef<VirtuosoGridHandle>(null)
   const lastColumnCountRef = useRef(0)
@@ -234,12 +239,15 @@ export default function ImageGrid({
               onSelect={onSelect}
               onHover={onHover}
               onPreview={onPreview}
+              onContextMenu={contextMenu.onContextMenu}
+              onKeyDown={contextMenu.onKeyDown}
               onActivate={onActivate}
               clickMode={clickMode}
             />
           )
         }}
       />
+      {contextMenu.menu}
     </div>
   )
 }
@@ -260,6 +268,8 @@ const Cell = memo(function Cell({
   onSelect,
   onHover,
   onPreview,
+  onContextMenu,
+  onKeyDown,
   onActivate,
   clickMode,
 }: {
@@ -270,6 +280,8 @@ const Cell = memo(function Cell({
   onSelect: (name: string, e: React.MouseEvent) => void
   onHover?: (name: string) => void
   onPreview?: (name: string) => void
+  onContextMenu?: (name: string, event: React.MouseEvent<HTMLElement>) => void
+  onKeyDown?: (name: string, event: React.KeyboardEvent<HTMLElement>) => void
   onActivate?: (name: string) => void
   clickMode: 'select' | 'activate'
 }) {
@@ -327,6 +339,9 @@ const Cell = memo(function Cell({
       aria-selected={selected}
       onMouseEnter={onHover ? () => onHover(item.name) : undefined}
       onClick={handleCellClick}
+      onContextMenu={onContextMenu ? (event) => onContextMenu(item.name, event) : undefined}
+      onKeyDown={onKeyDown ? (event) => onKeyDown(item.name, event) : undefined}
+      tabIndex={onContextMenu ? 0 : undefined}
       title={item.meta ? `${item.name}\n${item.meta}` : item.name}
       style={bg ? { background: bg } : undefined}
       className={

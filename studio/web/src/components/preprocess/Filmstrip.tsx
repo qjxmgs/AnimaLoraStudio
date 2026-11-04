@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import ImageSelectionFrame from '../ImageSelectionFrame'
+import { useImageContextMenu } from '../useImageContextMenu'
 
 /** Filmstrip 只依赖 name（选中键 + tooltip）；缩略图 URL 由调用方闭包提供。 */
 export interface FilmstripItemBase {
@@ -20,6 +21,7 @@ export default function Filmstrip<T extends FilmstripItemBase>({
   items,
   activeName,
   onSelect,
+  onReveal,
   thumbUrl,
   ariaLabel,
   header,
@@ -30,6 +32,7 @@ export default function Filmstrip<T extends FilmstripItemBase>({
   items: T[]
   activeName: string | null
   onSelect: (name: string) => void
+  onReveal?: (name: string) => void
   thumbUrl: (im: T) => string
   ariaLabel: string
   header?: ReactNode
@@ -37,6 +40,7 @@ export default function Filmstrip<T extends FilmstripItemBase>({
   emptyHint?: string
   renderOverlay?: (im: T) => ReactNode
 }) {
+  const contextMenu = useImageContextMenu(onReveal, items)
   return (
     <div
       role="group"
@@ -61,6 +65,8 @@ export default function Filmstrip<T extends FilmstripItemBase>({
                 <button
                   type="button"
                   onClick={() => onSelect(im.name)}
+                  onContextMenu={contextMenu.onContextMenu ? (event) => contextMenu.onContextMenu?.(im.name, event) : undefined}
+                  onKeyDown={contextMenu.onKeyDown ? (event) => contextMenu.onKeyDown?.(im.name, event) : undefined}
                   className="fs-thumb-sq"
                   title={im.name}
                   aria-label={itemLabel?.(im) ?? im.name}
@@ -93,6 +99,7 @@ export default function Filmstrip<T extends FilmstripItemBase>({
           })}
         </div>
       )}
+      {contextMenu.menu}
     </div>
   )
 }

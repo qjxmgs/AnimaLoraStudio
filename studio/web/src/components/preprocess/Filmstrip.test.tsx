@@ -1,9 +1,23 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import Filmstrip from './Filmstrip'
 
 describe('Filmstrip', () => {
+  it('locates an inactive thumbnail without switching away from the current unsaved editor', async () => {
+    const onSelect = vi.fn()
+    const onReveal = vi.fn()
+    render(<Filmstrip items={[{ name: '1_data/a.png' }, { name: '2_other/a.png' }]}
+      activeName="1_data/a.png" onSelect={onSelect} onReveal={onReveal}
+      thumbUrl={() => '/origin.png'} ariaLabel="Crop images" />)
+    fireEvent.contextMenu(screen.getByRole('button', { name: '2_other/a.png' }))
+    await userEvent.click(screen.getByRole('menuitem', { name: '定位图片' }))
+    expect(onReveal).toHaveBeenCalledOnce()
+    expect(onReveal).toHaveBeenCalledWith('2_other/a.png')
+    expect(onSelect).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: '1_data/a.png' })).toHaveAttribute('aria-pressed', 'true')
+  })
+
   it('names the image group and exposes the active image as a pressed choice', async () => {
     const onSelect = vi.fn()
     const user = userEvent.setup()

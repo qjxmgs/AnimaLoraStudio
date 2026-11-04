@@ -15,6 +15,7 @@ import Card from '../../../components/Card'
 import EmptyState from '../../../components/EmptyState'
 import { useDialog } from '../../../components/Dialog'
 import ImageGrid, { applySelection } from '../../../components/ImageGrid'
+import { useTrainImageReveal } from '../../../lib/useTrainImageReveal'
 import ImagePreviewModal from '../../../components/ImagePreviewModal'
 import PreprocessToolsBar from '../../../components/preprocess/PreprocessToolsBar'
 import { Tabs, selectionItemId, type TabItem } from '../../../components/SelectionGroup'
@@ -49,6 +50,7 @@ export default function PreprocessOverviewPage() {
   const { toast } = useToast()
   const { confirm } = useDialog()
   const vid = activeVersion?.id ?? 0
+  const revealImage = useTrainImageReveal(project.id, vid)
 
   const [tab, setTab] = useState<Tab>('all')
   const [workspace, setWorkspace] = useState<CropWorkspaceItem[]>([])
@@ -309,6 +311,7 @@ export default function PreprocessOverviewPage() {
               )}
               {items.length > 0 && (
               <ImageGrid
+                onReveal={tab === 'all' ? revealImage : undefined}
                 className="flex-1 min-h-0"
                 contentClassName="p-2"
                 items={items}

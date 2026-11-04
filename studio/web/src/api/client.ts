@@ -3380,6 +3380,11 @@ export const api = {
       `/api/projects/${pid}/versions/${vid}/preprocess/duplicates/apply`,
       { method: 'POST', body: JSON.stringify(body) }
     ),
+  revealTrainImage: (pid: number, vid: number, path: string) =>
+    req<{ revealed: true }>(`/api/projects/${pid}/versions/${vid}/train/reveal`, {
+      method: 'POST',
+      body: JSON.stringify({ path }),
+    }),
   versionThumbUrl: (
     pid: number,
     vid: number,

@@ -224,7 +224,10 @@
     "empty": "还没有图片"
   },
   "imageGrid": {
-    "noImages": "没有图片"
+    "noImages": "没有图片",
+    "contextMenu": "图片菜单：{{name}}",
+    "revealImage": "定位图片",
+    "revealFailed": "无法在文件资源管理器中定位图片"
   },
   "infoButton": {
     "label": "更多信息"
@@ -3478,7 +3481,10 @@
       "working_tree_dirty": "本地有未提交的修改，请先提交或暂存",
       "no_rollback_target": "没有可回滚的上一版本",
       "git_init_failed": "初始化 Git 仓库失败：{{reason}}",
-      "open_folder_local_only": "仅本机访问时可打开文件夹"
+      "open_folder_local_only": "仅本机访问时可打开文件夹",
+      "reveal_local_only": "仅本机访问时可定位图片",
+      "reveal_windows_only": "定位图片暂时仅支持 Windows",
+      "reveal_failed": "无法在文件资源管理器中定位图片，请重试"
     },
     "studio_data": {
       "target_invalid": "目标位置无效：{{reason}}",

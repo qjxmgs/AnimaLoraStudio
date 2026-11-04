@@ -32,6 +32,7 @@
 from __future__ import annotations
 
 import logging
+import sys
 import re
 import secrets as stdlib_secrets
 import time
@@ -39,7 +40,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse
 
 from ...deps import _resolve_model_paths
@@ -55,6 +56,7 @@ from ...schemas.training import (
     RegAiRequest,
     RegBuildRequest,
     RegDeleteFilesRequest,
+    RevealTrainImageRequest,
     SaveAsPresetRequest,
     TagJobRequest,
 )
@@ -69,6 +71,8 @@ from ._shared import (
 from .... import db
 from ....domain.errors import (
     ConflictError,
+    DomainError,
+    ForbiddenError,
     InvalidPathError,
     NotFoundError,
     ValidationError,
@@ -85,6 +89,7 @@ from ....services.tagging import caption_snapshot
 from ....services.reg import builder as reg_builder, dedup as reg_dedup
 from ....services.dataset import tagedit
 from ....services.tagging.base import VALID_TAGGER_NAMES
+from ....services.runtime import file_manager
 
 router = APIRouter()
 
@@ -935,6 +940,39 @@ def enqueue_version_training(
         "status": status,
     })
     return task or {}
+
+
+@router.post("/api/projects/{pid}/versions/{vid}/train/reveal")
+def reveal_train_image(
+    pid: int, vid: int, body: RevealTrainImageRequest, request: Request,
+) -> dict[str, bool]:
+    """Reveal an exact train-relative image on the local Windows desktop."""
+    if not request.client or request.client.host not in {"127.0.0.1", "::1", "localhost"}:
+        raise ForbiddenError(
+            "Revealing images is only available on the local machine",
+            code="system.reveal_local_only",
+        )
+    if sys.platform != "win32":
+        raise DomainError(
+            "Revealing images is only supported on Windows",
+            code="system.reveal_windows_only", http_status=501,
+        )
+    _, _, train_dir = _version_train_dir_or_404(pid, vid)
+    parts = body.path.replace("\\", "/").split("/")
+    if len(parts) < 2 or any(p in {"", ".", ".."} or ":" in p or "\x00" in p for p in parts):
+        raise InvalidPathError("Invalid path", code="path.invalid")
+    image = _safe_join_or_400(train_dir, *parts)
+    if not image.is_file() or image.suffix.lower() not in datasets.IMAGE_EXTS:
+        raise NotFoundError("Image not found", code="image.not_found")
+    try:
+        file_manager.reveal_file(image)
+    except OSError as exc:
+        logger.warning("Failed to reveal training image: %s", exc)
+        raise DomainError(
+            "Could not locate the image in File Explorer",
+            code="system.reveal_failed", http_status=500,
+        ) from exc
+    return {"revealed": True}
 
 
 # version 级缩略图：bucket = train | reg | samples（PP3 加 train，reg/samples 留作 PP4-5）

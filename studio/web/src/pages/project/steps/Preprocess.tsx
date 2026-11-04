@@ -17,6 +17,7 @@ import Button from '../../../components/Button'
 import Card from '../../../components/Card'
 import { Input, Select } from '../../../components/FormControl'
 import ImageGrid, { applySelection } from '../../../components/ImageGrid'
+import { useTrainImageReveal } from '../../../lib/useTrainImageReveal'
 import ImagePreviewModal from '../../../components/ImagePreviewModal'
 import PreprocessToolsBar from '../../../components/preprocess/PreprocessToolsBar'
 import { SegmentedControl, type SelectionItem } from '../../../components/SelectionGroup'
@@ -87,6 +88,7 @@ function StageWorkspace() {
   const { project, activeVersion, reload } = useOutletContext<Ctx>()
   const { toast } = useToast()
   const vid = activeVersion?.id ?? 0
+  const revealImage = useTrainImageReveal(project.id, vid)
   const mounted = useRef(true)
   const statusRequest = useRef(0)
   useEffect(() => {
@@ -470,6 +472,7 @@ function StageWorkspace() {
             />
 
             <ImagesPanel
+              onReveal={revealImage}
               summary={summary}
               filter={filter}
               setFilter={(f) => {
@@ -715,6 +718,7 @@ function OperationPanel({
 // ---------------------------------------------------------------------------
 
 function ImagesPanel({
+  onReveal,
   summary,
   filter,
   setFilter,
@@ -740,6 +744,7 @@ function ImagesPanel({
   selected: Set<string>
   onSelect: (name: string, e: React.MouseEvent) => void
   onPreview: (name: string) => void
+  onReveal: (name: string) => void
   onSelectAll: () => void
   onClear: () => void
 }) {
@@ -796,6 +801,7 @@ function ImagesPanel({
         />
       </header>
       <ImageGrid
+        onReveal={onReveal}
         className="flex-1 min-h-0"
         contentClassName="p-2"
         items={items}

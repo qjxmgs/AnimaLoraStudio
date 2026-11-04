@@ -224,7 +224,10 @@
     "empty": "No images yet"
   },
   "imageGrid": {
-    "noImages": "No images"
+    "noImages": "No images",
+    "contextMenu": "Image menu: {{name}}",
+    "revealImage": "Locate image",
+    "revealFailed": "Could not locate the image in File Explorer"
   },
   "infoButton": {
     "label": "More info"
@@ -3478,7 +3481,10 @@
       "working_tree_dirty": "Local changes are uncommitted; commit or stash them before updating",
       "no_rollback_target": "No previous version is available to roll back to",
       "git_init_failed": "Failed to initialize the Git repository: {{reason}}",
-      "open_folder_local_only": "Opening the folder is only available on the local machine"
+      "open_folder_local_only": "Opening the folder is only available on the local machine",
+      "reveal_local_only": "Locating images is only available on the local machine",
+      "reveal_windows_only": "Locating images is currently only supported on Windows",
+      "reveal_failed": "Could not locate the image in File Explorer. Please try again"
     },
     "studio_data": {
       "target_invalid": "Invalid target location: {{reason}}",

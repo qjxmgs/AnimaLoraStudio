@@ -1,7 +1,7 @@
 {
   "version": 1,
   "generated_from": "studio.server.app",
-  "count": 250,
+  "count": 251,
   "routes": [
     {
       "path": "/",
@@ -1471,6 +1471,14 @@
         "GET"
       ],
       "name": "export_version_train_zip",
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/projects/{pid}/versions/{vid}/train/reveal",
+      "methods": [
+        "POST"
+      ],
+      "name": "reveal_train_image",
       "type": "APIRoute"
     },
     {

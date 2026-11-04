@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -96,6 +96,67 @@ describe('applySelection (PP3 — checkbox semantics)', () => {
 })
 
 describe('ImageGrid (PP3)', () => {
+  it('reveals the right-clicked image without changing multi-selection or active image', async () => {
+    const onSelect = vi.fn()
+    const onActivate = vi.fn()
+    const onReveal = vi.fn()
+    render(<ImageGrid items={items} selected={new Set(['a.png', 'c.png'])} activeName="a.png"
+      onSelect={onSelect} onActivate={onActivate} onReveal={onReveal} clickMode="activate" />)
+    const cells = screen.getAllByRole('gridcell')
+    fireEvent.contextMenu(cells[1], { clientX: 200, clientY: 150 })
+    const menu = screen.getByRole('menu', { name: '图片菜单：b.png' })
+    expect(menu.parentElement).toBe(document.body)
+    expect(screen.getByRole('menuitem', { name: '定位图片' })).toHaveFocus()
+    await userEvent.click(screen.getByRole('menuitem', { name: '定位图片' }))
+    expect(onReveal).toHaveBeenCalledOnce()
+    expect(onReveal).toHaveBeenCalledWith('b.png')
+    expect(onSelect).not.toHaveBeenCalled()
+    expect(onActivate).not.toHaveBeenCalled()
+    expect(cells.map((cell) => cell.getAttribute('aria-selected'))).toEqual(['true', 'false', 'true'])
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+  })
+
+  it.each(['Escape', 'outside', 'scroll', 'resize', 'blur'])('dismisses the menu on %s without revealing', (action) => {
+    const onReveal = vi.fn()
+    render(<ImageGrid items={items} selected={new Set()} onSelect={vi.fn()} onReveal={onReveal} />)
+    const source = screen.getAllByRole('gridcell')[0]
+    fireEvent.contextMenu(source)
+    if (action === 'Escape') fireEvent.keyDown(window, { key: 'Escape' })
+    if (action === 'outside') fireEvent.pointerDown(document.body)
+    if (action === 'scroll') fireEvent.scroll(source.parentElement!)
+    if (action === 'resize') fireEvent.resize(window)
+    if (action === 'blur') fireEvent.blur(window)
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+    expect(onReveal).not.toHaveBeenCalled()
+    if (action === 'Escape') expect(source).toHaveFocus()
+  })
+
+  it('clamps the menu inside the viewport and closes stale targets on a list change', () => {
+    const rect = { width: 160, height: 44, top: 0, left: 0, right: 160, bottom: 44, x: 0, y: 0, toJSON: () => ({}) }
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(rect)
+    const onReveal = vi.fn()
+    const { rerender } = render(<ImageGrid items={items} selected={new Set()} onSelect={vi.fn()} onReveal={onReveal} />)
+    fireEvent.contextMenu(screen.getAllByRole('gridcell')[0], { clientX: innerWidth - 1, clientY: innerHeight - 1 })
+    expect(screen.getByRole('menu')).toHaveStyle({ left: `${innerWidth - 168}px`, top: `${innerHeight - 52}px` })
+    rerender(<ImageGrid items={[items[2]]} selected={new Set()} onSelect={vi.fn()} onReveal={onReveal} />)
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+    expect(onReveal).not.toHaveBeenCalled()
+  })
+
+  it('supports the keyboard context menu and preserves native menus for other image sets', async () => {
+    const onReveal = vi.fn()
+    const onSelect = vi.fn()
+    const { rerender } = render(<ImageGrid items={items} selected={new Set()} onSelect={onSelect} onReveal={onReveal} />)
+    fireEvent.keyDown(screen.getAllByRole('gridcell')[2], { key: 'F10', shiftKey: true })
+    await userEvent.keyboard('{Enter}')
+    expect(onReveal).toHaveBeenCalledOnce()
+    expect(onReveal).toHaveBeenCalledWith('c.png')
+    expect(onSelect).not.toHaveBeenCalled()
+    rerender(<ImageGrid items={items} selected={new Set()} onSelect={onSelect} />)
+    expect(fireEvent.contextMenu(screen.getAllByRole('gridcell')[0])).toBe(true)
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+  })
+
   it('renders cells with aria-selected matching set', () => {
     render(
       <ImageGrid

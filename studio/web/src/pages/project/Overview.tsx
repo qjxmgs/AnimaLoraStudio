@@ -27,6 +27,7 @@ import VersionStatusBadge from '../../components/VersionStatusBadge'
 import BarHistogram from '../../components/BarHistogram'
 import { TranslatedTag } from '../../components/tagDisplay/TranslatedTag'
 import ImageGrid, { type ImageGridItem } from '../../components/ImageGrid'
+import { useTrainImageReveal } from '../../lib/useTrainImageReveal'
 import ImagePreviewModal from '../../components/ImagePreviewModal'
 import { OutputsTab } from '../QueueDetail'
 import EvalJobsPanel from './EvalJobsPanel'
@@ -725,6 +726,7 @@ const EMPTY_SELECTED: Set<string> = new Set()
 
 function TrainSetCard({ project, version }: { project: ProjectDetail; version: Version | null }) {
   const { t } = useTranslation()
+  const revealImage = useTrainImageReveal(project.id, version?.id ?? null)
   const navigate = useNavigate()
   const [view, setView] = useState<CurationView | null>(null)
   const [selectedFolder, setSelectedFolder] = useState<string>('all')
@@ -815,6 +817,7 @@ function TrainSetCard({ project, version }: { project: ProjectDetail; version: V
           <ImageGrid
             items={items}
             selected={EMPTY_SELECTED}
+            onReveal={revealImage}
             onSelect={() => { /* read-only */ }}
             clickMode="activate"
             onActivate={(name) => setPreviewIdx(items.findIndex((i) => i.name === name))}

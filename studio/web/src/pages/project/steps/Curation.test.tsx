@@ -41,6 +41,7 @@ vi.mock('../../../components/ImageGrid', () => ({
     selected,
     onSelect,
     onActivate,
+    onReveal,
     ariaLabel,
     className,
     contentClassName,
@@ -50,6 +51,7 @@ vi.mock('../../../components/ImageGrid', () => ({
     selected: Set<string>
     onSelect: (name: string, event: React.MouseEvent) => void
     onActivate?: (name: string) => void
+    onReveal?: (name: string) => void
     ariaLabel?: string
     className?: string
     contentClassName?: string
@@ -64,6 +66,7 @@ vi.mock('../../../components/ImageGrid', () => ({
           <button type="button" onClick={() => onActivate?.(item.name)}>
             预览 {item.name}
           </button>
+          {onReveal && <button type="button" onClick={() => onReveal(item.name)}>定位 {item.name}</button>}
         </div>
       ))}
     </div>
@@ -127,6 +130,18 @@ beforeEach(() => {
 })
 
 describe('Curation workspace', () => {
+  it('locates the current training copy even when its thumbnail uses a different download origin', async () => {
+    vi.spyOn(api, 'getCuration').mockResolvedValue({ ...trainView,
+      right: { '1_data': [{ name: 'derived_c0.png', origin: 'original.png', mtime: 3 }] },
+    })
+    const reveal = vi.spyOn(api, 'revealTrainImage').mockResolvedValue({ revealed: true })
+    renderPage()
+    const button = await screen.findByRole('button', { name: '定位 derived_c0.png' })
+    expect(screen.queryByRole('button', { name: '定位 a.png' })).not.toBeInTheDocument()
+    await userEvent.click(button)
+    expect(reveal).toHaveBeenCalledWith(1, 2, '1_data/derived_c0.png')
+  })
+
   it('closes the real image preview from its button without adding to the dataset', async () => {
     const user = userEvent.setup()
     renderPage()
@@ -210,6 +225,7 @@ describe('Curation workspace', () => {
     await user.selectOptions(screen.getByRole('combobox', { name: '加入目标' }), 'validation')
     expect(screen.getByRole('combobox', { name: '加入目标' })).toHaveValue('validation')
     expect(await screen.findByRole('grid', { name: '留出的验证集图片' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^定位 / })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: '选择 a.png' })).toHaveAttribute('aria-pressed', 'false')
     expect(screen.getByRole('button', { name: '选择 val.png' })).toHaveAttribute('aria-pressed', 'false')
 

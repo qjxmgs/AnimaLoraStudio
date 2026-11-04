@@ -11,6 +11,7 @@ import {
 import ActionGroup from '../../../components/ActionGroup'
 import Button from '../../../components/Button'
 import Filmstrip from '../../../components/preprocess/Filmstrip'
+import { useTrainImageReveal } from '../../../lib/useTrainImageReveal'
 import { needsMaskReview } from '../../../components/preprocess/autoMaskReview'
 import AutoHeadMaskPanel from '../../../components/preprocess/AutoHeadMaskPanel'
 import FaceContourMaskPanel, { type AutoHeadMaskState } from '../../../components/preprocess/FaceContourMaskPanel'
@@ -69,6 +70,7 @@ function InpaintWorkspace() {
   const { project, activeVersion, reload } = useOutletContext<Ctx>()
   const { toast } = useToast()
   const vid = activeVersion?.id ?? 0
+  const revealImage = useTrainImageReveal(project.id, vid)
   const mounted = useRef(true)
   useEffect(() => {
     mounted.current = true
@@ -580,6 +582,7 @@ function InpaintWorkspace() {
                 style={{ gridTemplateColumns: '220px minmax(0, 1fr) 260px' }}
               >
                 <Filmstrip
+                  onReveal={revealImage}
                   items={filteredImages}
                   activeName={activeName}
                   onSelect={setActiveName}

@@ -17,6 +17,7 @@ import { useDialog } from '../../../components/Dialog'
 import EmptyState from '../../../components/EmptyState'
 import { Checkbox, Select } from '../../../components/FormControl'
 import ImageGrid, { applySelection } from '../../../components/ImageGrid'
+import { useTrainImageReveal } from '../../../lib/useTrainImageReveal'
 import PaneResizer, { normalizePanePair } from '../../../components/PaneResizer'
 import SaveBar from '../../../components/SaveBar'
 import { SegmentedControl } from '../../../components/SelectionGroup'
@@ -187,6 +188,7 @@ export default function TagEditPage() {
   const { toast } = useToast()
   const { confirm } = useDialog()
   const versionId = activeVersion?.id ?? null
+  const revealImage = useTrainImageReveal(project.id, versionId)
 
   const [cache, setCache] = useState<Map<string, string[]>>(new Map())
   const [pendingTagDrafts, setPendingTagDrafts] = useState<Map<string, PendingTagDraft>>(new Map())
@@ -1207,6 +1209,7 @@ export default function TagEditPage() {
             className="flex-1 min-h-0"
             contentClassName="p-2"
             items={captionItems}
+            onReveal={revealImage}
             selected={sel}
             activeName={activeKey || undefined}
             onColumnCountChange={setGridColumnCount}

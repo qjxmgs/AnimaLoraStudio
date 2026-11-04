@@ -8,7 +8,10 @@ import PreprocessOverviewPage from './PreprocessOverview'
 
 const mocks = vi.hoisted(() => ({ confirm: vi.fn(), toast: vi.fn(), reload: vi.fn(), onEvent: undefined as undefined | ((event: unknown) => void) }))
 vi.mock('../../../components/Dialog', () => ({ useDialog: () => ({ confirm: mocks.confirm }) }))
-vi.mock('../../../components/Toast', () => ({ useToast: () => ({ toast: mocks.toast }) }))
+vi.mock('../../../components/Toast', () => ({
+  useToast: () => ({ toast: mocks.toast }),
+  useOptionalToast: () => ({ toast: mocks.toast }),
+}))
 vi.mock('../../../lib/useEventStream', () => ({ useEventStream: (callback: (event: unknown) => void) => { mocks.onEvent = callback } }))
 vi.mock('../../../components/ImagePreviewModal', () => ({ default: ({ src, compareSrc }: { src: string; compareSrc?: string }) => <div role="dialog" aria-label="Preview" data-src={src} data-compare={compareSrc} /> }))
 // JSDOM has no layout measurements. Keep the real ImageGrid wrapper/selection

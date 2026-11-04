@@ -15,6 +15,7 @@ import Alert from '../../../components/Alert'
 import Button from '../../../components/Button'
 import { Input, Select } from '../../../components/FormControl'
 import ImageGrid, { applySelection } from '../../../components/ImageGrid'
+import { useTrainImageReveal } from '../../../lib/useTrainImageReveal'
 import ImagePreviewModal from '../../../components/ImagePreviewModal'
 import PaneResizer, { clampPaneValue } from '../../../components/PaneResizer'
 import StepShell from '../../../components/StepShell'
@@ -190,6 +191,10 @@ export default function CurationPage() {
   }, [sortMode])
 
   const versionId = activeVersion?.id ?? null
+  const revealImage = useTrainImageReveal(project.id, versionId)
+  const revealRightImage = useCallback((name: string) => {
+    void revealImage(`${rightFolder}/${name}`)
+  }, [revealImage, rightFolder])
 
   const fetchTrain = useCallback(async () => {
     if (versionId == null) return
@@ -905,6 +910,7 @@ export default function CurationPage() {
             className="flex-1 min-h-0 mt-3"
             contentClassName="px-2 pb-2"
             items={rightItems}
+            onReveal={isVal ? undefined : revealRightImage}
             selected={rightSel}
             activeName={preview?.side === 'right' ? preview.name : undefined}
             onSelect={handleRightClick}

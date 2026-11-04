@@ -14,6 +14,7 @@ import Button from '../../../components/Button'
 import { Input } from '../../../components/FormControl'
 import Modal from '../../../components/Modal'
 import Filmstrip from '../../../components/preprocess/Filmstrip'
+import { useTrainImageReveal } from '../../../lib/useTrainImageReveal'
 import FreeCropEditor, { type CropRect } from '../../../components/preprocess/FreeCropEditor'
 import PreprocessToolsBar from '../../../components/preprocess/PreprocessToolsBar'
 import { SegmentedControl } from '../../../components/SelectionGroup'
@@ -76,6 +77,7 @@ function StageWorkspace() {
   const { project, activeVersion, reload } = useOutletContext<Ctx>()
   const { toast } = useToast()
   const vid = activeVersion?.id ?? 0
+  const revealImage = useTrainImageReveal(project.id, vid)
   const mounted = useRef(true)
   const statusRequest = useRef(0)
   useEffect(() => {
@@ -474,6 +476,7 @@ function StageWorkspace() {
                         canvas + rect list one column left. The empty state lives
                         inside Filmstrip itself so layout stays put. */}
                     <Filmstrip
+                      onReveal={revealImage}
                       items={filteredImages}
                       activeName={activeName}
                       onSelect={(name) => {
