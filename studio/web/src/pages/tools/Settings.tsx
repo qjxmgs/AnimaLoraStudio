@@ -10,6 +10,8 @@ import {
 import { useDialog } from '../../components/Dialog'
 import LLMPresetEditorModal, { llmPresetLabel } from '../../components/LLMPresetEditorModal'
 import { TagListInput } from '../../components/TagsInput'
+import Button from '../../components/Button'
+import PixAIFields from '../../components/PixAIFields'
 import PageHeader from '../../components/PageHeader'
 import SaveIndicator from '../../components/SaveIndicator'
 import { useToast } from '../../components/Toast'
@@ -67,6 +69,8 @@ export default function SettingsPage() {
     saveStatus,
     catalog,
     catalogError,
+    startDownload,
+    downloadBusy,
     reloadCatalog,
     setDownloadSource,
   } = useSettingsData()
@@ -595,6 +599,21 @@ export default function SettingsPage() {
             className={`${textInputClass} max-w-32`}
           />
         </SettingsField>
+      </SettingsSection>
+
+      <SettingsSection id="pixai" title={t('tag.pixaiName')}>
+        <p className="text-xs text-fg-secondary">{t('tag.pixaiDesc')}</p>
+        <div className="flex items-center gap-2 text-xs">
+          <Button variant="secondary" size="sm" disabled={!catalog?.pixai || catalog.pixai.valid
+            || downloadBusy.has('pixai') || catalog.downloads.pixai?.status === 'running'}
+            onClick={() => void startDownload('pixai')}>
+            {t(catalog?.pixai?.valid ? 'status.ready' : catalog?.downloads.pixai?.status === 'running'
+              ? 'status.downloading' : catalog?.downloads.pixai?.status === 'failed'
+              ? 'common.retry' : 'common.download')}
+          </Button>
+          <span>{catalog?.downloads.pixai?.message || catalog?.pixai?.target_dir}</span>
+        </div>
+        {draft.pixai && <PixAIFields commitOnBlur value={draft.pixai} onChange={patch => commitSecrets({ pixai: patch })} />}
       </SettingsSection>
 
       <SettingsSection id="cltagger" title="CLTagger">

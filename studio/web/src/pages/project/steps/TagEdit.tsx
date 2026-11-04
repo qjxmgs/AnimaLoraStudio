@@ -396,7 +396,7 @@ export default function TagEditPage() {
       evt.type === 'job_state_changed' &&
       relevantVersion &&
       evt.project_id === project.id &&
-      evt.kind === 'tag' &&
+      (evt.kind === 'tag' || evt.kind === 'pixai_tag') &&
       (evt.status === 'done' || evt.status === 'failed')
     if (!versionChanged && !tagJobFinished) return
 

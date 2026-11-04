@@ -11,7 +11,7 @@ export const DATA_VIEW_KINDS: TaskType[] = [
 ]
 
 /** 全部作业 kind（i18n 标签 / 深链遍历用，含 GPU 视图那侧的评估）。 */
-export const JOB_KINDS: TaskType[] = ['eval_session', 'eval_samples', ...DATA_VIEW_KINDS]
+export const JOB_KINDS: TaskType[] = ['pixai_tag', 'eval_session', 'eval_samples', ...DATA_VIEW_KINDS]
 
 export const JOB_STATUS_TONE: Record<string, string> = {
   pending: 'neutral', running: 'accent', done: 'ok', failed: 'err', canceled: 'neutral',
@@ -69,6 +69,7 @@ export function jobJumpPath(task: Task, sessionId?: number | null): string | nul
   if (!vid) return null
   switch (kind) {
     case 'preprocess': return `/projects/${pid}/v/${vid}/preprocess`
+    case 'pixai_tag':
     case 'tag': return `/projects/${pid}/v/${vid}/tag`
     case 'reg_build': return `/projects/${pid}/v/${vid}/reg`
     // eval_session 是当前模型；eval_samples/eval_clip/... 是上一代的 per-checkpoint

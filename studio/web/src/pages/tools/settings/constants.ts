@@ -52,6 +52,7 @@ export type Tab = 'dataset' | 'tagging' | 'preprocess' | 'training' | 'monitor' 
 // 外部页面 / 公告深链（app://settings/<id>）跳转到特定 section 时，用这个反向映射
 // 决定要先切到哪个 tab。只列出能从外部链接到的 sections。
 export const SECTION_TO_TAB: Record<string, Tab> = {
+  'pixai': 'tagging',
   'models': 'training',
   'krea2-models': 'training',
   'moss-models': 'training',
@@ -89,6 +90,7 @@ export const TAB_SECTIONS: Record<Tab, { id: string; labelKey: string }[]> = {
   tagging: [
     { id: 'llm-tagger', labelKey: 'settings.llmTagger' },
     { id: 'wd14', labelKey: 'settings.wd14' },
+    { id: 'pixai', labelKey: 'tag.pixaiName' },
     { id: 'cltagger', labelKey: 'settings.clTagger' },
     { id: 'tag-dictionary', labelKey: 'settings.tagDictionary.title' },
   ],
@@ -228,6 +230,15 @@ export const EMPTY: Secrets = {
     threshold_character: 0.85,
     blacklist_tags: [],
     batch_size: 8,
+  },
+  pixai: {
+    add_general_tag: true, threshold_general: 0.17,
+    add_character_tag: true, threshold_character: 0.27,
+    add_copyright_tag: true, threshold_copyright: 0.24,
+    add_style_tag: true, threshold_style: 0.15,
+    add_meta_tag: false, threshold_meta: 0.17,
+    add_rating_tag: false, threshold_rating: 0.41,
+    blacklist_tags: [],
   },
   cltagger: {
     model_id: 'cella110n/cl_tagger',

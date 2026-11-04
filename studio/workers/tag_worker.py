@@ -113,7 +113,7 @@ def run(job_id: int) -> int:
     if not job:
         logger.error("Tagging job %s not found in the database; nothing to run", job_id)
         return 1
-    if job["kind"] != "tag":
+    if job["kind"] not in ("tag", "pixai_tag"):
         logger.error(
             "Internal error: job %s has kind=%s, not a tagging job; aborting",
             job_id, job["kind"],

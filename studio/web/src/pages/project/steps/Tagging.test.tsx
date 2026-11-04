@@ -33,6 +33,14 @@ vi.mock('../../../lib/SettingsData', () => {
       model_id: 'SmilingWolf/wd-swinv2-tagger-v3',
       blacklist_tags: [],
     },
+    pixai: {
+      add_general_tag: true, threshold_general: 0.17,
+      add_character_tag: true, threshold_character: 0.27,
+      add_copyright_tag: true, threshold_copyright: 0.24,
+      add_style_tag: true, threshold_style: 0.15,
+      add_meta_tag: false, threshold_meta: 0.17,
+      add_rating_tag: false, threshold_rating: 0.41, blacklist_tags: [],
+    },
     cltagger: {
       threshold_general: 0.35,
       threshold_character: 0.85,
@@ -183,6 +191,19 @@ describe('Tagging workspace contracts', () => {
     await user.click(blacklist)
     expect(screen.getByRole('textbox', { name: '屏蔽 Tags' })).toBeInTheDocument()
     expect(screen.getByRole('spinbutton', { name: '通用阈值' })).toBeInTheDocument()
+  })
+
+  it('passes local PixAI category overrides through the project tagging form', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await ready()
+    await user.selectOptions(screen.getByRole('combobox', { name: '打标器' }), 'pixai')
+    await user.click(screen.getByRole('checkbox', { name: '分级' }))
+    expect(screen.getByRole('spinbutton', { name: '分级 (0–1)' })).toHaveValue(0.41)
+    await user.click(await ready())
+    expect(api.startTag).toHaveBeenCalledWith(7, 11, expect.objectContaining({
+      tagger: 'pixai', pixai_overrides: { add_rating_tag: true },
+    }))
   })
 
   it('starts with skip by default and preserves the startTag payload', async () => {

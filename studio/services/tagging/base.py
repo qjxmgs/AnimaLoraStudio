@@ -50,6 +50,7 @@ class Tagger(Protocol):
 # 字段（如果支持本次任务覆盖）即可。worker 走通用 `params.get(f"{name}_overrides")`。
 _TAGGER_SPEC: dict[str, tuple[str, str, bool]] = {
     "wd14": ("studio.services.tagging.wd14", "WD14Tagger", True),
+    "pixai": ("studio.services.tagging.pixai", "PixAITagger", True),
     "cltagger": ("studio.services.tagging.cltagger", "CLTagger", True),
     "joycaption": ("studio.services.tagging.joycaption", "JoyCaptionTagger", False),
     "llm": ("studio.services.tagging.llm", "LLMTagger", True),

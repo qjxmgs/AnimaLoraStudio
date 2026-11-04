@@ -30,6 +30,7 @@ TASK_TYPE_RESOURCE_CLASS: dict[str, str] = {
 JOB_KIND_RESOURCE_CLASS: dict[str, str] = {
     "download": RESOURCE_IO,
     "preprocess": RESOURCE_LIGHT,   # spandrel 超分，小模型（D-R1）
+    "pixai_tag": RESOURCE_EXCLUSIVE,
     "tag": RESOURCE_LIGHT,          # WD14 / CLTagger ONNX
     "reg_build": RESOURCE_LIGHT,
     # 一次评估 = 一个作业（EvalSession，#465）。内部先出图（底模栈，与 generate 同款）

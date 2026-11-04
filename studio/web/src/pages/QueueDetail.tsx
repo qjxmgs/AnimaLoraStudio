@@ -74,6 +74,7 @@ const VISIBLE_TABS_BY_TYPE: Record<TaskType, readonly Tab[]> = {
   // R-5 台账合并：数据作业类 task 走 D5 轻方案（概览 + 日志，结果靠跳转深链）
   download: ['overview', 'log'],
   preprocess: ['overview', 'log'],
+  pixai_tag: ['overview', 'log'],
   tag: ['overview', 'log'],
   reg_build: ['overview', 'log'],
   // 评估作业的结果就在它自己的详情页：指标 + 样图两个 tab（#465）

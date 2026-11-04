@@ -5,6 +5,7 @@ import { useOutletContext } from 'react-router-dom'
 import {
   api,
   type Job,
+  type PixAIConfig,
   type CLTaggerConfig,
   type LLMTaggerConfig,
   type ProjectDetail,
@@ -13,6 +14,7 @@ import {
   type Version,
   type WD14Config,
 } from '../../../api/client'
+import PixAIFields from '../../../components/PixAIFields'
 import Alert from '../../../components/Alert'
 import Badge from '../../../components/Badge'
 import Button from '../../../components/Button'
@@ -126,6 +128,7 @@ export default function TaggingPage() {
   // form 是"本次运行覆盖"草稿（不落盘）。defaults 更新时：未改动（与上一份
   // defaults 相等）→ 跟随刷新；改过 → 保留用户输入。
   const [wd14Form, setWd14Form] = useState<Wd14Form | null>(null)
+  const [pixaiDraft, setPixaiDraft] = useState<Partial<PixAIConfig>>({})
   const [cltaggerForm, setCltaggerForm] = useState<CLTaggerForm | null>(null)
   // LLM 瘦身后本次覆盖只剩预设选择；编辑字段一律走 LLMPresetEditorModal。
   const [llmPresetId, setLlmPresetId] = useState<string | null>(null)
@@ -234,7 +237,7 @@ export default function TaggingPage() {
       setLogs((prev) => [...prev, String(evt.text ?? '')])
     } else if (evt.type === 'job_state_changed' && jid && evt.job_id === jid) {
       void api.getJob(jid).then(setJob).catch(() => {})
-      if (evt.status === 'done' || evt.status === 'failed') {
+      if (evt.status === 'done' || evt.status === 'failed' || evt.status === 'canceled') {
         void reload()
       }
     }
@@ -249,6 +252,7 @@ export default function TaggingPage() {
   // 各打标器的简介：挪进「打标器」下拉旁的问号 tooltip（不再占右栏一整块）。
   const taggerDesc =
     tagger === 'wd14' ? t('tag.wd14Desc')
+      : tagger === 'pixai' ? t('tag.pixaiDesc')
       : tagger === 'cltagger' ? t('tag.cltaggerDesc')
         : tagger === 'llm' ? t('tag.llmDesc')
           : ''
@@ -370,12 +374,13 @@ export default function TaggingPage() {
       const wd14_overrides = tagger === 'wd14' ? buildWd14Overrides() : undefined
       const cltagger_overrides = tagger === 'cltagger' ? buildCLTaggerOverrides() : undefined
       const llm_overrides = tagger === 'llm' ? buildLLMOverrides() : undefined
-      const overrides = wd14_overrides ?? cltagger_overrides ?? llm_overrides
+      const pixai_overrides = tagger === 'pixai' && Object.keys(pixaiDraft).length ? pixaiDraft : undefined
+      const overrides = pixai_overrides ?? wd14_overrides ?? cltagger_overrides ?? llm_overrides
       const trigger = triggerWord.trim()
       const j = await api.startTag(project.id, activeVersion.id, {
         tagger, on_existing: onExisting,
         scope,
-        wd14_overrides, cltagger_overrides, llm_overrides,
+        wd14_overrides, cltagger_overrides, pixai_overrides, llm_overrides,
         // 传 trigger 永远，让 server 决定是否落库（与现有值比较），空串显式清空
         trigger_word: trigger,
       })
@@ -420,7 +425,10 @@ export default function TaggingPage() {
           onCancel: () => {
             void api
               .cancelJob(job.id)
-              .then(() => toast(t('tag.cancelToast'), 'success'))
+              .then(() => {
+                toast(t('tag.cancelToast'), 'success')
+                void refreshLatestTagJob()
+              })
               .catch((e) => toast(String(e), 'error'))
           },
         },
@@ -502,7 +510,7 @@ export default function TaggingPage() {
                       <Button
                         variant="ghost"
                         size="xs"
-                        onClick={() => settingsDrawer.open({ section: tagger === 'cltagger' ? 'cltagger' : 'wd14' })}
+                        onClick={() => settingsDrawer.open({ section: tagger === 'pixai' || tagger === 'cltagger' ? tagger : 'wd14' })}
                       >
                         {t('tag.goDownload')}
                       </Button>
@@ -518,6 +526,7 @@ export default function TaggingPage() {
                   surface="canvas"
                 >
                   <option value="wd14">{t('tag.taggerWd14')}</option>
+                  <option value="pixai">{t('tag.pixaiName')}</option>
                   <option value="cltagger">{t('tag.taggerCltagger')}</option>
                   <option value="llm">{t('tag.taggerLlm')}</option>
                 </Select>
@@ -601,6 +610,14 @@ export default function TaggingPage() {
                 )
               }
             />
+          )}
+
+          {tagger === 'pixai' && secrets?.pixai && (
+            <Card as="section" padding="md" className="flex flex-col gap-3 text-sm">
+              <PanelHeader dirty={Object.keys(pixaiDraft).length > 0} onRestore={() => setPixaiDraft({})} disabled={false} />
+              <PixAIFields value={{ ...secrets.pixai, ...pixaiDraft }}
+                onChange={patch => setPixaiDraft(current => ({ ...current, ...patch }))} />
+            </Card>
           )}
 
           {tagger === 'cltagger' && (
@@ -1253,6 +1270,7 @@ function TagStatusRow({ label, children }: { label: string; children: React.Reac
 
 function taggerLabel(name: string | null, t: TFunction): string {
   if (name === 'wd14') return t('tag.taggerWd14Short')
+  if (name === 'pixai') return t('tag.pixaiName')
   if (name === 'cltagger') return t('tag.taggerCltaggerShort')
   if (name === 'llm') return t('tag.taggerLlmShort')
   return name ?? ''

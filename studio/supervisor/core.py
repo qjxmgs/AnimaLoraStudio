@@ -560,7 +560,7 @@ class Supervisor:
         if self._exclusive_busy():
             return
         task = self._next_pending_task_in(
-            ("train", "reg_ai", "generate", "eval_session")
+            ("train", "reg_ai", "generate", "eval_session", "pixai_tag")
         )
         if task is None:
             return
@@ -574,7 +574,7 @@ class Supervisor:
                 return
             self._submit_to_daemon(task)
             return
-        if ttype == "eval_session":
+        if ttype in ("eval_session", "pixai_tag"):
             # exclusive 档数据作业。排队语义与 train/generate 同一 FIFO（D-R3 跨类型
             # 平级），执行位在 DATA 槽（worker 子进程）。DATA 槽被 light 作业占着时
             # 等它结束（light 都是短任务），不越队。

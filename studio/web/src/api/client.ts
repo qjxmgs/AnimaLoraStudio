@@ -429,6 +429,11 @@ export interface WD14Config {
   batch_size: number
 }
 
+export const PIXAI_CATEGORIES = ['general', 'character', 'copyright', 'style', 'meta', 'rating'] as const
+type PixAICategory = typeof PIXAI_CATEGORIES[number]
+export type PixAIConfig = Record<`threshold_${PixAICategory}`, number>
+  & Record<`add_${PixAICategory}_tag`, boolean> & { blacklist_tags: string[] }
+
 export interface CLTaggerConfig {
   model_id: string
   model_path: string
@@ -729,6 +734,7 @@ export interface Secrets {
   // JoyCaption 已合并为 llm_tagger 的 builtin preset
   llm_tagger: LLMTaggerConfig
   wd14: WD14Config
+  pixai: PixAIConfig
   cltagger: CLTaggerConfig
   models: ModelsConfig
   queue: QueueConfig
@@ -1019,6 +1025,7 @@ export interface ModelsCatalog {
   moss_text_encoder_bf16?: ModelDirCatalog
   moss_vae?: VaeCatalog
   wd14: WD14Catalog
+  pixai?: { valid: boolean; missing: string[]; target_dir: string }
   cltagger: CLTaggerCatalog
   eval_metrics?: EvalMetricsCatalog
   /** 评估指标 registry（Settings 复选框列表）。 */
@@ -1133,7 +1140,7 @@ export interface ProjectDetail extends ProjectSummary {
 
 export type JobStatus = 'pending' | 'running' | 'done' | 'failed' | 'canceled'
 export type JobKind =
-  | 'download' | 'preprocess' | 'tag' | 'reg_build'
+  | 'download' | 'preprocess' | 'tag' | 'pixai_tag' | 'reg_build'
   | 'eval_samples' | 'eval_clip' | 'eval_dino' | 'eval_tag' | 'eval_ccip'
 
 export interface Job {
@@ -1460,7 +1467,7 @@ export interface DuplicateApplyResult {
 
 // ---- tagging (PP4) --------------------------------------------------------
 
-export type TaggerName = 'wd14' | 'cltagger' | 'joycaption' | 'llm'
+export type TaggerName = 'wd14' | 'pixai' | 'cltagger' | 'joycaption' | 'llm'
 
 export interface TaggerStatus {
   name: TaggerName
@@ -1929,7 +1936,7 @@ export type TaskStatus =
  *  存量历史行上（新模型只产生 eval_session，见 #465）。 */
 export type TaskType =
   | 'train' | 'reg_ai' | 'generate' | 'eval_session'
-  | 'download' | 'preprocess' | 'tag' | 'reg_build'
+  | 'download' | 'preprocess' | 'tag' | 'pixai_tag' | 'reg_build'
   | 'eval_samples' | 'eval_clip' | 'eval_dino' | 'eval_tag' | 'eval_ccip'
 
 /** R-5 档位视图参数：GPU 视图 = exclusive，数据视图 = data（light+io）。 */
@@ -3071,6 +3078,7 @@ export const api = {
         model_id?: string | null
         blacklist_tags?: string[] | null
       }
+      pixai_overrides?: Partial<PixAIConfig>
       cltagger_overrides?: {
         threshold_general?: number | null
         threshold_character?: number | null

@@ -173,7 +173,7 @@ def start_tag(pid: int, vid: int, body: TagJobRequest) -> dict[str, Any]:
             conn,
             project_id=pid,
             version_id=vid,
-            kind="tag",
+            kind="pixai_tag" if body.tagger == "pixai" else "tag",
             params=params,
         )
     _publish_job_state(job)

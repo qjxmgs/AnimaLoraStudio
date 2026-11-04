@@ -300,7 +300,8 @@ def test_job_lifecycle_failed(isolated) -> None:
     assert "exit code 2" in (finished["error_msg"] or "")
 
 
-def test_cancel_pending_job(isolated) -> None:
+@pytest.mark.parametrize("kind", ["download", "pixai_tag"])
+def test_cancel_pending_job(isolated, kind) -> None:
     p = _setup_project(isolated)
     sup = Supervisor(
         db_path=isolated["db"],
@@ -310,7 +311,7 @@ def test_cancel_pending_job(isolated) -> None:
     )
     with db.connection_for(isolated["db"]) as conn:
         job = project_jobs.create_job(
-            conn, project_id=p["id"], kind="download", params={}
+            conn, project_id=p["id"], kind=kind, params={}
         )
     # R-5：作业与任务同台账，统一走 Supervisor.cancel（cancel_job 已删）。
     assert sup.cancel(job["id"]) is True

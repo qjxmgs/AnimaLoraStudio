@@ -1294,6 +1294,10 @@ def trigger(model_id: str, variant: Optional[str] = None) -> str:
             key, lambda log: download_head_detector(root, on_log=log)
         )
         return key
+    if model_id == "pixai":
+        from .pixai import download
+        start_download_async("pixai", lambda log: download(root, on_log=log))
+        return "pixai"
     if model_id == "background_segmenter":
         from .background_segmenter import download
         key = "background_segmenter"

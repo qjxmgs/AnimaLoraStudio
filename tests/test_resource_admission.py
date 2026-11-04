@@ -29,6 +29,8 @@ from studio.supervisor.resources import (
 @pytest.fixture
 def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     from studio.infrastructure import paths as _paths
+    from studio.services.projects import projects
+    monkeypatch.setattr(projects, "PROJECTS_DIR", tmp_path / "projects")
     db_path = tmp_path / "studio.db"
     db.init_db(db_path)
     logs = tmp_path / "logs"
@@ -159,11 +161,12 @@ def test_train_not_spawned_while_daemon_generate_active(env, fake_daemon, fake_s
 # ---------------------------------------------------------------------------
 
 
-def test_train_waits_for_running_eval_session(env, fake_daemon, fake_secrets):
+@pytest.mark.parametrize("kind", ["eval_session", "pixai_tag"])
+def test_train_waits_for_running_eval_session(env, fake_daemon, fake_secrets, kind):
     sup = _make_sup(env)
     spawned: list[Any] = []
     sup._spawn_task = lambda slot, task: spawned.append(task)  # type: ignore
-    _occupy(_slot(sup, "data"), kind="job", job_kind="eval_session")
+    _occupy(_slot(sup, "data"), kind="job", job_kind=kind)
     _make_task(env, task_type="train", created_at=100)
 
     sup._tick()
@@ -246,14 +249,15 @@ def test_eval_session_requires_daemon_lease_release(env, fake_daemon, fake_secre
     assert spawned_jobs[0]["kind"] == "eval_session"
 
 
-def test_exclusive_fifo_eval_session_before_train(env, fake_daemon, fake_secrets):
+@pytest.mark.parametrize("kind", ["eval_session", "pixai_tag"])
+def test_exclusive_fifo_eval_session_before_train(env, fake_daemon, fake_secrets, kind):
     """D-R3 跨类型平级：先入队的 eval_session 先跑，后入队的 train 排队等。"""
     sup = _make_sup(env)
     spawned_jobs: list[Any] = []
     spawned_tasks: list[Any] = []
     sup._spawn_job = lambda slot, job: spawned_jobs.append(job)  # type: ignore
     sup._spawn_task = lambda slot, task: spawned_tasks.append(task)  # type: ignore
-    ev = _make_job(env, kind="eval_session")
+    ev = _make_job(env, kind=kind)
     with db.connection_for(env["db"]) as conn:
         db.update_task(conn, ev, created_at=100.0)
     _make_task(env, task_type="train", created_at=200.0)

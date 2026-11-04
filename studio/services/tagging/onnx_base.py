@@ -88,6 +88,9 @@ class OnnxTaggerBase:
 
     # -------------------- session 创建（含 GPU EP fallback） --------------------
 
+    def _graph_for_provider(self, model_path: Path, provider: str | None) -> Path:
+        return model_path
+
     def _create_session(self, model_path: Path) -> None:
         """创建 onnxruntime InferenceSession，GPU EP 失败自动降 CPU。
 
@@ -124,7 +127,7 @@ class OnnxTaggerBase:
         try:
             with ctx:
                 self._session = ort.InferenceSession(
-                    str(model_path), providers=providers
+                    str(self._graph_for_provider(model_path, gpu_ep)), providers=providers
                 )
         except Exception as exc:  # noqa: BLE001
             if not gpu_ep:
@@ -166,7 +169,7 @@ class OnnxTaggerBase:
         self._input_name = self._session.get_inputs()[0].name
         self._output_names = [o.name for o in self._session.get_outputs()]
 
-    def _fallback_to_cpu_session(self) -> bool:
+    def _fallback_to_cpu_session(self, *, provider: str = "CUDAExecutionProvider") -> bool:
         """CUDA 推理失败后降 CPU 重建 session；成功返回 True。
 
         与 `_create_session` 的差别：那里是 session 创建期挂（dlopen 失败），
@@ -191,9 +194,10 @@ class OnnxTaggerBase:
             )
             self._input_name = self._session.get_inputs()[0].name
             self._output_names = [o.name for o in self._session.get_outputs()]
-            onnxruntime_setup.record_cuda_load_error(
-                "CUDA 推理时发生 cuBLAS / CUDA 错误，已自动降级 CPU 运行"
-            )
+            if provider == "CUDAExecutionProvider":
+                onnxruntime_setup.record_cuda_load_error(
+                    "CUDA 推理时发生 cuBLAS / CUDA 错误，已自动降级 CPU 运行"
+                )
             # 降级**成功之后**才是 WARNING，与下面的失败分支不再自相矛盾
             logger.warning(
                 "%s: fell back to a CPU session; all later batches run on CPU "
@@ -315,7 +319,14 @@ class OnnxTaggerBase:
                     )[0]
                 except Exception as exc:  # noqa: BLE001
                     # CUDA 推理失败（cuBLAS / cuDNN / OOM）→ 降 CPU session 重试一次
-                    if self._is_cuda_inference_error(exc) and self._fallback_to_cpu_session():
+                    providers = self._session.get_providers()
+                    gpu = next((ep for ep in providers if ep in ("DmlExecutionProvider", "CUDAExecutionProvider")), None)
+                    if gpu and (gpu == "DmlExecutionProvider" or self._is_cuda_inference_error(exc)):
+                        logger.warning("%s: %s inference failed: %s", self.name, gpu, exc)
+                        recovered = self._fallback_to_cpu_session(provider=gpu)
+                    else:
+                        recovered = False
+                    if recovered:
                         try:
                             logits_batch = self._session.run(
                                 self._output_names, {self._input_name: batch}

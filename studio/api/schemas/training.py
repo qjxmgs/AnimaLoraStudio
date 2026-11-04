@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class RevealTrainImageRequest(BaseModel):
@@ -17,6 +17,22 @@ class Wd14Overrides(BaseModel):
     threshold_character: Optional[float] = None
     model_id: Optional[str] = None
     blacklist_tags: Optional[list[str]] = None
+
+
+class PixAIOverrides(BaseModel):
+    threshold_general: float | None = Field(None, ge=0, le=1)
+    add_general_tag: bool | None = None
+    threshold_character: float | None = Field(None, ge=0, le=1)
+    add_character_tag: bool | None = None
+    threshold_copyright: float | None = Field(None, ge=0, le=1)
+    add_copyright_tag: bool | None = None
+    threshold_style: float | None = Field(None, ge=0, le=1)
+    add_style_tag: bool | None = None
+    threshold_meta: float | None = Field(None, ge=0, le=1)
+    add_meta_tag: bool | None = None
+    threshold_rating: float | None = Field(None, ge=0, le=1)
+    add_rating_tag: bool | None = None
+    blacklist_tags: list[str] | None = None
 
 
 class CLTaggerOverrides(BaseModel):
@@ -69,6 +85,7 @@ class TagJobRequest(BaseModel):
     # | "append"（tag 级 merge + dedupe，写回原格式）。
     on_existing: str = "overwrite"
     wd14_overrides: Optional[Wd14Overrides] = None
+    pixai_overrides: PixAIOverrides | None = None
     cltagger_overrides: Optional[CLTaggerOverrides] = None
     llm_overrides: Optional[LLMTaggerOverrides] = None
     # 触发词；空串 / None = 不启用。打标时作为第一个 tag prepend 到 caption，

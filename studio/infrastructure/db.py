@@ -50,7 +50,7 @@ GPU_TASK_TYPES = ("train", "reg_ai", "generate")
 # 默认排除它们（含 no-group 兼容路径，保护 Topbar/Overview/Monitor 不把
 # 数据作业当训练任务）。
 JOB_TASK_TYPES = (
-    "download", "preprocess", "tag", "reg_build",
+    "download", "preprocess", "tag", "pixai_tag", "reg_build",
     # eval_session：一次评估 = 一个作业（EvalSession，#465）。内部按 stage 顺序跑出图
     # 和各指标，不再 fan-out 成下面那批 per-checkpoint / per-metric 作业。
     "eval_session",

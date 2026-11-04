@@ -87,7 +87,7 @@ def _resolve_monitor_state_path(task: dict[str, Any]) -> Path:
 
 def _default_job_cmd_builder(job: dict[str, Any]) -> list[str]:
     """默认按 kind 选 worker 模块。"""
-    kind = job["kind"]
+    kind = "tag" if job["kind"] == "pixai_tag" else job["kind"]
     return [
         sys.executable,
         "-m",

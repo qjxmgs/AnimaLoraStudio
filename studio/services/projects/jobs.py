@@ -213,8 +213,11 @@ def latest_for(
     stage: Optional[str] = None,
 ) -> Optional[dict[str, Any]]:
     """Latest matching job; absent preprocess stage means historical upscale."""
-    sql = "SELECT * FROM tasks WHERE project_id = ? AND task_type = ?"
-    params: list[Any] = [project_id, kind]
+    # The project tagging page replays the latest light or exclusive tagging job.
+    kinds = ("tag", "pixai_tag") if kind == "tag" else (kind,)
+    placeholders = ", ".join("?" for _ in kinds)
+    sql = f"SELECT * FROM tasks WHERE project_id = ? AND task_type IN ({placeholders})"
+    params: list[Any] = [project_id, *kinds]
     if version_id is not None:
         sql += " AND version_id = ?"
         params.append(version_id)

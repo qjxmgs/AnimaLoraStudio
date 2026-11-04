@@ -30,7 +30,7 @@ import QueueSectionHeader from './queue/QueueSectionHeader'
 // GPU 视图（exclusive 档）的行类型。R-5：评估（底模级出图 + 指标）随台账合并归位
 // 本视图（用户感知锚点 §4-2）。eval_session = 一次评估一个作业（#465）；eval_samples
 // 是上一代的 per-checkpoint 子作业 kind，只为存量历史行还能正确显示类型而保留。
-type TaskKind = 'train' | 'reg_ai' | 'generate' | 'eval_session' | 'eval_samples'
+type TaskKind = 'train' | 'reg_ai' | 'generate' | 'eval_session' | 'eval_samples' | 'pixai_tag'
 
 const STATUS_TONE: Record<TaskStatus, string> = {
   pending:   'neutral',
@@ -152,6 +152,7 @@ export function QueueTaskRow({
   const KIND_LABEL: Record<TaskKind, string> = {
     train: t('queue.typeTrain'), reg_ai: t('queue.typeReg'),
     generate: t('queue.typeGenerate'),
+    pixai_tag: t('tag.pixaiName'),
     eval_session: t('queue.jobs.kind.eval_session'),
     eval_samples: t('queue.jobs.kind.eval_samples'),
   }
@@ -185,6 +186,8 @@ export function QueueTaskRow({
               path: `/projects/${task.project_id}?version=${task.version_id}&tab=eval`,
               label: t('queue.jumpEval'),
             }
+          : kind === 'pixai_tag' && hasProject
+            ? { path: `/projects/${task.project_id}/v/${task.version_id}/tag`, label: t('tag.pixaiName') }
           : kind === 'train' && hasProject
             ? { path: `/projects/${task.project_id}/v/${task.version_id}/train`, label: t('queue.jumpTrain') }
             : null
@@ -976,6 +979,7 @@ export default function QueuePage() {
                 <option value="train">{t('queue.typeTrain')}</option>
                 <option value="reg_ai">{t('queue.typeReg')}</option>
                 <option value="generate">{t('queue.typeGenerate')}</option>
+                <option value="pixai_tag">{t('tag.pixaiName')}</option>
                 <option value="eval_session">{t('queue.jobs.kind.eval_session')}</option>
               </Select>
               <Select

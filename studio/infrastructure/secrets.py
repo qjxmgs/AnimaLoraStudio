@@ -462,6 +462,22 @@ class WD14Config(BaseModel):
         return self
 
 
+class PixAIConfig(BaseModel):
+    threshold_general: float = Field(0.17, ge=0, le=1)
+    add_general_tag: bool = True
+    threshold_character: float = Field(0.27, ge=0, le=1)
+    add_character_tag: bool = True
+    threshold_copyright: float = Field(0.24, ge=0, le=1)
+    add_copyright_tag: bool = True
+    threshold_style: float = Field(0.15, ge=0, le=1)
+    add_style_tag: bool = True
+    threshold_meta: float = Field(0.17, ge=0, le=1)
+    add_meta_tag: bool = False
+    threshold_rating: float = Field(0.41, ge=0, le=1)
+    add_rating_tag: bool = False
+    blacklist_tags: list[str] = Field(default_factory=list)
+
+
 class CLTaggerConfig(BaseModel):
     model_id: str = "cella110n/cl_tagger"
     model_path: str = "cl_tagger_1_02/model.onnx"
@@ -786,6 +802,7 @@ class Secrets(BaseModel):
     # secrets.json 里若残留 joycaption 字段，由 _migrate_legacy_schema 迁移后丢弃。
     llm_tagger: LLMTaggerConfig = Field(default_factory=LLMTaggerConfig)
     wd14: WD14Config = Field(default_factory=WD14Config)
+    pixai: PixAIConfig = Field(default_factory=PixAIConfig)
     cltagger: CLTaggerConfig = Field(default_factory=CLTaggerConfig)
     models: ModelsConfig = Field(default_factory=ModelsConfig)
     queue: QueueConfig = Field(default_factory=QueueConfig)

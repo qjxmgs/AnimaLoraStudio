@@ -11,7 +11,7 @@ from typing import Any, Optional
 from ... import secrets
 from .. import eval_registry
 from .downloader import get_status_snapshot, head_detector_status
-from . import face_segmenter, background_segmenter
+from . import face_segmenter, background_segmenter, pixai
 from .families import FAMILY_ASSETS
 from .families.custom_paths import arch_summary
 from .families.krea2 import QWEN3_VL_TE_VARIANTS
@@ -718,6 +718,7 @@ def build_catalog(root: Optional[Path] = None) -> dict[str, Any]:
             "expected_sha256": HEAD_DETECTOR_SHA256,
             **head_status,
         },
+        "pixai": pixai.status(r),
         "background_segmenter": {
             "id": "background_segmenter", "name": "Anime Background Segmenter",
             "repo": background_segmenter.REPO, "revision": background_segmenter.REVISION,
