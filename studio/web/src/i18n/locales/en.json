@@ -2601,6 +2601,12 @@
     },
     "headMask": {
       "title": "Automatic head mask",
+      "actions": "Mask actions",
+      "clearCurrent": "Clear current mask",
+      "clearAll": "Clear all masks",
+      "confirmClearCurrent": "Clear the saved training mask and mask edits for {{name}}?",
+      "confirmClearAll": "Clear saved training masks and mask edits for {{n}} images in this version?",
+      "clearResult": "Masks cleared: {{ok}}. Failed: {{failed}}.",
       "openSetup": "Auto mask",
       "runningAction": "Auto masking…",
       "unavailableSaving": "Saving is in progress. Start Auto mask when it finishes.",

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type Ref } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link, useOutletContext } from 'react-router-dom'
 import {
@@ -9,6 +9,8 @@ import {
   type Version,
 } from '../../../api/client'
 import ActionGroup from '../../../components/ActionGroup'
+import MaskActionsMenu from '../../../components/preprocess/MaskActionsMenu'
+import { useDialog } from '../../../components/Dialog'
 import Button from '../../../components/Button'
 import Filmstrip from '../../../components/preprocess/Filmstrip'
 import { useTrainImageReveal } from '../../../lib/useTrainImageReveal'
@@ -49,6 +51,10 @@ interface Ctx {
 
 type Filter = 'all' | 'pending' | 'edited' | 'undetected'
 
+function editMode(entry: InpaintHistoryEntry): InpaintMode {
+  return 'target' in entry ? entry.target : entry.kind
+}
+
 function splitRel(name: string): { folder: string; filename: string } {
   const i = name.lastIndexOf('/')
   return {
@@ -60,14 +66,15 @@ function splitRel(name: string): { folder: string; filename: string } {
 /** 状态模型对齐裁剪页：双数据面双桶（strokesByImage / maskStrokesByImage），
  *  随便切图改动都留在内存，保存按当前模式分发（§9 决策 2）。只有活动图挂
  *  真实 canvas，「保存全部」对非活动图走离屏重放。 */
-export default function PreprocessInpaintPage() {
+export default function PreprocessInpaintPage(props: { saveButtonRef: Ref<HTMLButtonElement> }) {
   const { project, activeVersion } = useOutletContext<Ctx>()
-  return <InpaintWorkspace key={`${project.id}:${activeVersion?.id ?? 0}`} />
+  return <InpaintWorkspace {...props} key={`${project.id}:${activeVersion?.id ?? 0}`} />
 }
 
-function InpaintWorkspace() {
+function InpaintWorkspace({ saveButtonRef }: { saveButtonRef: Ref<HTMLButtonElement> }) {
   const { t } = useTranslation()
   const { project, activeVersion, reload } = useOutletContext<Ctx>()
+  const { confirm } = useDialog()
   const { toast } = useToast()
   const vid = activeVersion?.id ?? 0
   const revealImage = useTrainImageReveal(project.id, vid)
@@ -158,6 +165,52 @@ function InpaintWorkspace() {
       .map(([n]) => n),
     [historyByImage],
   )
+
+  const maskedImages = useMemo(() => images.filter((image) =>
+    image.mask_mtime != null || historyByImage[image.name]?.some((entry) => editMode(entry) === 'mask'),
+  ), [images, historyByImage])
+
+  async function clearMasks(all: boolean) {
+    const targets = all ? maskedImages : maskedImages.filter((image) => image.name === activeName)
+    if (!targets.length || busy || autoBusy || faceBusy) return
+    const confirmed = await confirm(all
+      ? t('preprocessInpaint.headMask.confirmClearAll', { n: targets.length })
+      : t('preprocessInpaint.headMask.confirmClearCurrent', { name: targets[0].name }), {
+      tone: 'danger', okText: t(all ? 'preprocessInpaint.headMask.clearAll' : 'preprocessInpaint.headMask.clearCurrent'),
+    })
+    if (!confirmed || !mounted.current) return
+    setBusy(true)
+    const cleared = new Set<string>()
+    try {
+      for (const image of targets) {
+        try {
+          if (image.mask_mtime != null) await api.deleteMaskTrain(project.id, vid, image.name)
+          cleared.add(image.name)
+        } catch {
+          // Keep the failed image's edits and continue clearing the remaining images.
+        }
+      }
+      if (!mounted.current) return
+      function retainPaint(previous: Record<string, InpaintHistoryEntry[]>) {
+        const next = { ...previous }
+        for (const name of cleared) {
+          if (next[name]) next[name] = next[name].filter((entry) => editMode(entry) === 'paint')
+        }
+        return next
+      }
+      setHistoryByImage(retainPaint)
+      setRedoByImage(retainPaint)
+      setImages((previous) => previous.map((image) =>
+        cleared.has(image.name) ? { ...image, mask_mtime: null } : image))
+      if (activeName && cleared.has(activeName)) canvasRef.current?.resetStrokeAnchor()
+      const failed = targets.length - cleared.size
+      toast(t('preprocessInpaint.headMask.clearResult', { ok: cleared.size, failed }), failed ? 'error' : 'success')
+      await refreshWorkspace()
+      if (mounted.current) void reload()
+    } finally {
+      if (mounted.current) setBusy(false)
+    }
+  }
 
   const counts = useMemo(() => {
     const edited = images.filter((im) => (historyByImage[im.name] ?? []).length > 0).length
@@ -329,6 +382,7 @@ function InpaintWorkspace() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (busy || autoBusy || faceBusy || hasBlockingVisibleModal()) return
       if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'z') return
       const el = e.target as HTMLElement | null
       if (
@@ -343,7 +397,7 @@ function InpaintWorkspace() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [undo, redo])
+  }, [undo, redo, busy, autoBusy, faceBusy])
 
   useEffect(() => {
     const onToolShortcut = (event: KeyboardEvent) => {
@@ -495,25 +549,13 @@ function InpaintWorkspace() {
           aria-label={t('preprocessInpaint.actionsLabel')}
           secondary={(
             <>
-            <Button
-              variant="ghost"
-              size="sm"
+            <MaskActionsMenu
               disabled={busy || autoBusy || faceBusy || images.length === 0}
-              title={busy
-                ? t('preprocessInpaint.headMask.unavailableSaving')
-                : autoBusy
-                  ? t('preprocessInpaint.headMask.unavailableRunning')
-                  : images.length === 0
-                    ? t('preprocessInpaint.headMask.unavailableEmpty')
-                    : undefined}
-              loading={autoBusy}
-              aria-haspopup="dialog"
-              onClick={() => setSetupOpen(true)}
-            >
-              {autoBusy
-                ? t('preprocessInpaint.headMask.runningAction')
-                : t('preprocessInpaint.headMask.openSetup')}
-            </Button>
+              canClearCurrent={maskedImages.some((image) => image.name === activeName)}
+              canClearAll={maskedImages.length > 0}
+              onAuto={() => setSetupOpen(true)}
+              onClear={(all) => void clearMasks(all)}
+            />
             <Button
               variant="ghost"
               size="sm"
@@ -528,6 +570,8 @@ function InpaintWorkspace() {
             <Button
               variant="primary"
               size="sm"
+              ref={saveButtonRef}
+              aria-keyshortcuts="Control+S Meta+S"
               onClick={() => void saveActive()}
               disabled={busy || autoBusy || faceBusy || activeHistory.length === 0}
             >
@@ -554,21 +598,21 @@ function InpaintWorkspace() {
               variant="ghost"
               size="sm"
               onClick={undo}
-              disabled={!activeName || activeHistory.length === 0}
+              disabled={busy || autoBusy || faceBusy || !activeName || activeHistory.length === 0}
               title="Ctrl+Z"
             >{t('preprocessInpaint.undo')}</Button>
             <Button
               variant="ghost"
               size="sm"
               onClick={redo}
-              disabled={!activeName || activeRedo.length === 0}
+              disabled={busy || autoBusy || faceBusy || !activeName || activeRedo.length === 0}
               title="Ctrl+Shift+Z"
             >{t('preprocessInpaint.redo')}</Button>
             <Button
               variant="ghost"
               size="sm"
               onClick={clearActive}
-              disabled={!activeName || activeHistory.length === 0}
+              disabled={busy || autoBusy || faceBusy || !activeName || activeHistory.length === 0}
             >{t('preprocessInpaint.clearActive')}</Button>
           </header>
 

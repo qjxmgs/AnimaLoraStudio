@@ -277,6 +277,27 @@ describe('InpaintCanvas brush adjustment gesture', () => {
     return { ...callbacks, callbacks, viewport, rerender: view.rerender }
   }
 
+  it.each<InpaintTool>(['brush', 'eraser'])('starts %s at its actual center when its footprint overlaps the image', async (tool) => {
+    const { viewport, onStrokeEnd } = await renderLoaded({ tool })
+    const click = (clientX: number, clientY: number) => {
+      fireEvent(viewport, pointerEvent('pointerdown', { button: 0, clientX, clientY }))
+      fireEvent(viewport, pointerEvent('pointerup', { button: 0, clientX, clientY }))
+    }
+
+    // At 100% the image starts at x=50 and the brush radius is 10.
+    click(455, 120)
+    expect(onStrokeEnd).toHaveBeenLastCalledWith(expect.objectContaining({
+      points: [{ x: 405, y: 120 }],
+    }))
+    click(44, -6)
+    expect(onStrokeEnd).toHaveBeenLastCalledWith(expect.objectContaining({
+      points: [{ x: -6, y: -6 }],
+    }))
+    click(42, -8)
+    click(460, 120)
+    expect(onStrokeEnd).toHaveBeenCalledTimes(2)
+  })
+
   it.each<InpaintTool>(['brush', 'eraser', 'lasso'])(
     'uses Space-left-drag to pan in %s mode without editing',
     async (tool) => {

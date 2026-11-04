@@ -168,6 +168,12 @@ export function resolveBrushAdjustment(
   }
 }
 
+function brushOverlapsImage(point: InpaintPoint, width: number, height: number, size: number) {
+  const dx = Math.max(0, -point.x, point.x - width)
+  const dy = Math.max(0, -point.y, point.y - height)
+  return Math.hypot(dx, dy) < size / 2
+}
+
 export function resolveStraightStrokeGuide(
   start: { x: number; y: number },
   end: { x: number; y: number },
@@ -1209,8 +1215,8 @@ const InpaintCanvas = forwardRef<
       }
       const pt = toContentPoint(e.clientX, e.clientY)
       if (!pt) return
-      if (pt.x < 0 || pt.y < 0 || pt.x > imageW || pt.y > imageH) return
       if (toolRef.current === 'lasso') {
+        if (pt.x < 0 || pt.y < 0 || pt.x > imageW || pt.y > imageH) return
         const scale = Math.max(0.0001, zp.viewRef.current.scale)
         const hitRadius = LASSO_CLOSE_RADIUS / scale
         const hit = [...editableLassos].reverse().flatMap((shape) => (
@@ -1256,6 +1262,7 @@ const InpaintCanvas = forwardRef<
         return
       }
       const b = brushRef.current
+      if (!brushOverlapsImage(pt, imageW, imageH, b.size)) return
       const isMask = modeRef.current === 'mask'
       const fixedEndpoint = e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey
       const anchor = fixedEndpoint ? lastStrokePointRef.current : null
@@ -1299,10 +1306,9 @@ const InpaintCanvas = forwardRef<
         updateCursor(e.clientX, e.clientY)
       }
       const pt = toContentPoint(e.clientX, e.clientY)
-      const pointInsideImage = Boolean(
-        pt && pt.x >= 0 && pt.y >= 0 && pt.x <= imageW && pt.y <= imageH,
-      )
-      if (!fixedEndpoint) setStraightGuidePoint(pointInsideImage && pt ? pt : null)
+      if (!fixedEndpoint) {
+        setStraightGuidePoint(pt && brushOverlapsImage(pt, imageW, imageH, brushRef.current.size) ? pt : null)
+      }
       if (pt) {
         setCursorPos({
           x: Math.max(0, Math.min(imageW, Math.round(pt.x))),
@@ -1419,10 +1425,7 @@ const InpaintCanvas = forwardRef<
         setStraightGuidePoint(null)
       } else {
         const point = toContentPoint(e.clientX, e.clientY)
-        const pointInsideImage = Boolean(
-          point && point.x >= 0 && point.y >= 0 && point.x <= imageW && point.y <= imageH,
-        )
-        setStraightGuidePoint(pointInsideImage && point ? point : null)
+        setStraightGuidePoint(point && brushOverlapsImage(point, imageW, imageH, brushRef.current.size) ? point : null)
         updateCursor(e.clientX, e.clientY)
       }
     }

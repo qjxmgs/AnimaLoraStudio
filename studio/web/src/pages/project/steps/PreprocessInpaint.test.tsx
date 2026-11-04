@@ -4,7 +4,8 @@ import { MemoryRouter, Outlet, Route, Routes } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { api, type CropWorkspaceItem } from '../../../api/client'
 import type { InpaintStroke, LassoShape } from '../../../components/preprocess/InpaintCanvas'
-import PreprocessInpaintPage from './PreprocessInpaint'
+import { DialogProvider } from '../../../components/Dialog'
+import PreprocessHub from './PreprocessHub'
 
 const mocks = vi.hoisted(() => ({
   toast: vi.fn(), reload: vi.fn(async () => undefined),
@@ -85,10 +86,10 @@ const image: CropWorkspaceItem = {
 
 function renderPage(projectId = 1) {
   return render(
-    <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }} initialEntries={['/inpaint']}>
+    <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }} initialEntries={['/inpaint?tool=inpaint']}>
       <Routes>
         <Route element={<Outlet context={{ project: { id: projectId }, activeVersion: { id: 2 }, reload: mocks.reload }} />}>
-          <Route path="/inpaint" element={<PreprocessInpaintPage />} />
+          <Route path="/inpaint" element={<DialogProvider><PreprocessHub /></DialogProvider>} />
         </Route>
       </Routes>
     </MemoryRouter>,
@@ -287,7 +288,6 @@ describe('Preprocess inpaint contracts', () => {
   })
 
   it('saves a paint lasso and removes its editable vector state after success', async () => {
-    const user = userEvent.setup()
     renderPage()
     await screen.findByRole('group', { name: '涂抹工作集图片' })
     const shape: LassoShape = {
@@ -304,7 +304,7 @@ describe('Preprocess inpaint contracts', () => {
     act(() => props.onLassoCreate('paint', shape))
     expect(screen.getByRole('button', { name: '保存当前图' })).toBeEnabled()
 
-    await user.click(screen.getByRole('button', { name: '保存当前图' }))
+    expect(fireEvent.keyDown(window, { key: 's', ctrlKey: true })).toBe(false)
     await waitFor(() => expect(api.saveInpaintTrain).toHaveBeenCalledWith(
       1, 2, image.name, expect.any(Blob),
     ))
@@ -326,9 +326,10 @@ describe('Preprocess inpaint contracts', () => {
 
     await act(async () => finishWorkspace({ images: [image] }))
     await user.click(await screen.findByRole('button', { name: 'Draw stroke' }))
-    const autoMask = screen.getByRole('button', { name: '自动遮罩' })
+    const autoMask = screen.getByRole('button', { name: '遮罩处理' })
     expect(autoMask).toBeEnabled()
     await user.click(autoMask)
+    await user.click(screen.getByRole('menuitem', { name: '自动遮罩' }))
 
     expect(screen.getByText('还有 1 张图片存在未保存修改，请先保存再启动自动遮罩。')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '开始' })).toBeDisabled()
@@ -356,18 +357,106 @@ describe('Preprocess inpaint contracts', () => {
     const filmstrip = await screen.findByRole('group', { name: '涂抹工作集图片' })
     const actions = screen.getByRole('group', { name: '涂抹保存操作' })
     expect(within(actions).getAllByRole('button').map((button) => button.textContent)).toEqual([
-      '自动遮罩', '保存全部 (0)', '保存当前图',
+      '遮罩处理', '保存全部 (0)', '保存当前图',
     ])
     expect(within(filmstrip).getAllByRole('radio')).toHaveLength(3)
-    const autoMask = screen.getByRole('button', { name: '自动遮罩' })
+    const autoMask = screen.getByRole('button', { name: '遮罩处理' })
     expect(autoMask).toHaveClass('btn-ghost')
     await user.click(autoMask)
+    await user.click(screen.getByRole('menuitem', { name: '自动遮罩' }))
     expect(screen.getByRole('dialog', { name: '自动遮罩' })).toBeInTheDocument()
     expect(screen.getByLabelText('识别模型')).toHaveValue('builtin')
     expect(screen.queryByText('高级参数')).not.toBeInTheDocument()
     expect(screen.queryByLabelText('NMS IoU')).not.toBeInTheDocument()
     await user.keyboard('{Escape}')
-    expect(screen.getByRole('button', { name: '自动遮罩' })).toHaveFocus()
+    expect(screen.getByRole('button', { name: '遮罩处理' })).toHaveFocus()
+  })
+
+  it('opens on hover and keyboard, and closes on Escape and outside clicks', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await screen.findByRole('button', { name: 'Draw stroke' })
+    const trigger = screen.getByRole('button', { name: '遮罩处理' })
+    await user.hover(trigger)
+    const items = screen.getAllByRole('menuitem')
+    expect(items.map((item) => item.textContent)).toEqual(['自动遮罩', '清除当前遮罩', '清除全部遮罩'])
+    expect(items[1]).toBeDisabled()
+    expect(items[2]).toBeDisabled()
+    await user.hover(items[0])
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('menu')).toBeNull()
+    trigger.focus()
+    await user.keyboard('{ArrowDown}')
+    expect(screen.getByRole('menuitem', { name: '自动遮罩' })).toHaveFocus()
+    await user.click(screen.getByRole('heading', { name: '预处理工具' }))
+    expect(screen.queryByRole('menu')).toBeNull()
+  })
+
+  it.each([null, 123])('clears the current mask after confirmation while keeping paint undo and redo (mtime %s)', async (mtime) => {
+    const user = userEvent.setup()
+    let persisted = mtime
+    vi.mocked(api.listCropWorkspaceTrain).mockImplementation(async () => ({
+      images: [{ ...image, mask_mtime: persisted }],
+    }))
+    vi.mocked(api.deleteMaskTrain).mockImplementation(async () => {
+      persisted = null
+      return { deleted: true }
+    })
+    const view = renderPage()
+    const draw = await screen.findByRole('button', { name: 'Draw stroke' })
+    await user.click(draw)
+    await user.click(screen.getByRole('radio', { name: '训练遮罩' }))
+    await user.click(draw)
+    await user.click(screen.getByRole('radio', { name: '覆盖原图' }))
+    await user.click(draw)
+    await user.click(screen.getByRole('button', { name: '撤销' }))
+    const openClear = async () => {
+      await user.hover(screen.getByRole('button', { name: '遮罩处理' }))
+      await user.click(screen.getByRole('menuitem', { name: '清除当前遮罩' }))
+      return screen.getByRole('alertdialog')
+    }
+    const dialog = await openClear()
+    expect(dialog).toHaveTextContent(image.name)
+    await user.click(within(dialog).getByRole('button', { name: '取消' }))
+    expect(api.deleteMaskTrain).not.toHaveBeenCalled()
+    expect(screen.getByTestId('inpaint-canvas')).not.toHaveAttribute('data-mask-edits', '[]')
+    await user.click(within(await openClear()).getByRole('button', { name: '清除当前遮罩' }))
+    await waitFor(() => expect(screen.getByTestId('inpaint-canvas')).toHaveAttribute('data-mask-edits', '[]'))
+    expect(api.deleteMaskTrain).toHaveBeenCalledTimes(mtime === null ? 0 : 1)
+    await user.click(screen.getByRole('button', { name: '重做' }))
+    expect(JSON.parse(screen.getByTestId('inpaint-canvas').dataset.paintEdits!)).toHaveLength(2)
+    await user.click(screen.getByRole('button', { name: '撤销' }))
+    await user.click(screen.getByRole('button', { name: '保存当前图' }))
+    await waitFor(() => expect(api.saveInpaintTrain).toHaveBeenCalledTimes(1))
+    expect(api.saveMaskTrain).not.toHaveBeenCalled()
+    view.unmount()
+    renderPage()
+    await screen.findByRole('button', { name: 'Draw stroke' })
+    await user.hover(screen.getByRole('button', { name: '遮罩处理' }))
+    expect(screen.getByRole('menuitem', { name: '清除当前遮罩' })).toBeDisabled()
+  })
+
+  it('continues after a failed delete and includes images hidden by the filter', async () => {
+    const user = userEvent.setup()
+    const other = '1_data/b.png'
+    vi.mocked(api.listCropWorkspaceTrain).mockResolvedValue({
+      images: [{ ...image, mask_mtime: 1 }, { ...image, name: other, mask_mtime: 2 }],
+    })
+    vi.mocked(api.deleteMaskTrain).mockRejectedValueOnce(new Error('locked'))
+    renderPage()
+    const draw = await screen.findByRole('button', { name: 'Draw stroke' })
+    await user.click(screen.getByRole('radio', { name: '训练遮罩' }))
+    await user.click(draw)
+    await user.click(screen.getByRole('radio', { name: '待保存 1' }))
+    await user.hover(screen.getByRole('button', { name: '遮罩处理' }))
+    expect(screen.getByRole('menuitem', { name: '清除全部遮罩' })).toBeEnabled()
+    await user.click(screen.getByRole('menuitem', { name: '清除全部遮罩' }))
+    const dialog = screen.getByRole('alertdialog')
+    expect(dialog).toHaveTextContent('2 张图片')
+    await user.click(within(dialog).getByRole('button', { name: '清除全部遮罩' }))
+    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith('已清除 1 张，失败 1 张。', 'error'))
+    expect(vi.mocked(api.deleteMaskTrain).mock.calls).toEqual([[1, 2, image.name], [1, 2, other]])
+    expect(screen.getByTestId('inpaint-canvas')).not.toHaveAttribute('data-mask-edits', '[]')
   })
 
   it('does not resurrect an already-completed job on initial mount', async () => {
@@ -413,7 +502,8 @@ describe('Preprocess inpaint contracts', () => {
     })
     const view = renderPage()
     await screen.findByRole('group', { name: '涂抹工作集图片' })
-    await userEvent.click(screen.getByRole('button', { name: '自动遮罩' }))
+    await userEvent.hover(screen.getByRole('button', { name: '遮罩处理' }))
+    await userEvent.click(screen.getByRole('menuitem', { name: '自动遮罩' }))
     await userEvent.click(screen.getByRole('button', { name: '开始' }))
 
     await waitFor(() => expect(screen.getByRole('button', { name: '保存全部 (2)' })).toBeEnabled())

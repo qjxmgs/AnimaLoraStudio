@@ -2601,6 +2601,12 @@
     },
     "headMask": {
       "title": "自动头部遮罩",
+      "actions": "遮罩处理",
+      "clearCurrent": "清除当前遮罩",
+      "clearAll": "清除全部遮罩",
+      "confirmClearCurrent": "立即清除「{{name}}」的已保存训练遮罩和遮罩草稿？",
+      "confirmClearAll": "立即清除当前版本 {{n}} 张图片的已保存训练遮罩和遮罩草稿？",
+      "clearResult": "已清除 {{ok}} 张，失败 {{failed}} 张。",
       "openSetup": "自动遮罩",
       "runningAction": "正在自动遮罩…",
       "unavailableSaving": "正在保存，请稍后再启动自动遮罩。",
