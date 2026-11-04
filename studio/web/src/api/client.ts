@@ -633,7 +633,7 @@ export interface GenerateSecretsConfig {
   /** 出图任务超时兜底：超 N 分钟未完成强制终止 daemon 进程（卡死场景普通
    * 取消无效）。0（默认）= 不开启。 */
   task_timeout_minutes: number
-  /** 测试出图显存策略（krea2 生效）。auto=按空闲显存决定文本编码器与 DiT
+  /** 测试出图显存策略（Krea 2 / MOSS-Image 生效）。auto=按空闲显存决定文本编码器与 DiT
    * 是否让位；save_vram=强制顺序化（峰值最低，每图多几秒搬运）；
    * performance=全部常驻显存（峰值最高、零搬运）。 */
   vram_policy: 'auto' | 'save_vram' | 'performance'
@@ -756,9 +756,12 @@ export interface ModelFileStatus {
 /** 底模架构摘要（header 探测；文件存在且是 Anima 结构才有，krea2 为 null）。
  *  层数决定 LoRA 能否互换 —— 同族不同层数（Anima 28 层 vs 第三方 40 层）的 LoRA 不通用。 */
 export interface BaseModelArch {
-  num_blocks: number
-  model_channels: number
-  param_count: number
+  num_blocks?: number
+  model_channels?: number
+  param_count?: number
+  /** int8 等整数量化版（如 "int8_tensorwise + ConvRot"）：训练 / 出图不支持，
+   *  此时不含层数等字段。 */
+  unsupported_quant?: string
 }
 
 export interface FamilyMainVariantInfo extends ModelFileStatus {
@@ -801,21 +804,28 @@ export interface FamilyMainCatalog {
   license_url?: string
 }
 
-export interface AnimaVaeCatalog extends ModelFileStatus {
-  id: 'anima_vae'
+/** 族 VAE 资产（anima_vae = Anima / Krea2 共用的 Qwen-Image VAE；moss_vae = FLUX.2 VAE）。 */
+export interface VaeCatalog extends ModelFileStatus {
+  id: 'anima_vae' | 'moss_vae'
   name: string
   description: string
   repo: string
+  /** 下载前的体积估算（bytes），显示在「未下载」徽标里。 */
+  size_estimate?: number
   target_path: string
 }
 
 export interface ModelDirCatalog {
-  id: 'qwen3' | 't5_tokenizer' | 'krea2_text_encoder' | 'krea2_text_encoder_fp8'
+  id:
+    | 'qwen3' | 't5_tokenizer' | 'krea2_text_encoder' | 'krea2_text_encoder_fp8'
+    | 'moss_text_encoder_int8' | 'moss_text_encoder_bf16'
   name: string
   description: string
   repo: string
+  /** 下载前的体积估算（bytes）；0 / 缺省 = 不显示。 */
+  size_estimate?: number
   target_dir: string
-  /** krea2_text_encoder 专属：选中的 TE variant（'bf16' | 'fp8'）。 */
+  /** 带 variant 的 TE 卡：选中的 TE variant（krea2 'bf16'|'fp8'；moss 'int8'|'bf16'）。 */
   selected?: string
   files: Array<{ name: string; exists: boolean; size: number; mtime: number }>
 }
@@ -998,12 +1008,16 @@ export interface ModelPathChoice {
 export interface ModelsCatalog {
   models_root: string
   anima_main: FamilyMainCatalog
-  anima_vae: AnimaVaeCatalog
+  anima_vae: VaeCatalog
   qwen3: ModelDirCatalog
   t5_tokenizer: ModelDirCatalog
   krea2_main: FamilyMainCatalog
   krea2_text_encoder: ModelDirCatalog
   krea2_text_encoder_fp8: ModelDirCatalog
+  moss_main?: FamilyMainCatalog
+  moss_text_encoder_int8?: ModelDirCatalog
+  moss_text_encoder_bf16?: ModelDirCatalog
+  moss_vae?: VaeCatalog
   wd14: WD14Catalog
   cltagger: CLTaggerCatalog
   eval_metrics?: EvalMetricsCatalog
@@ -1756,13 +1770,17 @@ export interface XYMatrixSpec {
 export interface GenerateRequest {
   prompts: string[]
   /** 底模所属模型族（多模型 P4-4）；省略 = anima。 */
-  model_family?: 'anima' | 'krea2'
+  model_family?: 'anima' | 'krea2' | 'moss'
   /** 本次出图临时选用的底模（官方 variant key 或本地 custom 路径）；
    *  省略 → server 用 Settings 里该族的 selected。 */
   base_model?: string
-  /** 本次出图的文本编码器 variant（krea2 生效）：省略 = 跟随下载中心选中
-   *  的 TE（selected_te）；显式 bf16/fp8 临时覆盖（与 base_model 对称）。 */
-  text_encoder?: 'bf16' | 'fp8'
+  /** 本次出图的文本编码器 variant（krea2 bf16/fp8、moss int8/bf16）：省略 = 跟随
+   *  下载中心选中的 TE（selected_te）；显式给出时临时覆盖（与 base_model 对称）。 */
+  text_encoder?: 'bf16' | 'fp8' | 'int8'
+  /** Skip Layer Guidance（族能力位 skip_layer_guidance，当前仅 moss）；省略 = 族默认 */
+  uncond_skip_layers?: number[]
+  uncond_skip_start_percent?: number
+  uncond_skip_end_percent?: number
   negative_prompt?: string
   width?: number
   height?: number

@@ -19,8 +19,10 @@ from training.optimizers import (
     automagic,
     came,
     lion,
+    muon,
     prodigy,
     prodigy_plus_schedulefree,
+    riemannion,
     soap,
     soap_sf,
 )
@@ -34,8 +36,10 @@ BUILDERS: dict[str, Callable] = {
     "automagic": automagic.build,
     "came": came.build,
     "lion": lion.build,
+    "muon": muon.build,
     "prodigy": prodigy.build,
     "prodigy_plus_schedulefree": prodigy_plus_schedulefree.build,
+    "riemannion": riemannion.build,
     "soap": soap.build,
     "soap_sf": soap_sf.build,
 }
@@ -44,6 +48,7 @@ BUILDERS: dict[str, Callable] = {
 VALIDATORS: dict[str, Callable[[object], None]] = {
     "automagic": automagic.validate,
     "prodigy_plus_schedulefree": prodigy_plus_schedulefree.validate,
+    "riemannion": riemannion.validate,
     "soap_sf": soap_sf.validate,
 }
 

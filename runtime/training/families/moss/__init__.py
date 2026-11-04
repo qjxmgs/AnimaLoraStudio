@@ -1,0 +1,219 @@
+"""MOSS-Image ModelSpec 与 ModelFamily（docs/design/multi-model/05-moss-image.md）。
+
+结构 / 加载 / int8 运行时 / 文本栈分别在 ``modeling.moss``、``loader``、``quant_int8``、
+``text_encoding``；这里只做声明与派发。
+"""
+
+from __future__ import annotations
+
+from typing import Any, Iterable
+
+import torch
+
+# 能力矩阵 / 族默认 / 采样白名单单源在 studio/domain/common.py（同 anima/krea2）
+from studio.domain.common import (
+    FAMILY_CAPABILITIES,
+    FAMILY_CONFIG_DEFAULTS,
+    FAMILY_SAMPLING,
+)
+
+from ..latent_spaces import FLUX2_F8C32_BN
+from ..spec import ConstantShift, LoraOutputSpec, ModelSpec, SamplingDefaults, TextSpec
+from .forward import MossTextCondition, forward_train
+from .preset import MOSS_PRESET
+from .sampling import (
+    MOSS_DEFAULT_CFG,
+    MOSS_DEFAULT_STEPS,
+    MOSS_SHIFT,
+    MOSS_UNCOND_SKIP_LAYERS,
+    MossSamplingCondition,
+    decode_to_pil,
+    prepare_sampling_condition,
+    sample_latents,
+)
+from .text_encoding import MOSS_MAX_TOKENS, MOSS_TEXT_FINGERPRINT, MossTextStack
+
+
+MOSS_SPEC = ModelSpec(
+    family_id="moss",
+    display_name="MOSS-Image",
+    objective="rectified_flow",
+    latent=FLUX2_F8C32_BN,
+    text=TextSpec(
+        strategy="cached_varlen",
+        max_seq_len=MOSS_MAX_TOKENS,
+        fingerprint=MOSS_TEXT_FINGERPRINT,
+    ),
+    sampling=SamplingDefaults(
+        samplers=FAMILY_SAMPLING["moss"]["samplers"],
+        schedulers=FAMILY_SAMPLING["moss"]["schedulers"],
+        default_sampler=FAMILY_SAMPLING["moss"]["samplers"][0],
+        default_scheduler=FAMILY_SAMPLING["moss"]["schedulers"][0],
+        default_steps=MOSS_DEFAULT_STEPS,
+        default_cfg=MOSS_DEFAULT_CFG,
+        # ComfyUI supported_models.MOSSImage：ModelSamplingDiscreteFlow shift=5.0
+        shift_policy=ConstantShift(shift=MOSS_SHIFT),
+    ),
+    capabilities=FAMILY_CAPABILITIES["moss"],
+    lora=LoraOutputSpec(prefix="lora_unet", preset_name="moss_full"),
+    config_defaults=FAMILY_CONFIG_DEFAULTS["moss"],
+)
+
+
+class MossFamily:
+    spec = MOSS_SPEC
+
+    def load_dit(self, path, device, dtype, *,
+                 attention_backend: str = "flash_attn", repo_root=None,
+                 purpose: str = "train", blocks_to_swap: int = 0):
+        del repo_root
+        from training.families.moss.loader import load_moss_model
+        from training.model_loading import apply_attention_backend
+
+        # int8 底模两条前向（M9）：训练 W8A16（数值准、可反传）；出图 / 评估 / 先验
+        # 生成按 ComfyUI 实际跑的 W8A8 eager 路径逐位复刻
+        generate = purpose == "generate"
+        model = load_moss_model(
+            path, device, dtype, blocks_to_swap=blocks_to_swap,
+            int8_forward="w8a8" if generate else "w8a16",
+        )
+        # 出图走 ComfyUI 口径的推理前向（comfy_forward）；训练与训练中采样仍走上游前向
+        model.moss_comfy_forward = generate
+        apply_attention_backend(model, attention_backend)
+        return model
+
+    def dit_blocks(self, model):
+        """DiT 的同构层序列（block swap 按它换出末尾 N 层）；MOSS 的层容器叫 layers。"""
+        return model.layers
+
+    def swapped_param_ratio(self, blocks_to_swap: int, *,
+                            checkpoint_path: str | None = None) -> float:
+        """换出层占全模型参数的比例（显存预算折扣用；按参数量不按字节，见 loader）。
+
+        未给路径 / 读失败返回 0：护栏退化为保守（按完整模型预算）。
+        """
+        if blocks_to_swap <= 0 or not checkpoint_path:
+            return 0.0
+        try:
+            from training.families.moss.loader import swapped_param_ratio
+
+            return swapped_param_ratio(checkpoint_path, blocks_to_swap)
+        except Exception:  # noqa: BLE001
+            return 0.0
+
+    def load_vae(self, path, device, dtype, *, tiling: str = "auto"):
+        from training.vae_flux2 import load_flux2_vae
+
+        return load_flux2_vae(path, device, dtype, tiling=tiling)
+
+    def load_text(self, text_encoder_path, device, dtype, *,
+                  t5_tokenizer_path: str = "", comfy_qwen: bool = False,
+                  t5_fast: bool = False, purpose: str = "train",
+                  cache_enabled: bool = True) -> MossTextStack:
+        del t5_tokenizer_path, comfy_qwen, t5_fast, purpose
+        return MossTextStack(text_encoder_path, device=device, dtype=dtype,
+                             cache_enabled=cache_enabled)
+
+    def prepare_text_cache(self, captions: Iterable[str],
+                           extra_prompts: Iterable[str], *, cache_entries=(),
+                           cache_root=None, text=None, device=None,
+                           dtype=None) -> None:
+        if text is None:
+            raise ValueError("MOSS prepare_text_cache 需要 MossTextStack")
+        text.prepare_text_cache(captions, extra_prompts,
+                                cache_entries=cache_entries, cache_root=cache_root)
+
+    def encode_text_for_batch(self, text, dit, captions, device, dtype, *,
+                              comfy_encoding: bool = True,
+                              kv_trim: bool = True) -> MossTextCondition:
+        return text.encode_text_for_batch(captions, device=device, dtype=dtype)
+
+    def forward_train(self, dit, noisy, t, cond, *, use_checkpoint: bool = False):
+        return forward_train(dit, noisy, t, cond, use_checkpoint=use_checkpoint)
+
+    # ── NaViT 打包（能力位 navit；族私有钩子，不进九方法冻结面，同 dit_blocks）──
+    def navit_text_token_count(self, text: MossTextStack, caption: str) -> int:
+        """单流联合注意力：文本 token 与图像 token 同在序列里，计入打包预算。"""
+        return text.token_count(caption)
+
+    def navit_encode_text(self, text, dit, captions, device, dtype, *,
+                          comfy_encoding: bool = True, kv_trim: bool = False,
+                          text_trim_padding: bool = False) -> list[torch.Tensor]:
+        """逐图有效文本 token 列表（去 padding）；三个旋钮是 Anima 私有，MOSS 恒按有效 token 打包。"""
+        del comfy_encoding, kv_trim, text_trim_padding
+        cond = self.encode_text_for_batch(text, dit, captions, device, dtype)
+        mask = cond.attention_mask.bool()
+        return [cond.context[i, mask[i]] for i in range(cond.context.shape[0])]
+
+    def navit_forward_and_loss(self, dit, navit_cond, latents_list, t, loss_fn, *,
+                               noise_offset: float = 0.0, pyramid_iters: int = 0,
+                               pyramid_discount: float = 0.35,
+                               use_checkpoint: bool = False, per_image_weights=None):
+        """一个 NaViT 训练步 → (loss, pred, info)，见 ``families/moss/navit.py``。"""
+        from .navit import navit_packed_forward_and_loss
+
+        return navit_packed_forward_and_loss(
+            dit, latents_list, t, navit_cond, loss_fn,
+            noise_offset=noise_offset,
+            pyramid_iters=pyramid_iters,
+            pyramid_discount=pyramid_discount,
+            use_checkpoint=use_checkpoint,
+            per_image_weights=per_image_weights,
+        )
+
+    def sample_image(self, model, vae, text, prompt, *,
+                     height: int = 1024, width: int = 1024,
+                     steps: int | None = None,
+                     cfg_scale: float | None = None,
+                     negative_prompt: str = "",
+                     sampler_name: str | None = None,
+                     scheduler: str | None = None,
+                     distilled: bool = False,
+                     uncond_skip_layers=MOSS_UNCOND_SKIP_LAYERS,
+                     uncond_skip_start_percent: float = 0.0,
+                     uncond_skip_end_percent: float = 1.0,
+                     device="cuda", dtype=None, step_callback=None,
+                     phase_callback=None, seed: int | None = None,
+                     vram_policy: str | None = None):
+        # MOSS 无蒸馏 variant，distilled 接受并忽略（调用方按统一协议传）
+        del distilled
+        dtype = dtype or torch.bfloat16
+        steps = int(steps or MOSS_DEFAULT_STEPS)
+        cfg = MOSS_DEFAULT_CFG if cfg_scale is None else float(cfg_scale)
+        condition: MossSamplingCondition = prepare_sampling_condition(
+            text, prompt, negative_prompt=negative_prompt or "", cfg_scale=cfg,
+            device=device, dtype=dtype, phase_callback=phase_callback,
+        )
+        # TE 与 DiT 的先后由调用方的任务级编排负责（daemon / CLI 先预编码全部
+        # prompt 再释放 TE，DiT 让位走 block swap 安全的搬运）；这里只处置逐图
+        # 兜底路径编码后的 TE：performance 档全部常驻，其余档卸到 CPU 给采样让
+        # 显存。vram_policy=None（训练预览）照旧卸——缓存模式下 TE 已释放，no-op
+        offload = getattr(text, "offload_model", None)
+        if callable(offload) and vram_policy != "performance":
+            offload()
+        if phase_callback:
+            phase_callback("sample")
+        latents = sample_latents(
+            model, condition, height=height, width=width, steps=steps, cfg_scale=cfg,
+            sampler_name=sampler_name or self.spec.sampling.default_sampler,
+            scheduler=scheduler or self.spec.sampling.default_scheduler,
+            uncond_skip_layers=uncond_skip_layers,
+            uncond_skip_start_percent=uncond_skip_start_percent,
+            uncond_skip_end_percent=uncond_skip_end_percent,
+            device=device, dtype=dtype, seed=seed, step_callback=step_callback,
+        )
+        if phase_callback:
+            phase_callback("vae")
+        return decode_to_pil(vae, latents)
+
+    def lora_preset(self) -> dict[str, Any]:
+        return MOSS_PRESET
+
+    def lora_metadata(self) -> dict[str, str]:
+        return {"model_family": self.spec.family_id, "preset": self.spec.lora.preset_name}
+
+    def convert_lora_state_dict(self, sd: dict) -> dict:
+        return sd
+
+
+__all__ = ["MOSS_SPEC", "MossFamily", "MossTextCondition", "MossTextStack"]

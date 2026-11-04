@@ -53,6 +53,26 @@ describe('BaseModelSelect per family（多模型 P4-4）', () => {
     expect((screen.getByRole('combobox') as HTMLSelectElement).value).toBe('raw')
   })
 
+  it('moss family reads moss_main and keeps its int8 custom model selectable', async () => {
+    vi.mocked(api.getModelsCatalog).mockResolvedValue({
+      ...(catalog as object),
+      moss_main: {
+        variants: [
+          { variant: 'base_int8', exists: true, purpose: 'training' },
+          { variant: 'base_bf16', exists: false, purpose: 'training' },
+        ],
+        // 后端不给 MOSS 的 int8 convrot 文件挂 unsupported_quant（族支持该格式）
+        custom: [{ path: 'G:/m/moss-ft-int8.safetensors', name: 'moss-ft-int8.safetensors', exists: true }],
+        selected: 'base_int8',
+      },
+    } as never)
+    render(<BaseModelSelect value={null} onChange={() => {}} family="moss" />)
+    await screen.findByRole('option', { name: /base_int8/ })
+    expect(optionValues()).toEqual(['base_int8', 'G:/m/moss-ft-int8.safetensors'])
+    expect((screen.getByRole('option', { name: /moss-ft-int8/ }) as HTMLOptionElement).disabled).toBe(false)
+    expect((screen.getByRole('combobox') as HTMLSelectElement).value).toBe('base_int8')
+  })
+
   it('anima variants show layer count + display label + custom arch in one flat list', async () => {
     vi.mocked(api.getModelsCatalog).mockResolvedValue({
       anima_main: {
@@ -73,5 +93,24 @@ describe('BaseModelSelect per family（多模型 P4-4）', () => {
     // 不分组：内置条目与用户注册的底模在同一列表
     expect(document.querySelectorAll('optgroup')).toHaveLength(0)
     expect(optionValues()).toEqual(['1.0', '2.9b-preview-v1', 'G:/m/ft.safetensors'])
+  })
+
+  it('int8 quantized custom checkpoint is labelled and disabled', async () => {
+    vi.mocked(api.getModelsCatalog).mockResolvedValue({
+      anima_main: {
+        variants: [{ variant: '1.0', exists: true, arch: { num_blocks: 28, model_channels: 2048, param_count: 1 } }],
+        custom: [{
+          path: 'G:/m/anima-int8convrot.safetensors', name: 'anima-int8convrot.safetensors', exists: true,
+          arch: { unsupported_quant: 'int8_tensorwise + ConvRot' },
+        }],
+        selected: '1.0',
+      },
+    } as never)
+    render(<BaseModelSelect value={null} onChange={() => {}} />)
+    const opt = await screen.findByRole('option', {
+      name: 'anima-int8convrot.safetensors · int8_tensorwise + ConvRot 量化版 · 不可用',
+    }) as HTMLOptionElement
+    expect(opt.disabled).toBe(true)
+    expect((screen.getByRole('option', { name: '1.0 · 28 层' }) as HTMLOptionElement).disabled).toBe(false)
   })
 })

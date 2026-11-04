@@ -9,8 +9,10 @@ from __future__ import annotations
 
 from typing import Any, Iterable
 
-from training.families.anima import ANIMA_SPEC
-from training.families.anima.preset import ANIMA_PRESET
+# 相对导入：studio 服务进程经 runtime.training 根取族（NaViT 预估的 get_family），
+# 没有 training 顶层包；方法内的 training.* 导入只在训练 / daemon 进程执行
+from . import ANIMA_SPEC
+from .preset import ANIMA_PRESET
 
 
 class AnimaFamily:
@@ -34,6 +36,10 @@ class AnimaFamily:
         if attention_backend == "xformers":
             enable_xformers(model)
         return model
+
+    def dit_blocks(self, model):
+        """DiT 的同构层序列（block swap 按它换出末尾 N 层）。"""
+        return model.blocks
 
     def swapped_param_ratio(self, blocks_to_swap: int, *,
                             checkpoint_path: str | None = None) -> float:
@@ -157,6 +163,40 @@ class AnimaFamily:
         return forward_with_optional_checkpoint(
             dit, noisy, t.view(-1, 1), cond, pad_mask,
             use_checkpoint=use_checkpoint,
+        )
+
+    # ── NaViT 打包（能力位 navit；族私有钩子，不进九方法冻结面，同 dit_blocks）──
+    def navit_encode_text(self, text, dit, captions, device, dtype, *,
+                          comfy_encoding: bool = True, kv_trim: bool = False,
+                          text_trim_padding: bool = False):
+        """逐图文本 → 打包 cross 序列 (cross_packed, text_seqlens)；对循环 opaque。
+
+        在 autocast 之外调用（与标准路径的文本编码同处）。文本走 cross-attn、不进
+        自注意力序列，所以打包预算不计文本 token（本族不提供 navit_text_token_count）。
+        """
+        from training.families.anima.navit import pack_cross_embeddings
+
+        cross, t5_attn = self.encode_text_for_batch(
+            text, dit, captions, device, dtype,
+            comfy_encoding=comfy_encoding, kv_trim=kv_trim, return_t5_attn=True,
+        )
+        return pack_cross_embeddings(cross, t5_attn, text_trim_padding)
+
+    def navit_forward_and_loss(self, dit, navit_cond, latents_list, t, loss_fn, *,
+                               noise_offset: float = 0.0, pyramid_iters: int = 0,
+                               pyramid_discount: float = 0.35,
+                               use_checkpoint: bool = False, per_image_weights=None):
+        """一个 NaViT 训练步 → (loss, pred, info)，见 ``families/anima/navit.py``。"""
+        from training.families.anima.navit import navit_packed_forward_and_loss
+
+        cross_packed, text_seqlens = navit_cond
+        return navit_packed_forward_and_loss(
+            dit, latents_list, t, cross_packed, text_seqlens, loss_fn,
+            noise_offset=noise_offset,
+            pyramid_iters=pyramid_iters,
+            pyramid_discount=pyramid_discount,
+            use_checkpoint=use_checkpoint,
+            per_image_weights=per_image_weights,
         )
 
     def sample_image(self, model, vae, text, prompt, **kwargs):

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
 import {
@@ -10,7 +10,7 @@ import {
 import PathPicker from '../../../components/PathPicker'
 import { useToast } from '../../../components/Toast'
 import { useSettingsData } from '../../../lib/SettingsData'
-import { fmtBytes, textInputClass } from './constants'
+import { textInputClass } from './constants'
 import { SettingsField, SettingsInput } from './fields'
 import { ModelGroupCard, ModelStatusBadge, DownloadButton } from '../../../components/models/ModelDownload'
 
@@ -113,7 +113,7 @@ export function SourceSelect({ opt, onChange }: {
 
 export function ModelSourceCard({
   domain, title, helpTooltip, catalog, currentValue, onSelect,
-  addDownload, addLocal, selectRequiresExists = false, renderRowMeta, describeRow, t,
+  addDownload, addLocal, selectRequiresExists = false, rowUnusableReason, renderRowMeta, describeRow, t,
 }: {
   domain: string
   title: string
@@ -129,9 +129,12 @@ export function ModelSourceCard({
   addLocal?: { dirOnly?: boolean; secondFileKey?: string }
   /** true：未下载的候选禁选（主模型/放大器语义）；false：可选中，运行时懒下载（wd14/eval 语义）。 */
   selectRequiresExists?: boolean
+  /** 文件在盘上但不能用（如 int8 量化版主模型）：返回原因则该行禁选，原因作 radio tooltip。 */
+  rowUnusableReason?: (row: ModelSourceRow) => string | null
   /** 行副内容逃生舱（label 旁 chip，如主模型 purpose 徽标）。 */
   renderRowMeta?: (row: ModelSourceRow) => React.ReactNode
-  /** 行描述文本覆盖（如放大器 preset 描述的 i18n 翻译）；默认 row.description。 */
+  /** 行描述文本覆盖（如放大器 preset 描述的 i18n 翻译）；默认 row.description。
+   *  描述不在行内常驻，统一列进卡片标题旁 ⓘ。 */
   describeRow?: (row: ModelSourceRow) => string
   t: TFunction
 }) {
@@ -142,11 +145,29 @@ export function ModelSourceCard({
   const [fileDraft, setFileDraft] = useState('')
   const [firstLocalPath, setFirstLocalPath] = useState('')
   const [submitBusy, setSubmitBusy] = useState(false)
+  // radio 组名按卡片实例唯一：同一 domain 可在多处渲染（Qwen-Image VAE 同时出现在
+  // Anima / Krea2 区），共用 name 会被浏览器当成一组、互相取消选中
+  const radioGroup = `source_${domain}_${useId()}`
 
   const rows = catalog?.model_sources?.[domain]
   if (!catalog || !rows) {
     return <p className="text-fg-tertiary text-xs">{t('settings.loadingModelCatalog')}</p>
   }
+
+  const rowNotes = rows.flatMap((row) => {
+    const desc = describeRow ? describeRow(row) : row.description
+    return desc ? [{ key: `${row.kind}:${row.value}`, label: row.label, desc }] : []
+  })
+  const cardHelp = helpTooltip || rowNotes.length > 0 ? (
+    <>
+      {helpTooltip}
+      {rowNotes.length > 0 && (
+        <ul>
+          {rowNotes.map((n) => <li key={n.key}><span><code>{n.label}</code> · {n.desc}</span></li>)}
+        </ul>
+      )}
+    </>
+  ) : undefined
 
   const submitCandidate = async (cand: ModelSourceCandidate) => {
     setSubmitBusy(true)
@@ -198,49 +219,40 @@ export function ModelSourceCard({
   }
 
   return (
-    <ModelGroupCard title={title} helpTooltip={helpTooltip}>
+    <ModelGroupCard title={title} helpTooltip={cardHelp}>
       <ul className="list-none m-0 p-0 flex flex-col gap-1">
         {rows.map((row) => {
           const dl = row.status_key ? catalog.downloads[row.status_key] : undefined
           const isSel = row.value === currentValue
-          const canSelect = row.kind === 'local'
+          const unusable = rowUnusableReason?.(row) ?? null
+          const canSelect = !unusable && (row.kind === 'local'
             ? row.exists
-            : (dl?.status !== 'running' && (!selectRequiresExists || row.exists))
+            : (dl?.status !== 'running' && (!selectRequiresExists || row.exists)))
           return (
             <li key={`${row.kind}:${row.value}`} className={`flex items-center gap-2 text-xs px-1.5 py-1 rounded-sm ${
               isSel ? 'bg-selected-soft border border-selected' : 'bg-transparent border border-transparent'
             }`}>
-              <input type="radio" name={`source_${domain}`} checked={isSel} disabled={!canSelect}
+              <input type="radio" name={radioGroup} checked={isSel} disabled={!canSelect}
                 aria-label={row.label}
                 onChange={() => onSelect(row.value, row)}
                 className="shrink-0"
                 style={{ accentColor: 'var(--accent)' }}
-                title={canSelect ? t('settings.selectSourceCandidate') : t('settings.downloadRequiredFirst')}
+                title={canSelect ? t('settings.selectSourceCandidate') : (unusable ?? t('settings.downloadRequiredFirst'))}
               />
-              <div className="flex flex-col flex-1 min-w-0">
-                <div className="flex items-center gap-2 min-w-0">
-                  <code className="font-mono text-fg-primary min-w-0 overflow-hidden text-ellipsis whitespace-nowrap" title={row.value}>
-                    {row.label}
-                  </code>
-                  {row.kind === 'local' && (
-                    <span className="text-[10px] px-1 py-0 rounded-sm bg-overlay text-fg-tertiary shrink-0">
-                      {t('settings.localBadge')}
-                    </span>
-                  )}
-                  {(row.kind === 'download' || row.kind === 'scanned') && (
-                    <span className="text-[10px] px-1 py-0 rounded-sm bg-overlay text-fg-tertiary shrink-0">custom</span>
-                  )}
-                  {renderRowMeta?.(row)}
-                </div>
-                {(describeRow ? describeRow(row) : row.description) && (
-                  <span className="text-fg-tertiary text-[11px] truncate">
-                    {describeRow ? describeRow(row) : row.description}
+              <div className="flex items-center gap-2 flex-1 min-w-0">
+                <code className="font-mono text-fg-primary min-w-0 overflow-hidden text-ellipsis whitespace-nowrap" title={row.value}>
+                  {row.label}
+                </code>
+                {row.kind === 'local' && (
+                  <span className="text-[10px] px-1 py-0 rounded-sm bg-overlay text-fg-tertiary shrink-0">
+                    {t('settings.localBadge')}
                   </span>
                 )}
+                {(row.kind === 'download' || row.kind === 'scanned') && (
+                  <span className="text-[10px] px-1 py-0 rounded-sm bg-overlay text-fg-tertiary shrink-0">custom</span>
+                )}
+                {renderRowMeta?.(row)}
               </div>
-              {!row.exists && row.size_estimate ? (
-                <span className="text-fg-tertiary shrink-0">~{fmtBytes(row.size_estimate)}</span>
-              ) : null}
               {row.kind === 'local' && !row.exists ? (
                 <span className="text-err text-2xs shrink-0">{t('settings.localModelMissing')}</span>
               ) : (
@@ -248,12 +260,14 @@ export function ModelSourceCard({
                   exists={row.exists} size={row.size} status={dl?.status}
                   fileCount={row.files?.length}
                   existsCount={row.files ? row.files.filter((f) => f.exists).length : undefined}
+                  sizeEstimate={row.size_estimate}
                 />
               )}
               {row.download_id && (
                 <DownloadButton
                   exists={row.exists} status={dl?.status}
-                  busy={row.status_key ? downloadBusy.has(row.status_key) : false}
+                  // 与 startDownload 的 in-flight key 同构（download_id:variant），不用 status_key
+                  busy={downloadBusy.has(`${row.download_id}:${row.download_variant ?? row.value}`)}
                   onClick={() => void startDownload(row.download_id!, row.download_variant ?? row.value)}
                   onDelete={() => void deleteAsset(row.download_id!, row.download_variant ?? row.value, row.label)}
                 />

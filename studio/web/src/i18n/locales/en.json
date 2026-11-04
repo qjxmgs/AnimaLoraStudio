@@ -376,6 +376,7 @@
         "lokr": "LoKr",
         "loha": "LoHa",
         "ortho": "OrthoLoRA",
+        "riemann": "Riemann LoRA",
         "tlora": "T-LoRA"
       },
       "lrScheduler": {
@@ -389,8 +390,10 @@
         "automagic": "Automagic",
         "came": "CAME",
         "lion": "Lion",
+        "muon": "Muon",
         "prodigy": "Prodigy",
-        "prodigyPlusSchedulefree": "Prodigy + Schedule-Free"
+        "prodigyPlusSchedulefree": "Prodigy + Schedule-Free",
+        "riemannion": "Riemannion"
       },
       "timestepSampling": {
         "logitNormal": "Logit Normal",
@@ -436,11 +439,13 @@
       },
       "modelFamily": {
         "anima": "Anima",
-        "krea2": "Krea 2"
+        "krea2": "Krea 2",
+        "moss": "MOSS-Image"
       }
     },
     "disableHints": {
       "learning_rate": "Prodigy controls the learning rate",
+      "optimizer_type": "Riemann LoRA and the Riemannion optimizer can only be used together",
       "lr_scheduler": "Adaptive optimizers use a constant learning rate",
       "timestep_sampling": "InfoNoise controls timestep sampling",
       "timestep_shift": "InfoNoise controls timestep sampling",
@@ -472,7 +477,7 @@
       "caption_comfy_encoding": "Encode captions the ComfyUI way (same pipeline as test generation; recommended)",
       "cache_latents": "Cache VAE latents to speed up training",
       "vae_cache_batch_size": "VAE latent cache encoding batch size; 0 = follow training batch size, set to 1 if VRAM is tight",
-      "lora_type": "Adapter algorithm. lora: classic low-rank, general purpose (default); lokr: Kronecker factorization, smallest parameter count; loha: Hadamard product, higher expressiveness but more parameters; ortho: orthogonal parameterization, very few trainable parameters, resists overfitting, suited to small-dataset character/subject training; tlora: rank shrinks as noise increases, built to prevent overfitting in single-/few-image subject personalization",
+      "lora_type": "Adapter algorithm. lora: classic low-rank, general purpose (default); lokr: Kronecker factorization, smallest parameter count; loha: Hadamard product, higher expressiveness but more parameters; ortho: orthogonal parameterization, very few trainable parameters, resists overfitting, suited to small-dataset character/subject training; riemann: fixed-rank manifold parameterization (only with the riemannion optimizer, saved as a plain LoRA); tlora: rank shrinks as noise increases, built to prevent overfitting in single-/few-image subject personalization",
       "lora_rank": "Rank: larger = more capacity but higher parameter/VRAM cost and overfit risk; smaller = leaner but underfits more easily. Common 8/16/32/64",
       "lora_alpha": "Alpha: LoRA scaling factor; larger = stronger LoRA effect. Usually equal to rank; when rs_lora is enabled, often set to √rank",
       "lokr_factor": "LoKr factorization factor: larger = stronger compression, fewer parameters; smaller = more parameters. Default 8 suits most cases",
@@ -496,7 +501,7 @@
       "lr_scheduler_t_mult": "cosine_with_restart cycle-length multiplier relative to the previous cycle (>1 = lengthening cycles)",
       "lr_scheduler_eta_min": "LR decay floor for cosine schedules; should be much smaller than the initial lr (e.g. 1e-6 for an initial lr of 1e-4)",
       "lr_scheduler_warmup_steps": "cosine_with_warmup warmup steps",
-      "optimizer_type": "Optimizer. adamw is the baseline; automagic adapts per-parameter lr (recommend lr=1e-6); came uses confidence-guided factored second moments (less state VRAM than AdamW, lr at AdamW scale); lion uses ~half the state of AdamW (recommend lr = AdamW lr / 3); prodigy / prodigy_plus_schedulefree self-estimate lr (fill 1.0)",
+      "optimizer_type": "Optimizer. adamw is the baseline; automagic adapts per-parameter lr (recommend lr=1e-6); came uses confidence-guided factored second moments (less state VRAM than AdamW, lr at AdamW scale); lion uses ~half the state of AdamW (recommend lr = AdamW lr / 3); muon orthogonalizes momentum with Newton-Schulz (2D weights only, other params use AdamW; ~half the state of AdamW, lr at AdamW scale); prodigy / prodigy_plus_schedulefree self-estimate lr (fill 1.0); riemannion is Muon on the fixed-rank manifold (only with lora_type=riemann, lr acts on ΔW directly)",
       "prodigy_d_coef": "Overall scaling coefficient on Prodigy's estimated d; larger = larger effective lr. Raise (2.0+) when underfitting; lower (0.5) when overfitting or on small datasets",
       "prodigy_safeguard_warmup": "Prevent d from being inflated by early high gradients during Prodigy warmup; default on for stability",
       "came_beta1": "CAME β1 (update momentum EMA decay)",
@@ -505,6 +510,10 @@
       "came_eps1": "CAME eps1 (second-moment regularizer, prevents division by zero)",
       "came_eps2": "CAME eps2 (instability floor; larger values flatten per-coordinate confidence differences and shrink the overall step)",
       "came_clip_threshold": "CAME update RMS clipping threshold (same as Adafactor's d)",
+      "muon_momentum": "Muon momentum coefficient (Nesterov)",
+      "muon_ns_steps": "Muon Newton-Schulz orthogonalization iterations",
+      "muon_adjust_lr": "How Muon scales lr by matrix shape (match_rms_adamw matches AdamW update size, so the AdamW lr carries over; original is Keller's version and needs its own lr)",
+      "riemannion_momentum": "Riemannion heavy-ball momentum coefficient",
       "lion_beta1": "Lion β1 (momentum interpolation coefficient)",
       "lion_beta2": "Lion β2 (momentum accumulation coefficient)",
       "automagic_min_lr": "Automagic per-parameter learning-rate floor",
@@ -1024,7 +1033,6 @@
     "tabSystem": "System",
     "credHuggingface": "HuggingFace",
     "credModelscope": "ModelScope",
-    "credentialsIntro": "All service tokens and API keys in one place. Endpoints / sources stay in their own pages.",
     "proxy": {
       "sectionTitle": "Booru Proxy",
       "enableLabel": "Enable Proxy",
@@ -1035,7 +1043,6 @@
       "httpsDesc": "Usually the same as HTTP proxy",
       "noProxyLabel": "No Proxy List",
       "noProxyDesc": "Comma-separated hostnames or IPs, e.g. localhost,127.0.0.1,.internal.com",
-      "tipsTitle": "💡 Tips:",
       "tips1": "Proxy configuration takes effect immediately after saving, no service restart required.",
       "tips2": "If proxy requires authentication, use the format http://user:pass@host:port.",
       "tips3": "Leaving a proxy type (e.g., HTTPS) empty will fall back to using the HTTP proxy address."
@@ -1122,7 +1129,7 @@
       "startMigrate": "Start migration",
       "restartNow": "Restart now",
       "modelsRootLabel": "Models root directory",
-      "modelsRootHelp": "Stores downloaded model weights (Anima / Krea 2 / VAE / text encoders / tokenizers / WD14, etc.), defaulting to models/ under the app root. Changing it copies existing weights into a models/ subfolder of the chosen directory and takes effect immediately (no restart); original data is kept.",
+      "modelsRootHelp": "Stores downloaded model weights (Anima / Krea 2 / MOSS-Image / VAE / text encoders / tokenizers / WD14, etc.), defaulting to models/ under the app root. Changing it copies existing weights into a models/ subfolder of the chosen directory and takes effect immediately (no restart); original data is kept.",
       "modelsMigrateTitle": "Migrate models root",
       "modelsKeepOriginalNote": "Data at the original location is kept, not deleted. Takes effect immediately after copying — no restart needed.",
       "modelsDoneNote": "Switched to the new models root, effective immediately (no restart). The original data is kept; delete it yourself once verified.",
@@ -1253,6 +1260,7 @@
     "repoHelp": "{{desc}}. Repo: <code>{{repo}}</code>",
     "animaModels": "Anima models",
     "krea2Models": "Krea2 models",
+    "mossModels": "MOSS-Image models",
     "modelsRoot": "Model root (models_root)",
     "savePathConfig": "Save path config",
     "notModified": "Not modified",
@@ -1284,6 +1292,7 @@
     "downloadLogs": "Download logs ({{n}})",
     "partialFiles": "Partial ({{exists}}/{{total}})",
     "notDownloaded": "Not downloaded",
+    "notDownloadedWithSize": "Not downloaded · ~{{size}}",
     "downloadAction": "⤓ Download",
     "upscalersPreprocess": "Upscalers (preprocess)",
     "headDetectorTitle": "Head detector (automatic masks)",
@@ -1321,12 +1330,16 @@
     "hfCustomHint": "Paste self-hosted proxy / sjtug / Tencent mirror, etc.",
     "modelDescriptions": {
       "animaMain": "Cosmos transformer (~4 GB)",
-      "animaVae": "qwen_image_vae shared by Anima / Krea2 (~250 MB)",
-      "qwen3": "Text encoder (~1.2 GB)",
+      "animaVae": "qwen_image_vae shared by Anima / Krea2",
+      "qwen3": "Text encoder",
       "t5Tokenizer": "3 tokenizer files including spiece.model (no weights)",
       "krea2Main": "Raw training base / Turbo inference base (~26.3 GB each)",
-      "krea2TextEncoder": "Natural-language text encoder (~8.89 GB)",
-      "krea2TextEncoderFp8": "Official fp8-quantized text encoder (~5.24 GB) — optional for test generation, roughly halves weight VRAM",
+      "krea2TextEncoder": "Natural-language text encoder",
+      "krea2TextEncoderFp8": "Official fp8-quantized text encoder, optional for test generation, roughly halves weight VRAM",
+      "mossMain": "Base / SFT, each in bf16 (10.2 GB) and int8 convrot (5.4 GB, roughly halves weight VRAM)",
+      "mossTextEncoderInt8": "int8 convrot text encoder, the same file the ComfyUI community uses",
+      "mossTextEncoderBf16": "Official bf16 text encoder",
+      "mossVae": "FLUX.2 VAE",
       "wd14": "SmilingWolf ONNX tagging models",
       "cltagger": "cella110n CLTagger ONNX"
     },
@@ -1361,7 +1374,6 @@
     "cudaPackageHint": "NVIDIA GPU; best on Linux. On Windows, switch to DirectML if it silently falls back to CPU.",
     "directmlPackageHint": "DX12 backend, bypasses CUDA/cuDNN compatibility issues, vendor-agnostic (NVIDIA/AMD/Intel).",
     "cpuPackageHint": "Fallback; use when no GPU or the other two cannot install.",
-    "onnxForceHint": "If unsure, use “auto-detect” above.",
     "confirmRegisterTorch": "A torch reinstall request will be registered ({{tag}} build).\nAfter submitting, press Ctrl+C to close Studio and rerun studio.bat — torch will be installed on startup (~3 GB, 5-30 minutes). Continue?",
     "registerRequest": "Register request",
     "loadFailedShort": "Load failed",
@@ -1376,7 +1388,6 @@
     "installing": "Installing...",
     "reinstallCudaBuild": "Reinstall as CUDA build ({{tag}})",
     "reinstallAuto": "Reinstall (auto {{tag}})",
-    "manualCudaHint": "Choose based on your driver / preference; auto is usually fine. The wrong version may fail on import and require choosing again.",
     "installCpuBuildHint": "Install CPU build (very slow; diagnostics / no GPU only)",
     "installCudaBuildHint": "Install {{tag}} build (PyTorch index: /whl/{{tag}})",
     "confirmInstallFlashAuto": "The best matching flash_attn wheel will be selected from GitHub Releases and installed.\nPackage installation takes a few minutes; restart Studio after installation. Continue?",
@@ -1445,7 +1456,7 @@
     "vramPolicy": {
       "title": "VRAM policy",
       "label": "Test generation VRAM policy",
-      "help": "How the text encoder and DiT share VRAM during test generation (krea2). Each task pre-encodes all of its prompts into a cache first. Default: release the text encoder right after pre-encoding (zero residency during sampling); switching to a new prompt later reloads it from disk (~3s). Save VRAM: additionally force models to yield to each other during encoding — lowest peak (fp8 base models run on 16GB GPUs). Performance: keep the text encoder resident the whole time — zero wait on prompt changes, suited to large-VRAM GPUs.",
+      "help": "How the text encoder and DiT share VRAM during test generation (Krea 2 / MOSS-Image). Each task pre-encodes all of its prompts into a cache first. Default: release the text encoder right after pre-encoding (zero residency during sampling); switching to a new prompt later reloads it from disk (~3s). Save VRAM: additionally force models to yield to each other during encoding — lowest peak (fp8 base models run on 16GB GPUs). Performance: keep the text encoder resident the whole time — zero wait on prompt changes, suited to large-VRAM GPUs.",
       "optAuto": "Default (release after use)",
       "optSaveVram": "Save VRAM",
       "optPerformance": "Performance (resident)",
@@ -1456,16 +1467,17 @@
       "blocksToSwapLabel": "Block swap",
       "blocksToSwapSuffix": "layers",
       "blocksToSwapOffHint": "off",
-      "blocksToSwapHelp": "Keeps the weights of the last N DiT layers in system RAM, moving each one onto the GPU only when it is that layer's turn and releasing it right after. This is a different job from VRAM policy: that one decides which model yields to which, this one works inside a single model — when one model alone does not fit in VRAM, this is the only way. The cost is that every sampling step has to move all swapped layers again, so more steps means more total time. Needs an equal amount of free RAM (Krea 2: about 0.4GB per layer for an fp8 base model, 0.8GB for bf16; Anima: about 0.13GB per layer), and that RAM is locked so other programs cannot use it. The layer count comes from the base model file (shown as \"N layers\" in the base model list); values above the layer count swap out everything (0 = off). Start around 14 if you are short on VRAM."
+      "blocksToSwapHelp": "Keeps the weights of the last N DiT layers in system RAM, moving each one onto the GPU only when it is that layer's turn and releasing it right after. This is a different job from VRAM policy: that one decides which model yields to which, this one works inside a single model — when one model alone does not fit in VRAM, this is the only way. The cost is that every sampling step has to move all swapped layers again, so more steps means more total time. Needs an equal amount of free RAM (Krea 2: about 0.4GB per layer for an fp8 base model, 0.8GB for bf16; Anima: about 0.13GB per layer; MOSS-Image: about 0.11GB per layer for an int8 base model, 0.21GB for bf16), and that RAM is locked so other programs cannot use it. The layer count comes from the base model file (shown as \"N layers\" in the base model list); values above the layer count swap out everything (0 = off). Start around 14 if you are short on VRAM."
     },
+    "familyVaeCardTitle": "{{family}} VAE",
+    "familyTeCardTitle": "{{family}} text encoder",
     "krea2TeCardTitle": "Krea 2 · Qwen3-VL text encoder",
+    "mossTeCardTitle": "MOSS-Image · Qwen3.5-9B text encoder",
     "deleteAsset": "Delete",
     "deleteAssetTitle": "Delete the downloaded files (re-download anytime)",
     "confirmDeleteAsset": "Delete the downloaded files of {{name}}? You can re-download anytime.",
     "assetDeleted": "Deleted: {{name}}",
     "teVariantSelected": "Text encoder switched: {{name}}",
-    "selectTeVariant": "Set as default text encoder (shared by training and test generation)",
-    "teVariantNotDownloaded": "Available after download completes",
     "vaePrecision": {
       "title": "Test generation precision",
       "label": "Test generation VAE precision",
@@ -1567,7 +1579,6 @@
     "viewFullLog": "View full log",
     "releasedAt": "Released at",
     "localChanges": "Local changes",
-    "topbarMasterOnly": "Topbar red dot + automatic checks only watch this channel.",
     "thisVersion": "This version",
     "lastCheck": "Last checked {{time}}",
     "checkUpdates": "Check updates",
@@ -1623,7 +1634,6 @@
     "installedVersionLabel": "Installed:",
     "uncommittedChangesText": "uncommitted changes",
     "updateChannel": "Update channel:",
-    "channelUiOnly": "UI view only; git is unchanged",
     "versionInfoChannel": "Switching channels only changes the UI preference (git is unchanged); the actual “Switch to dev HEAD” / “Update to vX.Y.Z” actions are separate buttons",
     "versionInfoAutoCheck": "Automatic checks run every 24 hours and only watch the stable channel; switching to the dev channel does not affect the Topbar red dot",
     "versionInfoUpdateImpl": "Update / switch uses git reset --hard underneath and runs pip / npm install when needed",
@@ -1673,7 +1683,7 @@
     "xyFixedLoras": "Base LoRAs",
     "generateImageCount": "Generate {{count}} images",
     "xyLargeMatrixWarning": "Large matrix; generation may take a long time",
-    "xyFp8MergeWarning": "Krea2 FP8: changing both checkpoints and LoRA weight may re-merge every cell and will be significantly slower.",
+    "xyQuantizedMergeWarning": "Quantized base model (fp8 / int8): changing both checkpoints and LoRA weight may re-merge every cell and will be significantly slower.",
     "swapAxes": "Swap X/Y",
     "editAxis": "Edit {{label}} axis",
     "axisShort": "axis",
@@ -1804,9 +1814,24 @@
     "baseModel": "Base model",
     "baseModelHint": "Defaults to the main model selected in Settings; switch to another downloaded version for this run",
     "textEncoder": "Text encoder",
-    "textEncoderBf16": "bf16 (~8.9 GB)",
-    "textEncoderFp8": "fp8 (~5 GB, official quantization)",
-    "textEncoderFp8NotDownloaded": "fp8 — not downloaded (Settings → Models)",
+    "textEncoderVariant": {
+      "krea2": {
+        "bf16": "bf16 (~8.9 GB)",
+        "fp8": "fp8 (~5 GB, official quantization)"
+      },
+      "moss": {
+        "int8": "int8 (~9.8 GB, ComfyUI quantization)",
+        "bf16": "bf16 (~16.8 GB)"
+      }
+    },
+    "textEncoderNotDownloaded": "{{label}} — not downloaded (Settings → Models)",
+    "skipLayerGuidance": "Skip Layer Guidance",
+    "skipLayerGuidanceHelp": "The unconditional (negative) branch skips these DiT layers within the start–end window, matching ComfyUI's SkipLayerGuidanceDiTSimple. Layers are 0-based and comma-separated; leave empty to turn it off. Start and end are sampling progress (0 = first step, 1 = last). Default: layer 22 for the whole run (official pipeline).",
+    "skipLayers": "Skip layers",
+    "skipStart": "Start",
+    "skipEnd": "End",
+    "skipLayersInvalid": "Skip layers must be comma-separated non-negative integers (empty = off)",
+    "skipRangeInvalid": "Skip Layer Guidance start cannot be greater than end",
     "swapSizeTitle": "Swap width and height (landscape ↔ portrait)",
     "cancelCurrentTitle": "Cancel current task",
     "sharedGpu": "Shares GPU with training",
@@ -3521,7 +3546,9 @@
       "training": "training",
       "inference": "inference"
     },
-    "layers": "{{n}} layers"
+    "layers": "{{n}} layers",
+    "unsupportedQuant": "{{fmt}} quantized · unsupported",
+    "unsupportedQuantHint": "Quantized weights can't be used for training or generation; use the bf16 or fp8 release of the same model"
   },
   "lora": {
     "baseLayers": "Trained on a {{n}}-layer base",

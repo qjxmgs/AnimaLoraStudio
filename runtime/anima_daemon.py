@@ -47,6 +47,7 @@ for _p in (_THIS_DIR, _REPO_ROOT):
 import anima_train as _T  # noqa: E402
 
 from studio.domain.comfy_parity import force_comfy_parity_runtime_config  # noqa: E402
+from studio.domain.generate import skip_layer_guidance_kwargs  # noqa: E402
 from studio.services.inference.core import (  # noqa: E402
     DeferredVAE,
     LoRAMeta,
@@ -125,9 +126,19 @@ def _keep_third_party_logs_off_stdout(
 _keep_third_party_logs_off_stdout()
 
 _GIB = 1024 ** 3
-_TE_LOAD_FALLBACK_FP8 = 7 * _GIB
+#: 文本栈未声明 ``te_load_bytes_estimate`` 时的 TE 上卡增量兜底
 _TE_LOAD_FALLBACK_FULL = 11 * _GIB
 _TE_ENCODE_FALLBACK = 2 * _GIB
+
+
+def _uses_te_first(family: Any) -> bool:
+    """该族是否走 TE 先行编排（先就绪文本栈 → 预编码 → 释放 → 才加载 DiT）。
+
+    判据是文本策略而非族名：``cached_varlen`` 的文本栈是独立大模型（Krea2 的
+    Qwen3-VL、MOSS 的 Qwen3.5-9B），带在线 LRU / precache / release；Anima 的
+    ``online`` 栈是小 TE 常驻，走全家桶加载。
+    """
+    return family.spec.text.strategy == "cached_varlen"
 
 
 # ---------------------------------------------------------------------------
@@ -489,7 +500,8 @@ class ModelCache:
             cfg, force_exact_ksampler_backend=False,
         )
         family_id = str(cfg.get("model_family") or "anima")
-        if family_id != "krea2":
+        family = _T.get_family(family_id)
+        if not _uses_te_first(family):
             return
         repo_root = _T.find_diffusion_pipe_root()
         bases = [Path.cwd(), _THIS_DIR, repo_root]
@@ -501,7 +513,6 @@ class ModelCache:
             return
         device = "cuda" if torch.cuda.is_available() else "cpu"
         dtype = _torch_dtype_from_precision(cfg.get("mixed_precision", "bf16"))
-        family = _T.get_family(family_id)
         logger.info(msg("model.load_text_encoder_ahead", path=text_encoder_path))
         self.text_stack = family.load_text(
             text_encoder_path, device, dtype,
@@ -651,10 +662,10 @@ class ModelCache:
             label=f"VAE {vae_path}",
         )
 
-        # 族 opaque 文本栈，不拆包。krea2 的 TE 先行栈（ensure_text_ready）
+        # 族 opaque 文本栈，不拆包。TE 先行族（ensure_text_ready）的文本栈
         # 已就绪且身份匹配时复用——保住预编码 LRU，不重复加载。
         if (
-            family_id == "krea2"
+            _uses_te_first(family)
             and self.text_stack is not None
             and self._text_ready_key == (family_id, text_encoder_path)
         ):
@@ -679,9 +690,11 @@ class ModelCache:
             from training.block_swap import PinnedBlockSwap
 
             # clamp 到总层数：全局设置值跨族/跨版本共享（krea2 28 层、anima
-            # 层数由 checkpoint 决定），超界按全量换出处理而非 fail（训练侧同口径）
+            # 层数由 checkpoint 决定、moss 42 层），超界按全量换出处理而非 fail
+            # （训练侧同口径）。层容器经族接口取（blocks / layers）
+            blocks = family.dit_blocks(model)
             self.block_swap = PinnedBlockSwap(
-                model.blocks, min(blocks_to_swap, len(model.blocks)), device,
+                blocks, min(blocks_to_swap, len(blocks)), device,
             )
             self.block_swap.attach()
 
@@ -891,7 +904,14 @@ class ModelCache:
 
     def _move_dit_and_adapters(self, device: str) -> None:
         """Move only the sampling model side; leave TE/VAE orchestration alone."""
-        _move_module_to_device(self.model, device)
+        if self.block_swap is not None:
+            # 同 _move_runtime_to_device：换出层归 swap 管，一刀切 .to(cuda) 会把
+            # CPU pinned 主副本整份传上卡（让位后搬回时峰值 = 完整模型）
+            from training.block_swap import move_module_excluding
+
+            move_module_excluding(self.model, device, self.block_swap)
+        else:
+            _move_module_to_device(self.model, device)
         for adapter in self.adapters:
             _move_adapter_to_device(adapter, device, self.lora_dtype)
         if torch.cuda.is_available():
@@ -1073,10 +1093,12 @@ def _precache_prompts_and_release(
     else:
         if te_resident:
             te_increment = _TE_ENCODE_FALLBACK
-        elif getattr(CACHE.text_stack, "is_fp8_storage", False):
-            te_increment = _TE_LOAD_FALLBACK_FP8
         else:
-            te_increment = _TE_LOAD_FALLBACK_FULL
+            # 文本栈按自身存储形态声明上卡增量（Krea2 fp8 / bf16、MOSS int8 / bf16）
+            te_increment = int(
+                getattr(CACHE.text_stack, "te_load_bytes_estimate", 0)
+                or _TE_LOAD_FALLBACK_FULL
+            )
         estimate_source = "fallback"
 
     yielded_dit = False
@@ -1171,9 +1193,9 @@ def _precache_prompts_and_release(
 
 
 def _begin_initial_te_peak_calibration(cfg: dict[str, Any]) -> int | None:
-    """Start measuring the first Krea2 TE load before ``CACHE.device`` exists."""
+    """Start measuring the first TE-first load before ``CACHE.device`` exists."""
     if (
-        str(cfg.get("model_family") or "anima") != "krea2"
+        not _uses_te_first(_T.get_family(str(cfg.get("model_family") or "anima")))
         or CACHE.model is not None
         or not torch.cuda.is_available()
     ):
@@ -1565,6 +1587,8 @@ def _run_generate(
     # 蒸馏推理底模（Krea2 Turbo）：studio 按 catalog variant purpose 检测后注入；
     # anima family 接受并忽略
     distilled: bool = bool(cfg.get("distilled", False))
+    # 族条件采样旋钮（SLG）：config 校验已保证只有声明能力位的族带值
+    sampling_extras = skip_layer_guidance_kwargs(cfg)
 
     # phase 上报：加载模型/LoRA 阶段（clip/sample/vae 由 sample_image 内部报）→ 进度条覆盖全流程
     _emit_for(req_id, "phase", name="load")
@@ -1644,6 +1668,7 @@ def _run_generate(
                             phase_callback=_phase_cb,
                             seed=seed,
                             vram_policy=vram_policy,
+                            **sampling_extras,
                         )
 
                     img = _sample_with_cuda_oom_retry(
@@ -1719,9 +1744,10 @@ def _run_xy(
     # 状态连续跑完 Y，Y 轴变化时保持原有 Y 外层；两轴都变化时保持稳定顺序。
     fp8_model = False
     if CACHE.model is not None:
-        from training.families.krea2.quant_fp8 import model_has_fp8_layers
+        # fp8（Krea2）/ int8（MOSS）量化底模都走 merge
+        from studio.services.inference.core import model_uses_lora_merge
 
-        fp8_model = model_has_fp8_layers(CACHE.model)
+        fp8_model = model_uses_lora_merge(CACHE.model)
 
     if base_seed == 0:
         base_seed = secrets.randbelow(2**31 - 1) + 1
@@ -1801,6 +1827,7 @@ def _run_xy(
                         dtype=CACHE.dtype,
                         seed=cur_seed,
                         vram_policy=vram_policy,
+                        **skip_layer_guidance_kwargs(cfg),
                     )
 
                 img = _sample_with_cuda_oom_retry(

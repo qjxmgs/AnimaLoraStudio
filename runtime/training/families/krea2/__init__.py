@@ -7,6 +7,8 @@ from typing import Any, Iterable
 
 import torch
 
+from ...block_swap import find_block_swap, move_module_excluding
+
 from .preset import KREA2_PRESET
 from .sampling import (
     KREA2_BASE_IMAGE_SEQ_LEN,
@@ -151,6 +153,10 @@ class Krea2Family:
             path, device, dtype, purpose=purpose, blocks_to_swap=blocks_to_swap,
         )
 
+    def dit_blocks(self, model):
+        """DiT 的同构层序列（block swap 按它换出末尾 N 层）。"""
+        return model.blocks
+
     def swapped_param_ratio(self, blocks_to_swap: int, *,
                             checkpoint_path: str | None = None) -> float:
         """换出层占全模型参数的比例（显存预算折扣用；见 loader 同名函数）。
@@ -248,6 +254,7 @@ class Krea2Family:
         # 按需让位（comfy free_memory 语义）：编码需要把 TE 搬上 GPU 且
         # 装不下时，DiT 先撤 CPU；prompt 全部命中在线 LRU 则整体跳过。
         dit_yielded = False
+        swap = None
         if vram_policy is not None:
             needed = [prompt] + ([negative_prompt] if guidance > 0 else [])
             cached = getattr(text, "online_conditions_cached", None)
@@ -262,7 +269,11 @@ class Krea2Family:
             )
             if need_te_move and _should_yield_dit(vram_policy, device, te_need):
                 logger.debug("krea2: moving the Transformer to CPU before text encoding")
-                model.to("cpu")
+                # block swap 下换出层的权重归 PinnedBlockSwap 管（CPU pinned 主副本 +
+                # GPU 槽），一刀切 .to() 搬回时会把整份主副本传上卡、峰值回到完整
+                # 模型——只搬常驻部分。无 swap 时 swap=None，退化为 model.to()
+                swap = find_block_swap(model)
+                move_module_excluding(model, "cpu", swap)
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
                 dit_yielded = True
@@ -284,7 +295,7 @@ class Krea2Family:
             if callable(offload):
                 offload()
         if dit_yielded:
-            model.to(torch.device(device))
+            move_module_excluding(model, torch.device(device), swap)
             logger.debug("krea2: Transformer moved back to GPU after text encoding")
         return sample_image(
             model,

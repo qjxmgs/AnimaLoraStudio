@@ -24,9 +24,11 @@ from ...infrastructure.event_bus import bus
 from .families.anima import (
     ANIMA_REPO,
     ANIMA_VAE_PATH,
+    ANIMA_VAE_SIZE_MB,
     ANIMA_VARIANT_BY_KEY,
     ANIMA_VARIANTS,
     LATEST_ANIMA,
+    QWEN3_SIZE_GB,
     QWEN_FILES,
     QWEN_REPO,
     T5_FILES,
@@ -43,12 +45,26 @@ from .families.krea2 import (
     QWEN3_VL_FILES,
     QWEN3_VL_FP8_FILE,
     QWEN3_VL_FP8_REPO,
+    QWEN3_VL_FP8_SIZE_GB,
     QWEN3_VL_FP8_SMALL_FILES,
     QWEN3_VL_FP8_SUBPATH,
     QWEN3_VL_REPO,
+    QWEN3_VL_SIZE_GB,
     krea2_main_target,
     qwen3_vl_dir,
     qwen3_vl_fp8_dir,
+)
+from .families.moss import (
+    COMFY_REPO as MOSS_COMFY_REPO,
+    LATEST_MOSS,
+    MOSS_TE_SIZE_GB,
+    MOSS_TE_VARIANTS,
+    MOSS_VAE_SIZE_MB,
+    MOSS_VARIANTS,
+    VAE_SUBPATH as MOSS_VAE_SUBPATH,
+    moss_main_target,
+    moss_te_dir,
+    te_download_files as moss_te_download_files,
 )
 from .paths import (
     CLTAGGER_VERSIONS,
@@ -71,6 +87,7 @@ from .paths import (
     head_detector_custom_target,
     head_detector_dir,
     head_detector_target,
+    flux2_vae_target,
     models_root,
     qwen_image_vae_target,
     selected_upscaler,
@@ -89,10 +106,6 @@ logger = logging.getLogger(__name__)
 
 #: 手跑 / 无人传 on_log 时的兜底：走本模块 logger（终端 INFO 可见，不再裸 print）。
 _DEFAULT_LOG = TaskLog(logger)
-
-#: 头行里的体积估算（GB）：与 variant 元数据脱钩的硬编码在这里集中一次
-QWEN3_VL_SIZE_GB = 8.89
-QWEN3_VL_FP8_SIZE_GB = 5.24
 
 
 def _size_gb(info: Any, *, default: float) -> str:
@@ -299,7 +312,7 @@ def download_anima_main(
 def download_anima_vae(root: Path, *, on_log: TaskLogLike = _DEFAULT_LOG) -> bool:
     # 落点是族无关共享资产（Krea2 同用）；下载渠道走 Anima repo（文件在那儿）。
     target = qwen_image_vae_target(root)
-    on_log(msg("download.anima_vae", size=250, target=target))
+    on_log(msg("download.anima_vae", size=ANIMA_VAE_SIZE_MB, target=target))
     if _sources._source_for("training") == "modelscope":
         return _sources.download_flat_ms(ANIMA_REPO, ANIMA_VAE_PATH, target, on_log=on_log)
     return _sources.download_flat(ANIMA_REPO, ANIMA_VAE_PATH, target, on_log=on_log)
@@ -390,6 +403,74 @@ def download_qwen3_vl_fp8(
     return ok
 
 
+def download_moss_main(
+    root: Path, variant: str, *, on_log: TaskLogLike = _DEFAULT_LOG
+) -> bool:
+    """从 Comfy-Org/MOSS-Image（HF / ModelScope 同名）下载 MOSS-Image 主权重单文件。"""
+    if variant == "latest":
+        variant = LATEST_MOSS
+    info = MOSS_VARIANTS.get(variant)
+    if info is None:
+        as_task_log(on_log).error(
+            "unknown MOSS-Image variant %r; nothing was downloaded — pick a "
+            "variant from the model list", variant,
+        )
+        return False
+    target = moss_main_target(root, variant)
+    on_log(msg(
+        "download.moss_base", variant=variant,
+        size=f"{float(info.get('size_estimate', 0)) / 1e9:.1f}", target=target,
+    ))
+    if _sources._source_for("training") == "modelscope":
+        return _sources.download_flat_ms(
+            str(info["ms_repo"]), str(info["ms_subpath"]), target, on_log=on_log,
+        )
+    return _sources.download_flat(
+        str(info["repo"]), str(info["subpath"]), target, on_log=on_log,
+    )
+
+
+def download_moss_te(
+    root: Path, variant: str, *, on_log: TaskLogLike = _DEFAULT_LOG
+) -> bool:
+    """下载一个 MOSS TE variant 到它的目录：权重 + 官方仓库的 config / tokenizer 小文件。
+
+    int8 权重来自 Comfy-Org 单文件，bf16 是官方 ``text_encoder/`` 分片；小文件都来自
+    官方仓库（ModelScope 上的 id 不同，见 families.moss.OFFICIAL_MS_REPO）。
+    """
+    if variant not in MOSS_TE_VARIANTS:
+        as_task_log(on_log).error(
+            "unknown MOSS text encoder variant %r; nothing was downloaded", variant,
+        )
+        return False
+    target_dir = moss_te_dir(root, variant)
+    target_dir.mkdir(parents=True, exist_ok=True)
+    use_ms = _sources._source_for("training") == "modelscope"
+    on_log(msg(
+        "download.moss_te", variant=variant, size=MOSS_TE_SIZE_GB[variant],
+        source="ModelScope" if use_ms else "HuggingFace", target=target_dir,
+    ))
+    ok = True
+    for item in moss_te_download_files(variant):
+        target = target_dir / item["filename"]
+        if use_ms:
+            done = _sources.download_flat_ms(item["ms_repo"], item["subpath"], target, on_log=on_log)
+        else:
+            done = _sources.download_flat(item["repo"], item["subpath"], target, on_log=on_log)
+        if not done:
+            ok = False
+    return ok
+
+
+def download_moss_vae(root: Path, *, on_log: TaskLogLike = _DEFAULT_LOG) -> bool:
+    """FLUX.2 VAE：落点是族无关共享资产（flux2_vae_target），渠道走 Comfy-Org/MOSS-Image。"""
+    target = flux2_vae_target(root)
+    on_log(msg("download.moss_vae", size=MOSS_VAE_SIZE_MB, target=target))
+    if _sources._source_for("training") == "modelscope":
+        return _sources.download_flat_ms(MOSS_COMFY_REPO, MOSS_VAE_SUBPATH, target, on_log=on_log)
+    return _sources.download_flat(MOSS_COMFY_REPO, MOSS_VAE_SUBPATH, target, on_log=on_log)
+
+
 def download_qwen3(root: Path, *, on_log: TaskLogLike = _DEFAULT_LOG) -> bool:
     """下载文本编码器（Qwen3）。
 
@@ -418,7 +499,7 @@ def download_qwen3(root: Path, *, on_log: TaskLogLike = _DEFAULT_LOG) -> bool:
                 ok = False
         return ok
 
-    on_log(msg("download.anima_te_hf", size=1.2, target=target_dir))
+    on_log(msg("download.anima_te_hf", size=QWEN3_SIZE_GB, target=target_dir))
     for f in QWEN_FILES:
         if not _sources.download_flat(QWEN_REPO, f, target_dir / f, on_log=on_log):
             ok = False
@@ -944,6 +1025,16 @@ def delete_asset(model_id: str, variant: Optional[str] = None) -> None:
         target = qwen3_vl_dir(root)
     elif model_id == "krea2_text_encoder_fp8":
         target = qwen3_vl_fp8_dir(root)
+    elif model_id == "moss_main":
+        v = variant or ""
+        if v not in MOSS_VARIANTS:
+            raise ValueError(f"unknown MOSS-Image variant {variant!r}")
+        key = f"moss_main:{v}"
+        target = moss_main_target(root, v)
+    elif model_id.startswith("moss_text_encoder_") and model_id[len("moss_text_encoder_"):] in MOSS_TE_VARIANTS:
+        target = moss_te_dir(root, model_id[len("moss_text_encoder_"):])
+    elif model_id == "moss_vae":
+        target = flux2_vae_target(root)
     elif model_id == "wd14":
         if not variant:
             raise ValueError("wd14 需要 variant=model_id")
@@ -1080,6 +1171,32 @@ def trigger(model_id: str, variant: Optional[str] = None) -> str:
         key = "krea2_text_encoder_fp8"
         start_download_async(
             key, lambda log: download_qwen3_vl_fp8(root, on_log=log)
+        )
+        return key
+    if model_id == "moss_main":
+        v = variant or "latest"
+        if v == "latest":
+            v = LATEST_MOSS
+        if v not in MOSS_VARIANTS:
+            raise ValueError(f"unknown MOSS-Image variant {variant!r}")
+        key = f"moss_main:{v}"
+        start_download_async(
+            key, lambda log: download_moss_main(root, v, on_log=log)
+        )
+        return key
+    if model_id.startswith("moss_text_encoder_"):
+        te_variant = model_id[len("moss_text_encoder_"):]
+        if te_variant not in MOSS_TE_VARIANTS:
+            raise ValueError(f"unknown MOSS text encoder {model_id!r}")
+        key = model_id
+        start_download_async(
+            key, lambda log: download_moss_te(root, te_variant, on_log=log)
+        )
+        return key
+    if model_id == "moss_vae":
+        key = "moss_vae"
+        start_download_async(
+            key, lambda log: download_moss_vae(root, on_log=log)
         )
         return key
     if model_id == "qwen3":

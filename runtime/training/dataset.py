@@ -17,6 +17,7 @@ NaViT / Patch-n-Pack 块对角打包（Phase 2 数据层）：
 
 from __future__ import annotations
 
+import itertools
 import logging
 import math
 import random
@@ -41,6 +42,26 @@ LATENT_CACHE_LAYOUT_VERSION = 1
 #: 无指纹键的存量缓存 grandfather 值：历史上只有 Wan21/Qwen-Image 这一个 VAE
 #: 产出过缓存（04-synthesis D12），避免升级即全量重 encode。
 _LEGACY_CACHE_FINGERPRINT = "wan21-f8c16"
+
+
+def _npz_leading_dim(data, key: str):
+    """只读 npz 内 ``{key}.npy`` 的头部取第 0 维（latent 的通道数），不加载数组本体；
+    读不出返回 None（不作为失效依据）。"""
+    import numpy as np
+
+    try:
+        with data.zip.open(f"{key}.npy") as handle:
+            version = np.lib.format.read_magic(handle)
+            read_header = {
+                (1, 0): np.lib.format.read_array_header_1_0,
+                (2, 0): np.lib.format.read_array_header_2_0,
+            }.get(version)
+            if read_header is None:
+                return None
+            shape, _, _ = read_header(handle)
+        return int(shape[0]) if shape else None
+    except Exception:  # noqa: BLE001
+        return None
 
 
 logger = logging.getLogger(__name__)
@@ -263,7 +284,8 @@ class ImageDataset(Dataset):
                  resolutions=None, aspect_ratio_limit=2.0,
                  native_resolution=False, native_token_budget=0,
                  native_over_budget="downscale", native_max_side_tokens=0,
-                 native_align=_ANIMA_LATENT.align_px, load_masks=False):
+                 native_align=_ANIMA_LATENT.align_px, native_text_tokens=None,
+                 load_masks=False):
         self.data_dir = Path(data_dir)
         self.resolution = resolution
         # 多分辨率：bucket_mgr 是 base 分辨率的 manager（向后兼容，单一 ARB 路径仍走它，
@@ -282,6 +304,10 @@ class ImageDataset(Dataset):
         self.native_over_budget = str(native_over_budget or "downscale").lower()
         self.native_max_side_tokens = int(native_max_side_tokens or 0)
         self.native_align = int(native_align or _ANIMA_LATENT.align_px)
+        # caption → 文本 token 数：文本与图像同在一条序列的族（MOSS）传入，原生定尺寸
+        # 时从预算里先扣掉这张图的文本，免得 downscale 到满预算后再加文本必然超限
+        self.native_text_tokens = native_text_tokens
+        self._native_text_reserve: dict[str, int] = {}
         if self.native_resolution and len(self.resolutions) > 1:
             logger.warning(
                 "[navit] Extra resolutions ignored: %s — native resolution mode "
@@ -387,23 +413,43 @@ class ImageDataset(Dataset):
                     except Exception:
                         dims[path] = None
                 wh = dims[path]
-                by_key[key] = self._target_size_for(*wh, target_reso=target_reso) if wh else None
+                by_key[key] = (
+                    self._target_size_for(*wh, target_reso=target_reso, image=path) if wh else None
+                )
             out.append(by_key[key])
         return out
 
-    def _target_size_for(self, img_w, img_h, target_reso=None):
+    def _native_image_budget(self, image) -> int:
+        """原生定尺寸的图像 token 上限：给了 ``native_text_tokens`` 时扣掉这张图的文本 token。
+
+        同一张图的 caption 唯一（text-cache 预扫会校验），按图片路径缓存。
+        """
+        budget = self.native_token_budget
+        if budget <= 0 or self.native_text_tokens is None or image is None:
+            return budget
+        key = str(image)
+        if key not in self._native_text_reserve:
+            by_image = {str(s["image"]): s for s in self.samples}
+            for path, sample in by_image.items():
+                if path not in self._native_text_reserve:
+                    caption = self.caption_for_sample(sample)
+                    self._native_text_reserve[path] = int(self.native_text_tokens(caption))
+            self._native_text_reserve.setdefault(key, 0)
+        return max(1, budget - self._native_text_reserve[key])
+
+    def _target_size_for(self, img_w, img_h, target_reso=None, image=None):
         """单张图的目标像素尺寸 ``(tw, th)``（16 整倍数），供定尺寸/缓存校验共用一条口径。
 
         - ``native_resolution=False``（默认）：走 ARB 桶 ``_bucket_mgr_for(target_reso).get_bucket``；
           该档不分桶（base 方桶，``bucket_mgr=None``）→ 返回 ``None``（调用方退回方桶语义）。
           与改动前逐字节等价。
         - ``native_resolution=True``：走 ``plan_native_fit_image``（原生 floor-16 + 超预算 downscale），
-          完全忽略 ``target_reso`` 与桶。
+          完全忽略 ``target_reso`` 与桶。``image``（图片路径）用于按该图文本 token 预留预算。
         """
         if self.native_resolution:
             plan = plan_native_fit_image(
                 img_w, img_h,
-                max_tokens=self.native_token_budget,
+                max_tokens=self._native_image_budget(image),
                 max_side_tokens=self.native_max_side_tokens,
                 align=self.native_align,
                 over_budget=self.native_over_budget,
@@ -789,7 +835,7 @@ class ImageDataset(Dataset):
         # 目标尺寸：ARB 桶（native 关）或原生 floor-16 定尺寸（native 开）。统一走
         # _target_size_for；返回 None（base 方桶不分桶档）时退回 target_reso 方桶。
         target_reso = sample.get("target_reso")
-        size = self._target_size_for(img.width, img.height, target_reso)
+        size = self._target_size_for(img.width, img.height, target_reso, image=sample["image"])
         if size is not None:
             tw, th = size
         else:
@@ -910,6 +956,7 @@ class BucketBatchSampler:
         self.shuffle = bool(shuffle)
         self.seed = int(seed)
         self.epoch = 0
+        self._skip = 0
         self._cached_dataset = self._get_cached_dataset(dataset)
         self._base_len = len(self._cached_dataset) if self._cached_dataset else 0
 
@@ -922,6 +969,15 @@ class BucketBatchSampler:
 
     def set_epoch(self, epoch):
         self.epoch = int(epoch)
+
+    def skip_batches(self, n):
+        """下一次迭代跳过本 epoch 前 n 个 batch（只生效一次）。
+
+        epoch 中途的 step 恢复点续训用：顺序由 seed+epoch 决定，跳过发生在索引层，
+        被跳过的样本不经过 ``__getitem__``，不消耗增广（flip / caption shuffle）的
+        随机数，恢复后的数据流与不中断时逐 batch 一致。``__len__`` 仍是整 epoch。
+        """
+        self._skip = max(0, int(n))
 
     def __len__(self):
         # ARB 下实际 batch 数 = Σ_bucket f(n_b, bs)；用全局 n 会偏（每桶各自有零头）。
@@ -947,6 +1003,10 @@ class BucketBatchSampler:
         return total
 
     def __iter__(self):
+        skip, self._skip = self._skip, 0
+        return itertools.islice(self._iter_batches(), skip, None)
+
+    def _iter_batches(self):
         rng = random.Random(self.seed + self.epoch)
         if self._cached_dataset is None:
             indices = list(range(len(self.dataset)))
@@ -1000,8 +1060,8 @@ class CachedLatentDataset(Dataset):
     键，自动重 encode 修复。
     """
 
-    #: latent 规格（指纹进缓存判据 / 写入）。类级默认 = Anima；__init__ 可覆盖，
-    #: PR-2b 起由 ctx.family.spec.latent 传入。
+    #: latent 规格（指纹与通道数进缓存判据 / 指纹写入）。类级默认 = Anima；训练由
+    #: phases/dataset 传入 ctx.family.spec.latent。
     latent_spec = _ANIMA_LATENT
 
     def __init__(self, base_dataset, vae, device, dtype, cache_dir=None, cache_batch_size=1,
@@ -1074,7 +1134,7 @@ class CachedLatentDataset(Dataset):
                 # 与 ImageDataset.get_with_flip 同一条定尺寸口径（桶 or 原生），保证缓存
                 # 校验尺寸 == 实际 encode 尺寸。native 下取原生 floor-16 尺寸。
                 if hasattr(base, "_target_size_for"):
-                    size = base._target_size_for(img.width, img.height, target_reso)
+                    size = base._target_size_for(img.width, img.height, target_reso, image=img_path)
                     if size is not None:
                         return size
                 elif hasattr(base, "_bucket_mgr_for"):
@@ -1140,14 +1200,19 @@ class CachedLatentDataset(Dataset):
                     if "layout_version" in data.files
                     else LATENT_CACHE_LAYOUT_VERSION
                 )
+                # 通道数兜底：曾经数据集没拿到族的 latent 规格，MOSS 编出的 32 通道
+                # 缓存被盖成 Anima 指纹（反之亦然）——只比指纹会把这类错标缓存当有效
+                cache_ch = _npz_leading_dim(data, "latent")
                 if (cache_fp != self.latent_spec.fingerprint
-                        or cache_ver != LATENT_CACHE_LAYOUT_VERSION):
+                        or cache_ver != LATENT_CACHE_LAYOUT_VERSION
+                        or (cache_ch is not None and cache_ch != self.latent_spec.channels)):
                     npz_path.unlink()
                     logger.debug(
                         "latent_cache: dropped stale entry file=%s cache_fp=%s "
-                        "cache_ver=%s want_fp=%s want_ver=%s",
-                        npz_path.name, cache_fp, cache_ver,
+                        "cache_ver=%s cache_ch=%s want_fp=%s want_ver=%s want_ch=%s",
+                        npz_path.name, cache_fp, cache_ver, cache_ch,
                         self.latent_spec.fingerprint, LATENT_CACHE_LAYOUT_VERSION,
+                        self.latent_spec.channels,
                     )
                     return False
                 if getattr(self, "flip_augment", False) and "latent_flipped" not in data.files:
@@ -1405,6 +1470,30 @@ class CachedLatentDataset(Dataset):
     def __len__(self):
         return len(self.samples)
 
+    def caption_for_index(self, idx) -> str:
+        """第 idx 个样本的 caption（与 ImageDataset / text-cache 预扫共用同一事实源）。"""
+        sample = self.samples[idx]
+        # 获取 base_dataset 的引用（处理可能的嵌套）
+        base = self.base_dataset
+        while hasattr(base, "dataset"):
+            base = base.dataset
+
+        if hasattr(base, "caption_for_sample"):
+            return base.caption_for_sample(sample)
+        # 非 ImageDataset 的第三方 wrapper：保留 Phase 2 前的 duck-type 行为
+        caption = None
+        if getattr(base, "caption_override", None) is not None:
+            caption = base.caption_override
+        elif sample.get("json_path") and hasattr(base, "_process_caption_json"):
+            caption = base._process_caption_json(sample["json_path"])
+
+        if caption is None and sample.get("txt_path"):
+            caption = sample["txt_path"].read_text(encoding="utf-8").strip()
+            if hasattr(base, "_process_caption_txt"):
+                caption = base._process_caption_txt(caption)
+
+        return "" if caption is None else caption
+
     def __getitem__(self, idx):
         sample = self.samples[idx]
         npz_path = self._get_npz_path(
@@ -1429,32 +1518,9 @@ class CachedLatentDataset(Dataset):
             if mask_key in data.files:
                 mask = torch.from_numpy(data[mask_key])
 
-        # 获取 base_dataset 的引用（处理可能的嵌套）
-        base = self.base_dataset
-        while hasattr(base, "dataset"):
-            base = base.dataset
-        
-        # 处理 caption（与 ImageDataset / text-cache 预扫共用同一事实源）
-        if hasattr(base, "caption_for_sample"):
-            caption = base.caption_for_sample(sample)
-        else:  # 非 ImageDataset 的第三方 wrapper：保留 Phase 2 前的 duck-type 行为
-            caption = None
-            if getattr(base, "caption_override", None) is not None:
-                caption = base.caption_override
-            elif sample.get("json_path") and hasattr(base, "_process_caption_json"):
-                caption = base._process_caption_json(sample["json_path"])
-
-            if caption is None and sample.get("txt_path"):
-                caption = sample["txt_path"].read_text(encoding="utf-8").strip()
-                if hasattr(base, "_process_caption_txt"):
-                    caption = base._process_caption_txt(caption)
-
-            if caption is None:
-                caption = ""
-        
         return {
             "latent": latent,
-            "caption": caption,
+            "caption": self.caption_for_index(idx),
             "mask": mask,
             # navit collate 需要逐图 image 路径
             "image": str(sample["image"]),
@@ -1601,6 +1667,29 @@ def _lookup_token_count_walk(d, idx):
     return 0
 
 
+def _lookup_caption_walk(d, idx):
+    """按索引解析样本 caption（遍历方式同 ``_lookup_token_count_walk``）。"""
+    main = getattr(d, "main_dataset", None)
+    reg = getattr(d, "reg_dataset", None)
+    if main is not None and reg is not None:
+        ml = getattr(d, "_main_len", len(main))
+        if idx < ml:
+            return _lookup_caption_walk(main, idx)
+        return _lookup_caption_walk(reg, idx - ml)
+    if hasattr(d, "caption_for_index"):
+        return d.caption_for_index(idx % len(d))
+    for attr in ("dataset", "base_dataset"):
+        inner = getattr(d, attr, None)
+        if inner is not None and inner is not d and not isinstance(inner, list):
+            return _lookup_caption_walk(inner, idx % len(inner))
+    return ""
+
+
+def dataset_captions(dataset) -> list[str]:
+    """NaViT 打包的逐索引 caption（文本 token 计入打包预算的族用）。"""
+    return [_lookup_caption_walk(dataset, i) for i in range(len(dataset))]
+
+
 def _walk_attr_list(dataset, attr):
     """在单链包装器（RepeatDataset/CachedLatentDataset）中查找叶数据集的
     per-index 列表属性 ``attr``，通过 ``% len`` 映射到 ``len(dataset)``。
@@ -1656,11 +1745,15 @@ class NavitPackBatchSampler:
     每个产出的列表是一个打包训练序列：其各图 token 数之和 ≤ ``token_budget``，
     整包作为一个零 padding 的块对角 forward。把"每步图片数"与单图形状解耦——
     不同 token 数和长宽比的图可以共享一个包，小数据集也能填满大 effective batch。
+
+    ``text_token_counts``：逐索引文本 token 数，加到图像 token 数上一起计预算。
+    文本与图像同在一条自注意力序列的族（MOSS 单流）传入；文本走 cross-attn 的族
+    （Anima）不传，预算只算图像 token。
     """
 
     def __init__(self, dataset, token_budget, max_images_per_pack=0,
                  shuffle=True, seed=42, drop_last=False,
-                 strategy="next_fit", ffd_window=256):
+                 strategy="next_fit", ffd_window=256, text_token_counts=None):
         self.dataset = dataset
         self.token_budget = int(token_budget)
         self.max_images_per_pack = int(max_images_per_pack or 0)
@@ -1674,6 +1767,7 @@ class NavitPackBatchSampler:
             )
         self.ffd_window = int(ffd_window or 0)
         self.epoch = 0
+        self._skip = 0
         self.token_counts = dataset_token_counts(dataset)
         self._cached_packs = None
         # Fail-fast：全 0 token 数意味着无法解析每图尺寸（token_count_for_index 与
@@ -1685,20 +1779,30 @@ class NavitPackBatchSampler:
                 "bucket_for_index 都不可用/全 0）。NaViT 打包需要缓存数据集 "
                 "（cache_latents=true）以拿到每图 latent 形状。"
             )
+        if text_token_counts is not None:
+            if len(text_token_counts) != len(self.token_counts):
+                raise ValueError(
+                    f"[NavitPack] text_token_counts 长度 {len(text_token_counts)} "
+                    f"与数据集 {len(self.token_counts)} 不一致"
+                )
+            self.token_counts = [
+                int(c) + int(t) for c, t in zip(self.token_counts, text_token_counts)
+            ]
         mx = max(self.token_counts) if self.token_counts else 0
         if self.token_counts and self.token_budget < mx:
             logger.warning(
-                "[navit] token_budget=%d is below the largest single image (%d "
-                "tokens): that image is packed alone and may exceed the budget and "
+                "[navit] token_budget=%d is below the largest single sample (%d "
+                "tokens): that sample is packed alone and may exceed the budget and "
                 "OOM — raise token_budget to at least %d",
                 self.token_budget, mx, mx,
             )
         logger.debug(
             "navit_pack: dataset_len=%d token_budget=%d max_images_per_pack=%s "
-            "strategy=%s ffd_window=%s tokens_per_image=%d..%d",
+            "strategy=%s ffd_window=%s text_tokens=%s tokens_per_image=%d..%d",
             len(self.token_counts), self.token_budget,
             self.max_images_per_pack or "unlimited", self.strategy,
             (self.ffd_window or "global") if self.strategy == "ffd" else "-",
+            "counted" if text_token_counts is not None else "excluded",
             min(self.token_counts) if self.token_counts else 0, mx,
         )
         if self.strategy == "ffd" and self.ffd_window <= 0:
@@ -1711,6 +1815,10 @@ class NavitPackBatchSampler:
     def set_epoch(self, epoch):
         self.epoch = int(epoch)
         self._cached_packs = None
+
+    def skip_batches(self, n):
+        """下一次迭代跳过本 epoch 前 n 个包（只生效一次），语义同 BucketBatchSampler.skip_batches。"""
+        self._skip = max(0, int(n))
 
     def _build_packs(self):
         order = list(range(len(self.token_counts)))
@@ -1734,8 +1842,8 @@ class NavitPackBatchSampler:
     def __iter__(self):
         packs = self._build_packs()
         self._cached_packs = packs
-        for pack in packs:
-            yield pack
+        skip, self._skip = self._skip, 0
+        return iter(packs[skip:])
 
     def __len__(self):
         if self._cached_packs is None:

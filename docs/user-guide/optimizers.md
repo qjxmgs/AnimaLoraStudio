@@ -10,8 +10,10 @@
 | **lion** | ≈ AdamW lr / 3（1e-4 → 3e-5）| AdamW wd × 3-10（0.01 → 0.03-0.1）| cosine / cosine_with_warmup | **≈ 50%**（只 exp_avg）| 显存吃紧但又想固定 lr |
 | **automagic** | **1e-6**（建议起点；UI 切换时自动改）| 0（一般不开）| **none**（内部 per-param 自适应）| ≈ 50%（factored 2nd moment + int8 lr_mask）| 不想调 lr 又不想 Prodigy |
 | **came** | ≈ AdamW 量级（1e-4 起步，可略高）| 0-0.01 | cosine / cosine_with_warmup | **≈ 50-60%**（exp_avg + 行/列分解二阶矩与 instability）| 想省 state 显存但保留 AdamW 式动量稳定性 |
+| **muon** | ≈ AdamW lr（`match_rms_adamw` 口径下，1e-4 起步）| 0-0.01 | cosine / cosine_with_warmup | **≈ 50%**（矩阵参数只存一份动量；1D / 向量参数仍是 AdamW state）| 想让 LoRA 更新分摊到更多奇异方向 |
 | **prodigy** | 1.0（固定，UI 锁定）| 0.01 | constant 或 cosine | 比 AdamW 略大（多一个 d 状态）| 通用自适应，仍需检查步长与数值稳定性 |
 | **prodigy_plus_schedulefree** | 1.0（固定）| 0.0 | **none**（Schedule-Free 内部 averaging）| 比 Prodigy 大一些（averaged weights）| averaged weights 可能缓和相邻 checkpoint 波动，不保证消除风格突变 |
+| **riemannion** | 1e-4 起步（作用于 ΔW 本身，与 AdamW 口径不同）| 0-0.01 | cosine / cosine_with_warmup | 比 AdamW 略大（2r 宽的切空间动量 + 正交基 buffer）| 仅配 `lora_type=riemann`；想消除 LoRA 因子分解的参数化歧义 |
 | **soap** | AdamW 量级（1e-4 ~ 3e-4）| 0.01 | cosine / cosine_with_warmup | **> AdamW**（exp_avg + exp_avg_sq + 每矩阵轴 Shampoo GG/Q）| 矩阵型 adapter（LoRA/LoKr）想更快拟合 |
 | **soap_sf** | AdamW 量级（1e-4 ~ 3e-4）| 0.01 | **none**（Schedule-Free averaging）| ≈ soap（z 替掉 exp_avg）| 尝试 SOAP + averaging；短训练需额外比较平均权重的滞后 |
 
@@ -56,6 +58,15 @@ CAME（Luo et al. 2023, [arxiv 2307.02047](https://arxiv.org/abs/2307.02047)，A
 
 实现派生自官方 [yangluo7/CAME](https://github.com/yangluo7/CAME)（MIT），做了 bf16 训练工程适配（state 固定 fp32 + stochastic rounding 写回 + resume fixup），算法公式与官方逐行对齐。
 
+## Muon — 正交化动量
+
+Muon（Keller Jordan 2024, [博客](https://kellerjordan.github.io/posts/muon/)）对每个权重矩阵的动量做 Newton-Schulz 正交化：把奇异值推到 ≈1、只保留方向，相当于谱范数约束下的最速下降。效果上更新会分摊到更多奇异方向，而 AdamW 的更新往往集中在少数方向。
+
+- **只作用于真矩阵**：LoRA / LoHa / LoKr 的因子矩阵走 Muon；1D 参数（DoRA magnitude、SRA projection bias）以及 (1, r) 这类向量形状参数（Ortho 的 λ）走同一优化器内的 AdamW。
+- **lr**：`muon_adjust_lr=match_rms_adamw`（默认，Moonshot [arxiv 2502.16982](https://arxiv.org/abs/2502.16982) 口径）把每个元素的更新幅度对齐到 AdamW 的典型量级，**lr 可直接沿用 AdamW**；`original` 是 Keller 原版缩放，lr 需另调。
+- **开销**：每步多一次批量 Newton-Schulz（Anima rank 32 实测 optimizer.step ≈ 29 ms vs AdamW ≈ 5 ms，整体每步慢约 2%）。
+- 文献上，逐因子 Muon 用在 Adam 预训练底模的 LoRA 上没有一致优于 AdamW 的结论（[arxiv 2605.10468](https://arxiv.org/abs/2605.10468)）；与 AdamW 做相同更新预算的对照再下判断。
+
 ## Prodigy / PPSF — lr 锁 1.0
 
 Prodigy 系列内部估计步长 `d`，**`lr` 字段必须为 1.0**（工厂会强制覆盖）。调参重点：
@@ -64,6 +75,17 @@ Prodigy 系列内部估计步长 `d`，**`lr` 字段必须为 1.0**（工厂会�
 - PPSF 的 Studio 字段 `ppsf_prodigy_steps` 可在指定步数后冻结 d 估计；默认0不冻结。总步数的1/4～1/2可作搜索起点，需对照验证，不能保证避免跳档。
 
 PPSF 用 Schedule-Free averaging，sample / save 前必须 `optimizer.eval()`，事后 `optimizer.train()`。Studio 内部用 `optimizer_eval_mode` context manager 自动处理，CLI 用户参考 `utils/optimizer_utils.py:optimizer_eval_mode`。
+
+## Riemannion — 固定秩流形上的 Muon（配 Riemann LoRA）
+
+Riemannion（Bogachev et al. 2025, [arxiv 2507.12142](https://arxiv.org/abs/2507.12142)）直接在「秩为 r 的矩阵」流形上优化 ΔW，而不是分别更新 LoRA 的两个因子：普通 LoRA 的 `A·Bᵀ` 换一种拆法（`(A·S)(B·S⁻ᵀ)ᵀ`）是同一个 ΔW，欧氏优化器却会给出不同的更新，Riemannion 消除了这种歧义。每步把梯度投影到切空间、做 Muon 式正交化，再回缩到秩 r。
+
+- **必须配 `lora_type=riemann`**：两者在训练页互相绑定，选 Riemann LoRA 时优化器自动切到 Riemannion，其余适配器下 Riemannion 不可选。
+- **Riemann LoRA 不使用的设置会被隐藏**：`lora_alpha`（导出固定 alpha=rank，scale=1）、DoRA、rs-LoRA、三种 dropout、分层 rank。
+- **lr**：直接作用于 ΔW（每步谱范数步长 ≈ lr），与 AdamW 在因子上的 lr 口径不同。Anima rank 32 实测 1e-4 与 AdamW 1e-4 的 loss 相当、1e-3 明显变差。
+- **初始化**：随机正交子空间、ΔW(0)=0，第 0 步输出与底模一致（论文的 LOI 梯度引导初始化未实现）。
+- **保存**：导出为普通 LoRA（`lora_up` / `lora_down`），ComfyUI 与测试页直接加载；`resume_lora` 可从普通 LoRA 热启动。
+- **开销**：前向多一路秩 r 分支（显存比同秩 LoRA 略高，Anima rank 32 实测 +0.5 GB、MOSS rank 64 实测 +1.5 GB）；optimizer.step 实测 Anima ≈ 45 ms、Krea 2 ≈ 200 ms（层形状更分散，约占每步 4%）。支持 block swap。
 
 ## SOAP / SOAP-SF — 二阶预条件提拟合速度
 
@@ -85,8 +107,10 @@ SOAP（Vyas et al. 2024, [arxiv 2409.11321](https://arxiv.org/abs/2409.11321)）
 
 - **没头绪，想稳的**：AdamW + cosine_with_warmup，跟着默认 preset 走（两族通用）
 - **显存吃紧 + 不想动 lr**：Lion，按上面换算把 lr 降 3×
+- **想试正交化更新、lr 不想重调**：muon，lr 直接用 AdamW 量级
 - **省 state 显存但想保住 AdamW 式稳定收敛**：came，lr 直接用 AdamW 量级
 - **不想调 lr + 不想踩 Schedule-Free 坑**：Prodigy
 - **试验平均权重是否减少波动**：prodigy_plus_schedulefree，保留对照并检查数值稳定性
 - **per-param 细粒度自适应**：Automagic，记得起点 1e-6
+- **想试流形优化、消除 LoRA 因子分解歧义**：Riemann LoRA + riemannion，lr 从 1e-4 起
 - **愿意用更多state显存试验预条件**：soap（带scheduler）或soap_sf（免调度）；测量总耗时与固定样图，不保证提速

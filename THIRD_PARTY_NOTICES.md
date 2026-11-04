@@ -77,7 +77,17 @@
     batched CFG / sample helper 对齐 ComfyUI `ModelSamplingDiscreteFlow` + KSampler 行为
   - `runtime/training/inference_samplers/er_sde.py` — `sample_er_sde` +
     `default_noise_sampler` 参考 ComfyUI `k_diffusion_sampling`
-    （删去 model_patcher 依赖）
+    （删去 model_patcher 依赖；half-log-SNR 与 alpha 按 ComfyUI 0.41.0 原式）
+  - `runtime/training/families/moss/comfy_forward.py` — MOSS-Image DiT 推理前向的
+    算子顺序与舍入路径对齐 ComfyUI 0.41.0 `comfy/ldm/moss_image/model.py`，RoPE /
+    时间嵌入对齐 `comfy/ldm/flux/math.py`、`layers.py`，SDPA 后端优先级对齐
+    `comfy/ops.py`
+  - `runtime/training/families/moss/lora_int8_merge.py`、
+    `runtime/training/families/comfy_lora_merge.py` — LoRA merge 语义（经典
+    ModelPatcher 路径、`calculate_weight`、`string_to_seed`、融合 qkv 的行切片）
+    对齐 ComfyUI `model_patcher.py` / `lora.py` / `weight_adapter`
+  - `runtime/training/families/moss/sampling.py` — CFG 组合顺序、
+    `percent_to_sigma` 精度对齐 ComfyUI `samplers.py` / `model_sampling.py`
   - `runtime/training/inference_samplers/dpmpp_3m_sde.py` —
     DPM-Solver++(3M) SDE / BrownianTree noise / first-sigma offset / log-SNR 细节
     对齐 ComfyUI `comfy/k_diffusion/sampling.py` + `comfy/model_sampling.py`
@@ -92,6 +102,9 @@
     的 `ModelSpec.latent` 引用此单一副本）；`runtime/anima_daemon.py`
     `_decode_latent2rgb_preview` 的投影 + 范围映射对齐 ComfyUI `latent_preview.py`
     `Latent2RGBPreviewer`
+  - `runtime/training/families/latent_spaces.py` — `_FLUX2_RGB_FACTORS` /
+    `_FLUX2_RGB_BIAS` 取自 ComfyUI `comfy/latent_formats.py` 的 `Flux2`（32 行系数，
+    Comfy 经 `latent_rgb_factors_reshape` 还原成 32ch/f8 后使用，与本项目缓存排布一致）
 
 > 由于包含/派生自 GPL-3.0 代码，本项目整体以 GPL-3.0 发布（见 `LICENSE`）。
 
@@ -103,6 +116,37 @@
   - `modeling/cosmos_predict2_modeling.py`
 
 本仓库额外提供 `LICENSE-APACHE` 以便分发 Apache-2.0 许可文本。
+
+### Black Forest Labs FLUX.2 VAE (Apache-2.0)
+
+- **来源**：[`black-forest-labs/flux2`](https://github.com/black-forest-labs/flux2)
+  `src/flux2/autoencoder.py`
+- **许可**：Apache-2.0（上游 `LICENSE.md`；本仓库附 `LICENSE-APACHE`）
+- **涉及文件**：
+  - `modeling/flux2/autoencoder.py` — 结构与参数命名原样移植（模块路径即 checkpoint
+    键名），仅加模块 docstring 与 `from __future__ import annotations`
+
+### OpenMOSS MOSS-Image (Apache-2.0)
+
+- **来源**：[`OpenMOSS-Team/MOSS-Image-SFT`](https://huggingface.co/OpenMOSS-Team/MOSS-Image-SFT)
+  随权重发布的 `pipeline_moss_image.py`（[`OpenMOSS/MOSS-Image`](https://github.com/OpenMOSS/MOSS-Image)）
+- **许可**：Apache-2.0（模型卡与仓库 `LICENSE`；本仓库附 `LICENSE-APACHE`）
+- **涉及文件**：
+  - `modeling/moss/moss_modeling.py` — DiT 结构移植，模块路径保持上游命名；本项目改动
+    （FLUX.2 VAE 排布进出、σ×1000 timestep 口径、RoPE 现算、梯度检查点）见文件头
+
+### comfy-kitchen (Apache-2.0)
+
+- **来源**：[`Comfy-Org/comfy-kitchen`](https://pypi.org/project/comfy-kitchen/) 0.2.38
+  `tensor/int8_utils.py`、`backends/eager/quantization.py`
+- **许可**：Apache-2.0
+- **涉及文件**：
+  - `runtime/training/families/moss/quant_int8.py` — ConvRot 规则 Hadamard 构造与
+    `int8_tensorwise + convrot` 权重的存储 / 反量化约定；出图用的 W8A8 前向、逐行
+    量化、`int8_mm` 补零、随机舍入重新量化逐位复刻 eager 后端
+    `backends/eager/quantization.py`（训练用的 W8A16 前向为本项目实现）
+  - `runtime/training/families/moss/comfy_forward.py` — `rms_adaln`、
+    `rms_rope_split_half` 的 eager 实现（`backends/eager/adaln.py`、`rope.py`）
 
 ### Alibaba Wan2.1 VAE（请再次确认上游许可）
 

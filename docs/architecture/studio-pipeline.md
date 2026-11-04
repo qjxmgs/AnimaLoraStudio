@@ -182,7 +182,7 @@ Pydantic 兼容模型仍在 `studio/infrastructure/secrets.py`（`studio/secrets
 ```
 ┌──────────────────────┐
 │  Anima                │
-│  lora studio · 0.29.0 │ ← 版本号从 /api/health 拉，single source of truth
+│  lora studio · 0.30.0 │ ← 版本号从 /api/health 拉，single source of truth
 ├──────────────────────┤
 │ ▶ 项目 (Projects)    │ /
 │   队列 (Queue)       │ /queue

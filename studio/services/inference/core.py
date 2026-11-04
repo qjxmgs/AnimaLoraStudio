@@ -376,6 +376,24 @@ def _check_lora_compat_or_raise(
         ))
 
 
+#: int8 底模可挂载的 LoRA 算法：出图走 ComfyUI merge（comfy calculate_weight 的
+#: lora / lokr / loha），训练侧 LyCORIS 对同一集合走 bypass（utils/lycoris_adapter、
+#: phases/models._INT8_BASE_LORA_TYPES）
+_INT8_BASE_LORA_ALGOS = frozenset({"lora", "lokr", "loha"})
+
+
+def model_uses_lora_merge(model: Any) -> bool:
+    """该底模挂 LoRA 是否走「merge 进量化权重」（fp8 / int8 量化层任一存在）。
+
+    merge 句柄没有常驻 network，LoRA 强度无法热换——XY 的 lora_scale 轴要逐格
+    detach + 重 merge。族无关：只看模型里有没有量化存储的 Linear。
+    """
+    from training.families.krea2.quant_fp8 import model_has_fp8_layers  # noqa: PLC0415
+    from training.families.moss.quant_int8 import model_has_int8_layers  # noqa: PLC0415
+
+    return model_has_fp8_layers(model) or model_has_int8_layers(model)
+
+
 def apply_loras(
     model: Any,
     specs: Sequence[LoRASpec],
@@ -427,10 +445,17 @@ def apply_loras(
     # dtype 崩或产生与 Comfy 不一致的数值。目前只有 krea2 loader 会产出
     # fp8 权重（Anima loader 拒绝 fp8）。
     fp8_merge = False
+    int8_base = False
     if specs:
         from training.families.krea2.quant_fp8 import model_has_fp8_layers  # noqa: PLC0415
+        from training.families.moss.quant_int8 import model_has_int8_layers  # noqa: PLC0415
 
         fp8_merge = model_has_fp8_layers(model)
+        # int8 convrot 底模（MOSS）：同 fp8 走 ComfyUI merge 语义（dequant →
+        # 加 delta → 随机舍入重新量化，seed=Comfy 权重键 CRC32），出图与 ComfyUI
+        # 挂 LoRA 的效果一致（M9）。Comfy merge 只认 lora / lokr / loha，DoRA 等
+        # 读底模原始数值的算法下面逐个拒绝
+        int8_base = model_has_int8_layers(model)
 
     merge_sources: list[tuple[dict, float, str]] = []
     adapters: list[Any] = []
@@ -469,6 +494,15 @@ def apply_loras(
             alpha = float(rank)   # per-layer alpha 已补进 sd，全局值仅建网用
             algo = "lora"         # PEFT 双矩阵 = plain LoRA
 
+        if int8_base and (meta.weight_decompose or algo not in _INT8_BASE_LORA_ALGOS):
+            kind = f"{algo} + DoRA" if meta.weight_decompose else algo
+            raise ValueError(
+                f"int8 量化底模只支持挂载 {' / '.join(sorted(_INT8_BASE_LORA_ALGOS))}"
+                f"（非 DoRA）训练的 LoRA：{Path(path).name} 是 {kind}。请改用 bf16 版本底模。"
+            )
+        if int8_base:
+            merge_sources.append((sd_raw, float(spec.scale), Path(path).name))
+            continue
         if fp8_merge:
             # merge 是权重级线性操作，只认 per-layer alpha/dim 缩放。
             # rs_lora 产物无需特判：lycoris 保存时把 √rank 校正烘进
@@ -553,7 +587,13 @@ def apply_loras(
 
         # 单个句柄对应全部 LoRA（merge 一次完成）；daemon 换 LoRA / 变
         # scale 时 detach() 从备份还原后重 merge
-        merged = merge_loras_into_fp8_model(
+        if int8_base:
+            from training.families.moss.lora_int8_merge import (  # noqa: PLC0415
+                merge_loras_into_int8_model as merge_fn,
+            )
+        else:
+            merge_fn = merge_loras_into_fp8_model
+        merged = merge_fn(
             model,
             merge_sources,
             compute_dtype=merge_dtype,
@@ -573,7 +613,7 @@ def apply_loras(
                 torch.cuda.empty_cache()
         except Exception:
             logger.warning(
-                "trimming the CUDA cache after the fp8 LoRA merge failed", exc_info=True,
+                "trimming the CUDA cache after the quantized LoRA merge failed", exc_info=True,
             )
         return [merged]
     return adapters

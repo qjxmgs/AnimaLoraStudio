@@ -2,7 +2,6 @@
 date: 2026-09-27
 tag: migration
 title: Seed 0 is now frozen per task or comparison group
-pin: true
 version: "0.28.0"
 ---
 Starting with v0.28.0, `0` in any seed field means “randomize when the task is created,” with a stable boundary chosen for that workflow.

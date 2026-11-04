@@ -24,6 +24,7 @@ from training.dataset import (
     collate_fn,
     collate_fn_cached,
     collate_fn_navit_pack,
+    dataset_captions,
 )
 
 
@@ -55,6 +56,24 @@ def _rope_max_side_tokens(ctx) -> int:
         return 0
 
 
+def _navit_text_token_counts(ctx) -> list[int] | None:
+    """文本与图像同在自注意力序列的族（提供 ``navit_text_token_count``）的逐索引文本
+    token 数，计入 NaViT 打包预算；文本走 cross-attn 的族返回 None（只算图像 token）。
+
+    同一 caption 只 tokenize 一次（repeat / 分辨率 fan-out 会重复出现）。
+    """
+    count_fn = getattr(ctx.family, "navit_text_token_count", None)
+    if count_fn is None:
+        return None
+    by_caption: dict[str, int] = {}
+    counts = []
+    for caption in dataset_captions(ctx.dataset):
+        if caption not in by_caption:
+            by_caption[caption] = int(count_fn(ctx.text_stack, caption))
+        counts.append(by_caption[caption])
+    return counts
+
+
 def _native_dataset_kwargs(args, ctx) -> dict:
     """navit_native_resolution 开启时给 ImageDataset 的原生定尺寸参数；关闭 → 空 dict（行为中立）。"""
     navit_packing = bool(getattr(args, "navit_packing", False))
@@ -66,6 +85,10 @@ def _native_dataset_kwargs(args, ctx) -> dict:
         native_over_budget=str(getattr(args, "navit_native_over_budget", "downscale") or "downscale"),
         native_max_side_tokens=_rope_max_side_tokens(ctx),
     )
+    # 文本与图像同在序列的族：原生定尺寸给每张图的文本预留预算（与打包预算同口径）
+    count_fn = getattr(ctx.family, "navit_text_token_count", None)
+    if count_fn is not None:
+        kwargs["native_text_tokens"] = lambda caption: count_fn(ctx.text_stack, caption)
     logger.info(msg(
         "train.navit_native_enabled",
         budget=kwargs["native_token_budget"],
@@ -76,6 +99,22 @@ def _native_dataset_kwargs(args, ctx) -> dict:
         kwargs["native_max_side_tokens"] or "none",
     )
     return kwargs
+
+
+def build_dataloader(dataset, batch_sampler, collate_fn, *, num_workers, seed) -> DataLoader:
+    """训练 DataLoader（三种 batch sampler 共用）。
+
+    DataLoader 每次 iter()（每 epoch 一次）要抽一个 worker base seed；不给 generator
+    就从全局 torch CPU RNG 抽。续训时恢复点的 RNG 状态是「本 epoch 迭代器已建好」
+    之后的，恢复后重建迭代器会多抽一次 → InfoNoise 等 CPU 侧随机流整体错一位。
+    独立 generator 让 dataloader 不碰全局 RNG。
+    """
+    return DataLoader(
+        dataset, batch_sampler=batch_sampler,
+        collate_fn=collate_fn,
+        num_workers=num_workers,
+        generator=torch.Generator().manual_seed(int(seed)),
+    )
 
 
 def run(ctx: TrainingContext) -> None:
@@ -189,6 +228,15 @@ def run(ctx: TrainingContext) -> None:
 
     # 缓存 VAE latents（在 repeat 之前）
     ctx.use_cached = getattr(args, "cache_latents", False)
+    # 缓存指纹 = 当前族的 latent 空间（Anima / Krea2 是 Wan2.1 16 通道，MOSS 是
+    # FLUX.2 32 通道）。不传时数据集退回 Anima 默认：别族的版本会把 16 通道旧缓存
+    # 当成有效（fork 自 Krea2 版本的 MOSS 版本训练时 shape 崩），自己编出的缓存也
+    # 被盖错指纹
+    if ctx.family is None:
+        from training.families import resolve_family
+
+        ctx.family = resolve_family(args)
+    latent_spec = ctx.family.spec.latent
     if ctx.use_cached:
         # 0 = 跟随训练 batch size（对齐 kohya GUI 的 VAE batch size 语义）
         cache_batch_size = int(getattr(args, "vae_cache_batch_size", 0) or 0)
@@ -201,6 +249,7 @@ def run(ctx: TrainingContext) -> None:
             encode_tile_px=getattr(args, "cache_encode_tile_px", 1024),
             encode_tile_overlap=getattr(args, "cache_encode_tile_overlap", 128),
             encode_max_pixels=getattr(args, "cache_encode_max_pixels", 0),
+            latent_spec=latent_spec,
             label="train.label_training_set",
         )
     if ctx.reg_dataset is not None and ctx.use_cached:
@@ -211,6 +260,7 @@ def run(ctx: TrainingContext) -> None:
             encode_tile_px=getattr(args, "cache_encode_tile_px", 1024),
             encode_tile_overlap=getattr(args, "cache_encode_tile_overlap", 128),
             encode_max_pixels=getattr(args, "cache_encode_max_pixels", 0),
+            latent_spec=latent_spec,
             label="train.label_regularization_set",
         )
 
@@ -239,11 +289,11 @@ def run(ctx: TrainingContext) -> None:
             strategy=getattr(args, "navit_pack_strategy", "next_fit"),
             # 不用 `or 256`：0 是合法值（全局 FFD，每 epoch 包固定），会被 falsy 吞掉。
             ffd_window=int(getattr(args, "navit_pack_ffd_window", 256)),
+            text_token_counts=_navit_text_token_counts(ctx),
         )
-        ctx.dataloader = DataLoader(
-            ctx.dataset, batch_sampler=batch_sampler,
-            collate_fn=collate_fn_navit_pack,
-            num_workers=args.num_workers,
+        ctx.dataloader = build_dataloader(
+            ctx.dataset, batch_sampler, collate_fn_navit_pack,
+            num_workers=args.num_workers, seed=getattr(args, "seed", 42),
         )
     elif ctx.use_cached:
         # drop_last=False：桶尾不足 batch_size 出短 batch 而非丢图。
@@ -254,10 +304,9 @@ def run(ctx: TrainingContext) -> None:
             drop_last=False, shuffle=True,
             seed=getattr(args, "seed", 42),
         )
-        ctx.dataloader = DataLoader(
-            ctx.dataset, batch_sampler=batch_sampler,
-            collate_fn=collate_fn_cached,
-            num_workers=args.num_workers,
+        ctx.dataloader = build_dataloader(
+            ctx.dataset, batch_sampler, collate_fn_cached,
+            num_workers=args.num_workers, seed=getattr(args, "seed", 42),
         )
     else:
         # 非缓存路径也必须按桶分批：collate_fn 用 torch.stack 拼 pixel_values，一个 batch
@@ -269,10 +318,9 @@ def run(ctx: TrainingContext) -> None:
             drop_last=False, shuffle=True,
             seed=getattr(args, "seed", 42),
         )
-        ctx.dataloader = DataLoader(
-            ctx.dataset, batch_sampler=batch_sampler,
-            collate_fn=collate_fn,
-            num_workers=args.num_workers,
+        ctx.dataloader = build_dataloader(
+            ctx.dataset, batch_sampler, collate_fn,
+            num_workers=args.num_workers, seed=getattr(args, "seed", 42),
         )
 
     # 训练前自检：VAE encode->decode 循环（快速排除 VAE/scale/shape 问题）

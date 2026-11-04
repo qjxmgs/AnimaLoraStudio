@@ -14,6 +14,9 @@ from .downloader import get_status_snapshot, head_detector_status
 from . import face_segmenter, background_segmenter
 from .families import FAMILY_ASSETS
 from .families.custom_paths import arch_summary
+from .families.krea2 import QWEN3_VL_TE_VARIANTS
+from .families.moss import MOSS_TE_VARIANTS
+
 from .paths import (
     CLTAGGER_VERSIONS,
     DEFAULT_UPSCALER,
@@ -46,6 +49,18 @@ from .paths import (
 # ---------------------------------------------------------------------------
 # catalog
 # ---------------------------------------------------------------------------
+
+
+def _family_arch(family_id: str, path: Path) -> Optional[dict[str, Any]]:
+    """自定义底模的架构摘要；族声明支持的量化格式不标「不可用」（#605 的例外口径）。"""
+    arch = arch_summary(path)
+    if not arch or not arch.get("unsupported_quant"):
+        return arch
+    supported = getattr(FAMILY_ASSETS[family_id], "supported_quant_formats", ())
+    if arch["unsupported_quant"] not in supported:
+        return arch
+    rest = {k: v for k, v in arch.items() if k != "unsupported_quant"}
+    return rest or None
 
 
 # CLIP / DINO 常见模型的下载大小预估（bytes，约值）。下载前给用户一个体量参考；
@@ -575,6 +590,7 @@ def build_catalog(root: Optional[Path] = None) -> dict[str, Any]:
                 label=str(v.get("label") or v["variant"]),
                 download_id=f"{family_id}_main",
                 exists=bool(v.get("exists")), size=int(v.get("size") or 0),
+                size_estimate=int(v.get("size_estimate") or 0),
                 is_current=v["variant"] == selected_val,
                 extra={"purpose": str(v.get("purpose") or "")},
                 arch=v.get("arch"),
@@ -591,7 +607,7 @@ def build_catalog(root: Optional[Path] = None) -> dict[str, Any]:
                     is_current=str(target) == selected_val,
                     description=c.repo,
                     candidate=c.model_dump(),
-                    arch=arch_summary(target),
+                    arch=_family_arch(family_id, target),
                 ))
             else:
                 p = Path(c.path)
@@ -601,9 +617,54 @@ def build_catalog(root: Optional[Path] = None) -> dict[str, Any]:
                     exists=st["exists"], size=st["size"],
                     is_current=c.path == selected_val,
                     candidate=c.model_dump(),
-                    arch=arch_summary(p),
+                    arch=_family_arch(family_id, p),
                 ))
         model_source_rows[family_id] = fam_rows
+
+    # 族的 VAE / 文本编码器 / tokenizer：与主模型同一候选卡（只读 preset 行，
+    # 无用户候选）。单资产卡也走 radio 行，行名单文件取文件名去扩展名、目录型
+    # 取上游模型名（repo 末段）；带精度 variant 的 TE 卡每个 variant 一行，
+    # value = variant（选中写 selected_te.{family}），与主模型行同口径。
+    def _asset_row(sec: dict[str, Any], *, value: str, label: str, is_current: bool) -> dict[str, Any]:
+        files = sec.get("files")
+        if files is not None:
+            exists = bool(files) and all(f["exists"] for f in files)
+            size = sum(int(f["size"]) for f in files)
+        else:
+            exists, size = bool(sec.get("exists")), int(sec.get("size") or 0)
+        return _source_row(
+            kind="preset", value=value, label=label,
+            download_id=sec["id"], status_key=sec["id"],
+            exists=exists, size=size, files=files,
+            size_estimate=int(sec.get("size_estimate") or 0),
+            is_current=is_current, removable=False,
+        )
+
+    for asset_id in ("anima_vae", "qwen3", "t5_tokenizer", "moss_vae"):
+        sec = family_sections.get(asset_id)
+        if not sec:
+            continue
+        label = (
+            Path(sec["target_path"]).stem if "target_path" in sec
+            else str(sec["repo"]).rsplit("/", 1)[-1]
+        )
+        model_source_rows[asset_id] = [_asset_row(sec, value=asset_id, label=label, is_current=True)]
+
+    # domain → [(variant, catalog section id)]；首项 section 带 selected
+    for domain, te_variants in (
+        ("krea2_te", tuple(
+            (v, "krea2_text_encoder" if v == "bf16" else f"krea2_text_encoder_{v}")
+            for v in QWEN3_VL_TE_VARIANTS
+        )),
+        ("moss_te", tuple((v, f"moss_text_encoder_{v}") for v in MOSS_TE_VARIANTS)),
+    ):
+        secs = [(v, family_sections.get(sid)) for v, sid in te_variants]
+        if not all(sec for _, sec in secs):
+            continue
+        selected_te = secs[0][1].get("selected") or secs[0][0]
+        model_source_rows[domain] = [
+            _asset_row(sec, value=v, label=v, is_current=v == selected_te) for v, sec in secs
+        ]
 
     return {
         "models_root": str(r),

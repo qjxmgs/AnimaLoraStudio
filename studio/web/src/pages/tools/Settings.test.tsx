@@ -163,6 +163,16 @@ const initialServerState = {
   tag_dictionary: { show_translation: null, autocomplete: null },
 }
 
+/** VAE / TE / tokenizer 的候选行（后端 _asset_row 同形：单资产 value = 资产 id，TE value = variant）。 */
+function assetRow(downloadId: string, value: string, label: string, opts: { exists?: boolean; isCurrent?: boolean; sizeEstimate?: number } = {}) {
+  return {
+    kind: 'preset' as const, candidate: null, value, label, description: '',
+    download_id: downloadId, download_variant: value, status_key: downloadId,
+    exists: opts.exists ?? false, size: 0, files: null, size_estimate: opts.sizeEstimate ?? 0,
+    is_current: opts.isCurrent ?? true, removable: false, deletable: true, extra: {},
+  }
+}
+
 const emptyModelsCatalog = {
   models_root: '/tmp/anima',
   anima_main: {
@@ -355,6 +365,13 @@ const emptyModelsCatalog = {
       },
     ],
     anima: [],
+    anima_vae: [assetRow('anima_vae', 'anima_vae', 'qwen_image_vae')],
+    qwen3: [assetRow('qwen3', 'qwen3', 'Qwen3-0.6B-Base')],
+    t5_tokenizer: [assetRow('t5_tokenizer', 't5_tokenizer', 't5-v1_1-xxl')],
+    krea2_te: [
+      assetRow('krea2_text_encoder', 'bf16', 'bf16'),
+      assetRow('krea2_text_encoder_fp8', 'fp8', 'fp8', { isCurrent: false }),
+    ],
     krea2: [
       {
         kind: 'preset', candidate: null, value: 'raw', label: 'raw',
@@ -792,14 +809,109 @@ describe('SettingsPage (PP0)', () => {
     expect(customRow!.querySelector('.badge-ok')).not.toBeNull()
     expect(within(customRow!).getByTitle('从列表移除（不删除文件）')).toBeInTheDocument()
     expect(within(customRow!).queryByRole('button', { name: '删除' })).not.toBeInTheDocument()
-    // 主模型 3（raw/turbo/custom）+ TE variant 卡 2（bf16/fp8）
-    expect(screen.getAllByRole('radio')).toHaveLength(5)
+    // Krea2 区：主模型 3（raw/turbo/custom）+ VAE 1 + TE variant 2（bf16/fp8），
+    // VAE / TE 与主模型同一候选卡，单选项也是 radio
+    const krea2Section = document.getElementById('krea2-models') as HTMLElement
+    expect(within(krea2Section).getAllByRole('radio')).toHaveLength(6)
+    expect(within(krea2Section).getByText('Krea 2 VAE')).toBeInTheDocument()
+    expect(within(krea2Section).getByRole('radio', { name: 'qwen_image_vae' })).toBeChecked()
+    // Anima 区的文本编码器 / tokenizer 卡同样是一行 radio
+    const animaSection = document.getElementById('models') as HTMLElement
+    expect(within(animaSection).getByText('Anima 文本编码器')).toBeInTheDocument()
+    expect(within(animaSection).getByRole('radio', { name: 'qwen_image_vae' })).toBeChecked()
+    expect(within(animaSection).getByRole('radio', { name: 'Qwen3-0.6B-Base' })).toBeChecked()
+    expect(within(animaSection).getByRole('radio', { name: 't5-v1_1-xxl' })).toBeInTheDocument()
     expect(screen.queryByText(/推荐工作流/)).not.toBeInTheDocument()
     // purpose 徽标（C10）：krea2 variant 行标注用途（raw=训练 / turbo=推理）
     const rawRow = screen.getByText('raw').closest('li')!
     const turboRow = screen.getByText('turbo').closest('li')!
     expect(within(rawRow).getByText('训练')).toBeInTheDocument()
     expect(within(turboRow).getByText('推理')).toBeInTheDocument()
+  })
+
+  it('MOSS-Image section: main card, int8/bf16 TE variant card and its own FLUX.2 VAE', async () => {
+    const files = (names: string[]) => names.map((name) => ({ name, exists: true, size: 10, mtime: 1 }))
+    const mossCatalog = {
+      ...emptyModelsCatalog,
+      moss_main: {
+        id: 'moss_main', name: 'MOSS-Image 主模型', description: 'test', repo: 'Comfy-Org/MOSS-Image',
+        variants: [{
+          variant: 'base_int8', is_latest: true, repo: 'Comfy-Org/MOSS-Image', purpose: 'training',
+          size_estimate: 5_413_698_958, target_path: '/tmp/anima/diffusion_models/moss-image-base-int8-convrot.safetensors',
+          exists: true, size: 10, mtime: 1,
+        }],
+        custom: [], selected: 'base_int8', latest: 'base_int8',
+        license: 'Apache-2.0', license_url: 'https://huggingface.co/OpenMOSS-Team/MOSS-Image-Base',
+      },
+      moss_text_encoder_int8: {
+        id: 'moss_text_encoder_int8', name: 'MOSS-Image · Qwen3.5-9B int8', description: 'test',
+        repo: 'Comfy-Org/MOSS-Image', target_dir: '/tmp/anima/text_encoders/moss-qwen3.5-9b-int8',
+        selected: 'int8', files: files(['qwen3.5_9b_int8_convrot.safetensors', 'config.json']),
+      },
+      moss_text_encoder_bf16: {
+        id: 'moss_text_encoder_bf16', name: 'MOSS-Image · Qwen3.5-9B bf16', description: 'test',
+        repo: 'OpenMOSS-Team/MOSS-Image-Base', target_dir: '/tmp/anima/text_encoders/bf16',
+        selected: 'int8', files: files(['model.safetensors.index.json', 'config.json']),
+      },
+      moss_vae: {
+        id: 'moss_vae', name: 'FLUX.2 VAE', description: 'test', repo: 'Comfy-Org/MOSS-Image',
+        size_estimate: 340_000_000,
+        target_path: '/tmp/anima/vae/flux2-vae.safetensors', exists: false, size: 0, mtime: 0,
+      },
+      model_sources: {
+        ...emptyModelsCatalog.model_sources,
+        moss_vae: [assetRow('moss_vae', 'moss_vae', 'flux2-vae', { sizeEstimate: 340_000_000 })],
+        moss_te: [
+          assetRow('moss_text_encoder_int8', 'int8', 'int8', { exists: true }),
+          assetRow('moss_text_encoder_bf16', 'bf16', 'bf16', { exists: true, isCurrent: false }),
+        ],
+        moss: [{
+          kind: 'preset', candidate: null, value: 'base_int8', label: 'base_int8',
+          description: '', download_id: 'moss_main', download_variant: 'base_int8',
+          status_key: 'moss_main:base_int8', exists: true, size: 10, files: null,
+          size_estimate: 0, is_current: true, removable: false, deletable: true,
+          extra: { purpose: 'training' },
+        }],
+      },
+    }
+    const base = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+      if (typeof url === 'string' && url.includes('/api/models/catalog')) {
+        return Promise.resolve(new Response(JSON.stringify(mossCatalog), { status: 200 }))
+      }
+      return base(url, init)
+    })
+    const user = userEvent.setup()
+    renderPage()
+    await user.click(await screen.findByRole('button', { name: '训练' }))
+    expect(await screen.findByRole('heading', { name: 'MOSS-Image 模型' })).toBeInTheDocument()
+    const section = document.getElementById('moss-models') as HTMLElement
+    expect(await within(section).findByText('MOSS-Image 主模型')).toBeInTheDocument()
+    expect(within(section).getByText('MOSS-Image · Qwen3.5-9B 文本编码器')).toBeInTheDocument()
+    // 本族自己的 VAE（不是 Anima / Krea2 共用的 Qwen-Image VAE）：标题「族 + 类别」，
+    // 行名取落盘文件名（去扩展名），与底模卡 preset 行同口径
+    expect(within(section).getByText('MOSS-Image VAE')).toBeInTheDocument()
+    expect(within(section).getByText('flux2-vae')).toBeInTheDocument()
+    expect(within(section).queryByText('qwen_image_vae')).not.toBeInTheDocument()
+    // 资产说明不再常驻成小字（进标题旁 ⓘ）；下载前的体积并进「未下载」徽标
+    expect(within(section).queryByText(/test/)).not.toBeInTheDocument()
+    expect(within(section).getByText('未下载 · ~324.2 MB')).toBeInTheDocument()
+
+    const teRadios = [
+      within(section).getByRole('radio', { name: 'int8' }),
+      within(section).getByRole('radio', { name: 'bf16' }),
+    ] as HTMLInputElement[]
+    expect(teRadios).toHaveLength(2)
+    expect(teRadios[0].checked).toBe(true) // int8 = catalog 回填的选中值
+    await user.click(teRadios[1])
+    await waitFor(() => {
+      const call = fetchMock.mock.calls.find(([u, i]) => {
+        if (i?.method !== 'PATCH' || !String(u).includes('/api/settings')) return false
+        return JSON.parse(String(i.body)).models?.selected_te !== undefined
+      })
+      expect(call).toBeDefined()
+      expect(JSON.parse(String(call![1].body))).toEqual({ models: { selected_te: { moss: 'bf16' } } })
+    })
   })
 
   it('picking a variant writes new-style selected.{family}（多模型 P4-5）', async () => {

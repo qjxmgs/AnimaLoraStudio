@@ -45,6 +45,7 @@ for _p in (_THIS_DIR, _REPO_ROOT):
 import anima_train as _T  # noqa: E402
 
 from studio.domain.comfy_parity import force_comfy_parity_runtime_config  # noqa: E402
+from studio.domain.generate import skip_layer_guidance_kwargs  # noqa: E402
 from studio.services.inference.core import (  # noqa: E402
     DeferredVAE,
     LoRASpec,
@@ -104,6 +105,7 @@ def main() -> None:
     count: int = max(1, int(cfg.get("count", 1)))
     base_seed: int = int(cfg.get("seed", 0))
     distilled: bool = bool(cfg.get("distilled", False))
+    sampling_extras = skip_layer_guidance_kwargs(cfg)
     lora_configs: list[dict] = cfg.get("lora_configs", [])
     mixed_precision: str = cfg.get("mixed_precision", "bf16")
     vae_precision: str = cfg.get("vae_precision", mixed_precision)
@@ -248,6 +250,7 @@ def main() -> None:
             output_dir=output_dir,
             update_monitor=_update_monitor,
             vram_policy=vram_policy,
+            sampling_extras=sampling_extras,
         )
         if xy_failed:
             logger.warning(
@@ -299,6 +302,7 @@ def main() -> None:
                         dtype=dtype,
                         seed=seed,
                         vram_policy=vram_policy,
+                        **sampling_extras,
                     )
                 finally:
                     release_vae_after_decode(vae, vram_policy)
@@ -397,6 +401,7 @@ def _run_xy_matrix(
     update_monitor,
     distilled: bool = False,
     vram_policy: str = "auto",
+    sampling_extras: dict | None = None,
 ) -> tuple[int, int, int]:
     """循环 (yi, xi) 出 N×M 张图，返回 ``(成功数, 失败数, 总数)``。
 
@@ -429,11 +434,11 @@ def _run_xy_matrix(
     # （_cell_lora_configs）；CLI runner 无缓存管理，与 lora_ckpt 轴同款
     # 不接入。
     if x_spec.get("axis") == "lora_scale" or (y_spec and y_spec.get("axis") == "lora_scale"):
-        from training.families.krea2.quant_fp8 import model_has_fp8_layers
+        from studio.services.inference.core import model_uses_lora_merge
 
-        if model_has_fp8_layers(model):
+        if model_uses_lora_merge(model):
             raise NotImplementedError(
-                "fp8 底模的 LoRA 强度轴需逐格重新合并，走 daemon path "
+                "量化底模（fp8 / int8）的 LoRA 强度轴需逐格重新合并，走 daemon path "
                 "(runtime/anima_daemon.py)；CLI runner 请改用 bf16 底模。"
             )
 
@@ -502,6 +507,7 @@ def _run_xy_matrix(
                         dtype=dtype,
                         seed=cur_seed,
                         vram_policy=vram_policy,
+                        **(sampling_extras or {}),
                     )
                 finally:
                     release_vae_after_decode(vae, vram_policy)

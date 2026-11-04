@@ -112,12 +112,14 @@ export const SCHEMA_ENUM_LABEL_KEYS: Record<string, Record<string, string>> = {
   model_family: {
     anima: 'schema.enums.modelFamily.anima',
     krea2: 'schema.enums.modelFamily.krea2',
+    moss: 'schema.enums.modelFamily.moss',
   },
   lora_type: {
     lora: 'schema.enums.loraType.lora',
     lokr: 'schema.enums.loraType.lokr',
     loha: 'schema.enums.loraType.loha',
     ortho: 'schema.enums.loraType.ortho',
+    riemann: 'schema.enums.loraType.riemann',
     tlora: 'schema.enums.loraType.tlora',
   },
   lr_scheduler: {
@@ -131,8 +133,10 @@ export const SCHEMA_ENUM_LABEL_KEYS: Record<string, Record<string, string>> = {
     automagic: 'schema.enums.optimizerType.automagic',
     came: 'schema.enums.optimizerType.came',
     lion: 'schema.enums.optimizerType.lion',
+    muon: 'schema.enums.optimizerType.muon',
     prodigy: 'schema.enums.optimizerType.prodigy',
     prodigy_plus_schedulefree: 'schema.enums.optimizerType.prodigyPlusSchedulefree',
+    riemannion: 'schema.enums.optimizerType.riemannion',
   },
   timestep_sampling: {
     logit_normal: 'schema.enums.timestepSampling.logitNormal',

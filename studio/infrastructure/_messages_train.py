@@ -333,8 +333,34 @@ MESSAGES: dict[str, dict[str, str]] = {
         "zh": "Krea2 固定使用 PyTorch SDPA: 已忽略 attention_backend={backend}",
         "en": "Krea2 always uses PyTorch SDPA: attention_backend={backend} ignored",
     },
+    "train.int8_base_detected": {
+        "zh": "检测到 int8 底模（{format}）: 权重以 int8 常驻显存，前向时逐层反量化计算，LoRA 增量单独计算",
+        "en": "int8 base model detected ({format}): weights stay in int8 in VRAM, each layer is dequantized for the forward pass, LoRA deltas are computed separately",
+    },
+    "train.moss_loading_text_encoder": {
+        "zh": "加载文本编码器: Qwen3.5-9B（{path}）",
+        "en": "Loading text encoder: Qwen3.5-9B ({path})",
+    },
+    "train.moss_transformers_too_old": {
+        "zh": (
+            "MOSS-Image 的文本编码器（Qwen3.5）需要 transformers {required} 或更新版本，"
+            "当前为 {current}。请在 venv 中运行 pip install -U \"transformers>={required}\" 后重试"
+        ),
+        "en": (
+            "The MOSS-Image text encoder (Qwen3.5) requires transformers {required} or newer; "
+            "found {current}. Run pip install -U \"transformers>={required}\" in the venv and retry"
+        ),
+    },
     "train.fp8_merge_done": {
         "zh": "LoRA 已合并进 fp8 底模: {loras} 份 LoRA → {layers} 个层",
         "en": "LoRA merged into the fp8 base model: {loras} LoRA(s) into {layers} layers",
+    },
+    "train.int8_merge_done": {
+        "zh": "LoRA 已合并进 int8 底模并重新量化: {loras} 份 LoRA → {layers} 个层",
+        "en": "LoRA merged into the int8 base model and requantized: {loras} LoRA(s) into {layers} layers",
+    },
+    "train.unsupported_quant_checkpoint": {
+        "zh": "{name} 是 {fmt} 量化版权重（{layers} 个量化层），训练和出图不支持；请改用同一模型的 bf16 或 fp8 版本",
+        "en": "{name} is a {fmt} quantized checkpoint ({layers} quantized layers), which training and generation do not support; use the bf16 or fp8 release of the same model instead",
     },
 }

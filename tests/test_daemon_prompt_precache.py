@@ -35,6 +35,7 @@ class _Stack:
         self.is_model_loaded = False
         self.is_model_on_device = False
         self.is_fp8_storage = True
+        self.te_load_bytes_estimate = 7 * 1024 ** 3  # 同真实 Krea2 fp8 栈
 
     def precache_online_prompts(self, prompts):
         if self.fail:
@@ -210,6 +211,34 @@ def test_dit_restore_waits_for_cuda_copies_before_sampling(monkeypatch):
     assert events == ["dit:cuda", "sync:cuda", "empty_cache"]
 
 
+def test_dit_move_skips_swap_managed_params_under_block_swap(monkeypatch):
+    """block swap 下任务级让位/搬回走 move_module_excluding：一刀切 .to(cuda)
+    会把换出层 CPU pinned 主副本整份传上卡（峰值 = 完整模型）。"""
+    import training.block_swap as block_swap_module
+
+    moves: list[tuple[object, str, object]] = []
+
+    class _Model:
+        def to(self, device):  # 有 swap 时绝不能被调用
+            raise AssertionError("bare model.to() under block swap")
+
+    swap = object()
+    cache = anima_daemon.ModelCache()
+    cache.model = _Model()
+    cache.adapters = []
+    cache.block_swap = swap
+    monkeypatch.setattr(
+        block_swap_module, "move_module_excluding",
+        lambda m, device, s: moves.append((m, device, s)),
+    )
+    monkeypatch.setattr(anima_daemon.torch.cuda, "is_available", lambda: False)
+
+    cache._move_dit_and_adapters("cpu")
+    cache._move_dit_and_adapters("cuda")
+
+    assert moves == [(cache.model, "cpu", swap), (cache.model, "cuda", swap)]
+
+
 def test_cuda_oom_retries_once_with_same_seed(monkeypatch):
     events: list[str] = []
     attempts = 0
@@ -321,6 +350,9 @@ def test_ensure_text_ready_builds_and_reuses(monkeypatch):
     built = []
 
     class _Family:
+        # TE 先行编排按文本策略判定（cached_varlen = Krea2 / MOSS）
+        spec = SimpleNamespace(text=SimpleNamespace(strategy="cached_varlen"))
+
         def load_text(self, path, device, dtype, **kw):
             built.append(str(path))
             return _Stack()
@@ -378,8 +410,10 @@ def test_unload_keep_text_preserves_stack(monkeypatch):
 class _LoadFamily:
     """_load 依赖面 fake：load_dit/load_vae 占位，load_text 计数。"""
 
-    def __init__(self, text_stack_factory):
-        self.spec = SimpleNamespace(capabilities=set())
+    def __init__(self, text_stack_factory, *, strategy="cached_varlen"):
+        self.spec = SimpleNamespace(
+            capabilities=set(), text=SimpleNamespace(strategy=strategy),
+        )
         self._factory = text_stack_factory
         self.load_text_calls = 0
 
@@ -421,7 +455,7 @@ def test_cross_family_switch_rebuilds_krea2_text_stack(monkeypatch):
     monkeypatch.setattr(sysmem, "trim_working_set", lambda: None)
     monkeypatch.setattr(anima_daemon.torch.cuda, "is_available", lambda: False)
     krea = _LoadFamily(_Stack)
-    anima = _LoadFamily(lambda: ("qwen", "qwen_tok", "t5_tok"))
+    anima = _LoadFamily(lambda: ("qwen", "qwen_tok", "t5_tok"), strategy="online")
     monkeypatch.setattr(
         anima_daemon._T, "get_family",
         lambda fid: {"krea2": krea, "anima": anima}[fid],

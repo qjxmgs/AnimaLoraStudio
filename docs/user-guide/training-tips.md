@@ -28,7 +28,7 @@
 Studio 的 **数据与训练规模**面板已经按当前实现推导：
 
 - 文件夹有效样本 = 图片数 × repeat × 分辨率档数；正则样本也计入总量。
-- 常规训练每 epoch 的 optimizer 更新步数约为 `ceil(有效样本 ÷ (batch_size × grad_accum))`；NaViT Packing 使用真实打包模拟，界面会标 `≈`。
+- 常规训练每 epoch 的 optimizer 更新步数约为 `ceil(有效样本 ÷ (batch_size × grad_accum))`；NaViT Packing 使用真实打包模拟，界面会标 `≈`；MOSS-Image 打包时文本 token 也计入预算，预估同样按 caption 计入（需已设置文本编码器路径）。
 - 总更新步数约为 `每 epoch 更新步数 × epochs`，若 `max_steps` 更小则提前截断。
 - 单张训练图的计划曝光次数约为 `repeat × epochs × 分辨率档数`；它与 optimizer 更新步数不是同一个指标。
 
@@ -102,6 +102,7 @@ Studio 的 **数据与训练规模**面板已经按当前实现推导：
 |------|------|------|----------|
 | LoRA | 简单稳定，兼容性好 | 表达力有限 | 单角色、简单画风 |
 | LoKr | 表达力强，参数高效 | 需要调参 | 多角色、复杂画风 |
+| Riemann LoRA | 在秩 r 流形上优化 ΔW，消除因子分解歧义；导出为普通 LoRA | 只能配 [Riemannion 优化器](optimizers.md)；不支持 DoRA / dropout / alpha | 想试流形优化 |
 
 ### LyCORIS v4 与自动训练遮罩
 
@@ -299,7 +300,7 @@ LoRA 参数全精度——kohya / musubi 生态的 `fp8_base` 语义）：
 | `attention_backend` | SDPA（配置值为 `none`） | Krea 2 加载器固定 SDPA |
 | `shuffle_caption` / `keep_tokens` / `tag_dropout` | 关闭 | tag 生态操作对自然语言 caption 不适用 |
 
-**能力差异**：NaViT 打包、SRA、LeapAlign、compile_blocks 为仅 Anima 功能（Krea 2 下自动隐藏）；
+**能力差异**：SRA、LeapAlign、compile_blocks 为仅 Anima 功能，NaViT 打包支持 Anima 与 MOSS-Image（Krea 2 下均自动隐藏）；
 masked loss、正则集、flip augment、各优化器 / loss / lr scheduler 跨族通用。
 
 ### caption 建议
@@ -335,7 +336,7 @@ RTX 5090 环境的官方 fp8、1024²、普通 LoRA rank32、batch1 / 累积4、
 
 Anima 同样可通过交换降低 DiT 驻留量，但大卡上的分配量与某次运行的速度差不足以认证最低卡容量。**6GB实卡包含采样的完整训练仍需目标卡、完整配置与环境记录验证**；没有同配置对照时，不给出通用速度损失百分比。
 
-换出权重需要当前可用 RAM，且会被锁定、不能供其他程序使用；估算每层 Krea 2 fp8约0.4GB / bf16约0.8GB，Anima约0.13GB。加载前护栏会尽力拦截可识别不足，但查询失败、后续峰值与其他程序占用仍可能导致OOM或换页，不是整机安全保证。
+换出权重需要当前可用 RAM，且会被锁定、不能供其他程序使用；估算每层 Krea 2 fp8约0.4GB / bf16约0.8GB，Anima约0.13GB，MOSS-Image int8约0.11GB / bf16约0.21GB。加载前护栏会尽力拦截可识别不足，但查询失败、后续峰值与其他程序占用仍可能导致OOM或换页，不是整机安全保证。
 
 ### 显存参考
 

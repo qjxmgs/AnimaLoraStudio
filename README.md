@@ -1,8 +1,8 @@
 # AnimaLoraStudio
 
-[![中文](https://img.shields.io/badge/lang-%E4%B8%AD%E6%96%87-blue)](README.md) [![English](https://img.shields.io/badge/lang-English-lightgrey)](README.en.md) [![Version](https://img.shields.io/badge/version-0.29.0-blue)](CHANGELOG.md) [![License](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
+[![中文](https://img.shields.io/badge/lang-%E4%B8%AD%E6%96%87-blue)](README.md) [![English](https://img.shields.io/badge/lang-English-lightgrey)](README.en.md) [![Version](https://img.shields.io/badge/version-0.30.0-blue)](CHANGELOG.md) [![License](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 
-**端到端流水线**：从 Booru 抓图 → 筛选 → 打标 → 正则集 → 训练 → 出图测试，全流程在一个浏览器面板里推进。支持两个模型族的 LoRA 训练：[Anima](https://huggingface.co/circlestone-labs/Anima)（Cosmos DiT 二次元特调，轻量入门）与 [Krea 2](https://huggingface.co/krea/Krea-2-Raw)（12.9B 单流 MMDiT，Raw 训练 / Turbo 快速出图）。
+**端到端流水线**：从 Booru 抓图 → 筛选 → 打标 → 正则集 → 训练 → 出图测试，全流程在一个浏览器面板里推进。支持三个模型族的 LoRA 训练：[Anima](https://huggingface.co/circlestone-labs/Anima)（Cosmos DiT 二次元特调，轻量入门）、[Krea 2](https://huggingface.co/krea/Krea-2-Raw)（12.9B 单流 MMDiT，Raw 训练 / Turbo 快速出图）与 [MOSS-Image](https://huggingface.co/OpenMOSS-Team/MOSS-Image-Base)（5B 单流 DiT，int8 量化底模可直接训练与出图）。
 
 ![Studio 训练页（旧版布局示意）](docs/images/studio-train.png)
 
@@ -11,17 +11,17 @@
 ## 特性
 
 - **一站式流水线**：Booru 抓图 / 筛选 / 预处理（去重·放大·裁剪·涂抹·[自动头部遮罩](docs/user-guide/auto-head-mask.md)）/ 打标 / 正则集 / 训练 / 出图测试，全在一个浏览器面板，Stepper 引导。
-- **双模型族**：Anima 与 Krea 2 共用同一套流程；训练配置里一键切换模型族（权重路径与族默认值自动重算、逐项确认后生效），参数选项按族过滤，同一项目可并存两族版本。
+- **三模型族**：Anima、Krea 2 与 MOSS-Image 共用同一套流程；训练配置里一键切换模型族（权重路径与族默认值自动重算、逐项确认后生效），参数选项按族过滤，同一项目可并存多族版本。
 - **三种打标器**：WD14、CLTagger（本地 ONNX）、LLM（OpenAI 兼容，长 caption）；触发词填一次自动注入每张 caption。
 - **LLM 配置独立管理**：预设、普通设置与凭证分开存储，支持内置模板覆盖、原子写入与备份保护；已排队的 LLM 打标任务冻结预设配方。
 - **Booru 抓图集成**：原生 Gelbooru / Danbooru（Cloudflare 兼容 UA、速率限制、账号认证）。
 - **正则集自动生成**：训练集 tag 分布反向搜 + 长宽比聚类，或底模 AI 先验出图（无需 LoRA）。
 - **Project / Version 双层管理**：单项目多 version 共享数据、独立配置 / 输出；预设池双向 fork；项目列表支持批量归档、恢复与永久删除。
 - **多任务队列**：训练 / 出图 / 数据作业统一台账；排队、定时开始、暂停（从最近 epoch 末续）、恢复、队列调度挂起。
-- **内置出图测试**：单图 / XY 矩阵评测 + 常驻推理 daemon；分层目录统一浏览项目 checkpoint 与外部 LoRA，XY 轴抽屉支持 checkpoint / LoRA 强度轴和拖拽排序，Booru 画廊可选图打标并回填提示词；fp8 底模推理与 LoRA merge 对齐 ComfyUI 逐位一致；civitai 生态（PEFT / comfy 键格式）LoRA 可直接加载；输出 `lora_unet_*` 直接拖进 ComfyUI、无需转换。
+- **内置出图测试**：单图 / XY 矩阵评测 + 常驻推理 daemon；分层目录统一浏览项目 checkpoint 与外部 LoRA，XY 轴抽屉支持 checkpoint / LoRA 强度轴和拖拽排序，Booru 画廊可选图打标并回填提示词；fp8 底模推理与 LoRA merge 对齐 ComfyUI 逐位一致，MOSS-Image int8 底模出图按 ComfyUI 算子计算；civitai 生态（PEFT / comfy 键格式）LoRA 可直接加载；输出 `lora_unet_*` 直接拖进 ComfyUI、无需转换。
 - **LoRA 评估**：对训练产出的各 checkpoint 按验证集批量出图并算指标（CLIP / DINO / CCIP / WD14 标签召回，含纯底模对照），样图矩阵肉眼对比；一次评估 = 一个队列任务，中断可重试续跑。
-- **fp8 与显存编排**：官方 fp8 权重可用于 Krea 2 训练与推理，降低权重占用；Block 交换把部分层放在内存、计算时换入显存，进一步降低驻留量。最低卡容量需按完整配置实测，不以大卡读数外推保证；支持文本预编码后释放、显存策略三档及加载期 RAM 护栏。
-- **丰富训练算法**：多种 loss / timestep 采样 / 优化器（AdamW · Lion · Prodigy · SOAP 等）/ LoRA · LyCORIS adapter；普通 LoRA / LoHa 可选择受限的[实验性 Triton 后端](docs/user-guide/triton-backend.md)，默认仍使用 Torch。详见 [训练算法选项](docs/user-guide/training-tips.md#训练算法选项)。
+- **量化底模与显存编排**：官方 fp8 权重可用于 Krea 2 训练与推理，Comfy-Org 的 int8 ConvRot 权重可用于 MOSS-Image 训练与推理，降低权重占用；Block 交换把部分层放在内存、计算时换入显存，进一步降低驻留量。最低卡容量需按完整配置实测，不以大卡读数外推保证；支持文本预编码后释放、显存策略三档及加载期 RAM 护栏。
+- **丰富训练算法**：多种 loss / timestep 采样 / 优化器（AdamW · Lion · Prodigy · SOAP · Muon · Riemannion 等）/ LoRA · LyCORIS adapter；普通 LoRA / LoHa 可选择受限的[实验性 Triton 后端](docs/user-guide/triton-backend.md)，默认仍使用 Torch。详见 [训练算法选项](docs/user-guide/training-tips.md#训练算法选项)。
 - **环境自愈 + Web 内自更新**：首装自动选 GPU 兼容 torch、依赖哈希比对、git pull / 重启 / 回滚。
 - **中英双语**：首次启动选语言，Settings 内可切换。
 
@@ -49,8 +49,9 @@ studio.bat          # Windows
 - **GPU**：NVIDIA（A 卡 / Apple Silicon 不支持），按模型族分档：
   - **Anima**：**16 GB+ 显存推荐**；更小显存可降低 batch / 分辨率、调整采样或启用 Block 交换，但没有通用最低容量保证。大卡上的低分配量不等于 **6 GB 实卡完整训练通过**，需覆盖加载、训练与采样峰值。
   - **Krea 2**（12.9B）：24 GB 级训练优先官方 fp8，32 GB 级尝试 bf16 仍需峰值余量；16 GB 级可从 fp8、低 batch / gradient checkpointing 与 Block 交换试起，出图优先「省显存」。**12 GB 训练、8 GB 出图为待目标实卡全流程验证的试用方案**，不是容量保证。旧“约慢4%”只比较特定采样任务14→28层，不能当作关闭交换→28层的训练成本。配置与测量边界见[训练技巧](docs/user-guide/training-tips.md#显存参考)。
-- **RAM**：16 GB+；Krea 2 建议从32 GB+考虑，但当前可用量还需覆盖权重加载、缓存、操作系统和其他程序。Block 交换会锁定换出权重（Krea 2 fp8全换出约11 GB，Anima约3.6 GB）；护栏不能保证避免后续OOM或换页。
-- **存储**：SSD 强烈推荐（latent cache + sample 输出 IO 频繁）；Krea 2 权重体积大（Raw / Turbo bf16 各 26.3 GB、官方 fp8 各 13.1 GB、文本编码器 5.2–8.9 GB），预留磁盘空间
+  - **MOSS-Image**（5B）：默认 int8 底模 + int8 文本编码器。RTX 5090 上 512px batch 1 训练峰值约 7 GB（Block 交换 21 层约 4.9 GB），文本编码阶段约 7.5–8.2 GB 且不随 Block 交换下降；这些是大卡读数，不是容量保证。
+- **RAM**：16 GB+；Krea 2 建议从32 GB+考虑，但当前可用量还需覆盖权重加载、缓存、操作系统和其他程序。Block 交换会锁定换出权重（Krea 2 fp8全换出约11 GB，MOSS-Image int8约4.6 GB，Anima约3.6 GB）；护栏不能保证避免后续OOM或换页。
+- **存储**：SSD 强烈推荐（latent cache + sample 输出 IO 频繁）；Krea 2 权重体积大（Raw / Turbo bf16 各 26.3 GB、官方 fp8 各 13.1 GB、文本编码器 5.2–8.9 GB）；MOSS-Image 主模型 bf16 10.2 GB / int8 5.4 GB，文本编码器 int8 9.75 GB / bf16 16.8 GB，预留磁盘空间
 
 ## 文档
 
@@ -68,7 +69,8 @@ studio.bat          # Windows
 - 核心训练脚本派生自 [**Moeblack/AnimaLoraToolkit**](https://github.com/Moeblack/AnimaLoraToolkit)
 - Anima 主模型 / VAE：[circlestone-labs / Anima](https://huggingface.co/circlestone-labs/Anima)
 - Krea 2 主模型：[krea / Krea-2-Raw](https://huggingface.co/krea/Krea-2-Raw) · [Krea-2-Turbo](https://huggingface.co/krea/Krea-2-Turbo)（官方 fp8 量化版来自 [Comfy-Org/Krea-2](https://huggingface.co/Comfy-Org/Krea-2)）
-- 文本编码器：[Qwen3-0.6B-Base](https://huggingface.co/Qwen/Qwen3-0.6B-Base)（Anima）与 [Qwen3-VL-4B-Instruct](https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct)（Krea 2），来自 Qwen 团队
+- 文本编码器：[Qwen3-0.6B-Base](https://huggingface.co/Qwen/Qwen3-0.6B-Base)（Anima）、[Qwen3-VL-4B-Instruct](https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct)（Krea 2）与 Qwen3.5-9B（MOSS-Image），来自 Qwen 团队
+- MOSS-Image 主模型 / 文本编码器：[OpenMOSS-Team / MOSS-Image-Base](https://huggingface.co/OpenMOSS-Team/MOSS-Image-Base)（int8 ConvRot 量化版来自 [Comfy-Org/MOSS-Image](https://huggingface.co/Comfy-Org/MOSS-Image)）；DiT 结构移植自官方 [OpenMOSS/MOSS-Image](https://github.com/OpenMOSS/MOSS-Image)（Apache-2.0），VAE 移植自 [black-forest-labs/flux2](https://github.com/black-forest-labs/flux2)（Apache-2.0），int8 量化约定参考 [comfy-kitchen](https://pypi.org/project/comfy-kitchen/)（Apache-2.0）
 - Krea 2 训练 / 采样实现参考并部分派生自 [**kohya-ss/musubi-tuner**](https://github.com/kohya-ss/musubi-tuner)（Apache-2.0），模型结构派生自 ComfyUI、并对照 [HuggingFace diffusers](https://github.com/huggingface/diffusers)
 - OrthoLoRA / T-LoRA 适配器实现派生自 [**sorryhyun/anima_lora**](https://github.com/sorryhyun/anima_lora)（MIT），算法出自 [ControlGenAI/T-LoRA](https://github.com/ControlGenAI/T-LoRA) 论文与官方实现
 - Automagic 优化器移植自 [**ostris/ai-toolkit**](https://github.com/ostris/ai-toolkit)（MIT），bf16 Kahan 路径参考 [tdrussell/diffusion-pipe](https://github.com/tdrussell/diffusion-pipe)
@@ -80,4 +82,4 @@ studio.bat          # Windows
 
 仓库整体以 **GPL-3.0** 发布（包含 / 派生自 ComfyUI 的 GPL-3.0 代码）。同时包含部分 Apache-2.0 第三方实现（NVIDIA Cosmos / Wan2.1 / musubi-tuner 派生等），见 `LICENSE`（GPL-3.0）/ `LICENSE-APACHE` / [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)，请保留原文件头声明。
 
-**模型权重**（Anima / Krea 2 / Qwen / VAE）有各自的条款：Anima 相关权重含 Non-Commercial 等限制；Krea 2 权重受 [Krea 2 Community License](https://huggingface.co/krea/Krea-2-Raw/blob/main/LICENSE.pdf) 约束。请以对应模型卡 / HF repo 协议为准。
+**模型权重**（Anima / Krea 2 / MOSS-Image / Qwen / VAE）有各自的条款：Anima 相关权重含 Non-Commercial 等限制；Krea 2 权重受 [Krea 2 Community License](https://huggingface.co/krea/Krea-2-Raw/blob/main/LICENSE.pdf) 约束；MOSS-Image 权重以 [Apache-2.0](https://huggingface.co/OpenMOSS-Team/MOSS-Image-Base) 发布。请以对应模型卡 / HF repo 协议为准。

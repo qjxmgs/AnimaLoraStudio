@@ -2,12 +2,13 @@
 torch>=2.0.0
 torchvision>=0.15.0
 diffusers>=0.32.0
-# >=4.57.0：Krea2 文本编码器用 Qwen3VLForConditionalGeneration（4.57.0 引入）。
-# 自更新的 pip install -r 不带 --upgrade（仅补缺），floor 不抬上去，v0.20 之前
-# 装机的老 venv 永远停在旧版，Krea2 全链路在 TE 加载即崩（#485）。抬 floor 后
-# pip 连带升 huggingface_hub→1.x / tokenizers→0.22+ / safetensors→0.8+，torch
-# 不在 transformers 硬依赖里、不受影响。
-transformers>=4.57.0
+# >=5.3.0：MOSS-Image 文本编码器用 Qwen3_5TextModel（5.3 引入，模型卡要求）；
+# Krea2 的 Qwen3VLForConditionalGeneration 自 4.57.0 起已有。
+# 自更新的 pip install -r 不带 --upgrade（仅补缺），floor 不抬上去，老 venv
+# 永远停在旧版，对应族在 TE 加载即崩（#485）。抬 floor 后 pip 连带升
+# huggingface_hub→1.x / tokenizers→0.22+ / safetensors→0.8+，torch 不在
+# transformers 硬依赖里、不受影响。
+transformers>=5.3.0
 sentencepiece>=0.1.99
 protobuf>=3.20.0
 accelerate>=0.24.0
