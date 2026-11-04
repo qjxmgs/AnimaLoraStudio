@@ -331,7 +331,7 @@ export default function SettingsPage() {
         actions={<SaveIndicator status={saveStatus} announceError={false} />}
       />
 
-      <div ref={scrollContainerRef} data-testid="settings-scroll-container" className="p-page pb-12 flex-1 overflow-y-auto">
+      <div data-save-on-blur ref={scrollContainerRef} data-testid="settings-scroll-container" className="p-page pb-12 flex-1 overflow-y-auto">
       <div className="grid gap-10 max-w-[1920px]" style={{ gridTemplateColumns: 'minmax(0,1fr) 200px' }}>
       <div className="flex flex-col gap-page-loose min-w-0">
 

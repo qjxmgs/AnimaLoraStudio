@@ -1,3 +1,4 @@
+import { SAVE_PAGE_EVENT } from '../../../lib/saveShortcut'
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useBlocker, useNavigate, useOutletContext } from 'react-router-dom'
@@ -359,6 +360,13 @@ export default function TrainPage() {
     inFlightSaveRef.current = promise
     return promise
   }, [project.id, vid, applyPresetWarnings, clearSaveDebounce])
+
+  useEffect(() => {
+    const save = () => { if (!busy) void flushConfig().catch(() => {}) }
+    window.addEventListener(SAVE_PAGE_EVENT, save)
+    return () => window.removeEventListener(SAVE_PAGE_EVENT, save)
+  }, [busy, flushConfig])
+
 
   const finishBoundary = useCallback(() => {
     busyRef.current = false
@@ -723,7 +731,7 @@ export default function TrainPage() {
       )}
     >
       <div className="flex flex-col h-full min-h-0">
-        <div className="train-workbench flex-1 min-h-0" data-preview-open={previewOpen} data-preview-tab={previewTab}>
+        <div data-save-on-blur className="train-workbench flex-1 min-h-0" data-preview-open={previewOpen} data-preview-tab={previewTab}>
 
           {/* 左栏：配置工作区 */}
           <div className="train-draft flex flex-col gap-3 min-h-0 min-w-0">

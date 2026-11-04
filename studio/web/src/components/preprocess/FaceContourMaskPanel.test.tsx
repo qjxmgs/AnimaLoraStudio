@@ -178,7 +178,9 @@ describe('FaceContourMaskPanel', () => {
     vi.mocked(api.getHeadMaskProposals).mockResolvedValue({ ...proposals, undo_available: true })
     renderPanel({ unsavedCount: 1 })
     const user = userEvent.setup()
-    await user.click(await screen.findByRole('button', { name: '应用所选（2）' }))
+    expect(await screen.findByRole('button', { name: '应用所选（0）' })).toBeDisabled()
+    await user.click(screen.getByRole('button', { name: '当前图全选' }))
+    await user.click(screen.getByRole('button', { name: '应用所选（2）' }))
     await user.click(screen.getByRole('button', { name: '撤销本次自动遮罩' }))
     expect(api.applyHeadMaskProposals).not.toHaveBeenCalled()
     expect(api.undoHeadMaskApply).not.toHaveBeenCalled()
@@ -292,6 +294,8 @@ describe('FaceContourMaskPanel', () => {
       '1_data/A.png': ['b'], '1_data/B.png': [],
     })
     expect(changed).toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: '应用所选（0）' })).toBeDisabled()
+    expect(regions[1]).not.toBeChecked()
 
     await waitFor(() => expect(screen.getByRole('button', { name: '撤销本次自动遮罩' })).toBeEnabled())
     await user.click(screen.getByRole('button', { name: '撤销本次自动遮罩' }))

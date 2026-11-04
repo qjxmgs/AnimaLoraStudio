@@ -132,6 +132,7 @@ export default function TaggingPage() {
   const [cltaggerForm, setCltaggerForm] = useState<CLTaggerForm | null>(null)
   // LLM 瘦身后本次覆盖只剩预设选择；编辑字段一律走 LLMPresetEditorModal。
   const [llmPresetId, setLlmPresetId] = useState<string | null>(null)
+  const overwriteConfirmRef = useRef<HTMLButtonElement>(null)
   const llmPresetTouchedRef = useRef(false)
   const [llmEditorOpen, setLlmEditorOpen] = useState(false)
 
@@ -702,6 +703,7 @@ export default function TaggingPage() {
     {overwriteConfirmOpen && (
       <Modal
         role="alertdialog"
+        initialFocusRef={overwriteConfirmRef}
         size="sm"
         title={t('tag.overwriteConfirmTitle')}
         description={t('tag.overwriteConfirmDescription')}
@@ -711,7 +713,7 @@ export default function TaggingPage() {
             <Button variant="secondary" onClick={() => setOverwriteConfirmOpen(false)}>
               {t('common.cancel')}
             </Button>
-            <Button variant="danger" onClick={() => void enqueueTagging()}>
+            <Button ref={overwriteConfirmRef} variant="danger" onClick={() => void enqueueTagging()}>
               {t('tag.overwriteConfirmAction')}
             </Button>
           </div>

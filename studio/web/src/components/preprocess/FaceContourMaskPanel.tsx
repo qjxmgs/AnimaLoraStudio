@@ -122,6 +122,8 @@ function MaskReviewPanel({
     proposalJobRef.current = jobId
     setSelections((previous) => {
       if (sameJob) return previous
+      // Reopened applied jobs show the saved mask until another preview is selected.
+      if (result.undo_available) return {}
       return Object.fromEntries(
         result.images.map((image) => [image.name, image.regions.map((region) => region.id)]),
       )
@@ -295,6 +297,7 @@ function MaskReviewPanel({
         projectId, versionId, proposal.job_id, selections,
       )
       if (!mounted.current) return
+      setSelections({})
       toast(t('preprocessInpaint.faceMask.applied', { n: result.applied }), 'success')
       await onWorkspaceChanged()
       await loadProposal(proposal.job_id)
@@ -347,6 +350,7 @@ function MaskReviewPanel({
       const result = await api.applyHeadMaskProposals(projectId, versionId, proposal.job_id, selections,
         { job_id: replacement.job_id, apply_id: replacement.apply_id })
       if (!mounted.current) return
+      setSelections({})
       toast(t('preprocessInpaint.faceMask.applied', { n: result.applied }), 'success')
       setReplacementPreview(null)
       await onWorkspaceChanged()

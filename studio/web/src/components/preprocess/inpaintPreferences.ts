@@ -15,15 +15,17 @@ export const DEFAULT_INPAINT_BRUSH: InpaintBrushState = {
 }
 
 export const INPAINT_TOOL_SHORTCUTS: Readonly<Record<string, InpaintTool>> = {
+  KeyW: 'brush',
   KeyB: 'brush',
   KeyE: 'eraser',
+  KeyR: 'lasso',
   KeyL: 'lasso',
 }
 
-export const INPAINT_TOOL_SHORTCUT_LABELS: Readonly<Record<InpaintTool, string>> = {
-  brush: 'B',
-  eraser: 'E',
-  lasso: 'L',
+export const INPAINT_TOOL_SHORTCUT_LABELS: Readonly<Record<InpaintTool, readonly string[]>> = {
+  brush: ['W', 'B'],
+  eraser: ['E'],
+  lasso: ['R', 'L'],
 }
 
 function legacyInpaintTool(): InpaintTool {

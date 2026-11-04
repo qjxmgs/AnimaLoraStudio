@@ -59,12 +59,12 @@ export default function InpaintToolPanel({
           <SegmentedControl
             items={(['brush', 'eraser', 'lasso'] as const).map((value) => {
               const label = t(`preprocessInpaint.tool.${value}`)
-              const shortcut = INPAINT_TOOL_SHORTCUT_LABELS[value]
+              const shortcuts = INPAINT_TOOL_SHORTCUT_LABELS[value]
               return {
                 value,
                 label,
-                shortcut,
-                title: t('preprocessInpaint.toolShortcut', { tool: label, key: shortcut }),
+                shortcut: shortcuts.join(' '),
+                title: t('preprocessInpaint.toolShortcut', { tool: label, key: shortcuts.join(' / ') }),
               }
             })}
             value={tool}

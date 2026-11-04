@@ -277,7 +277,7 @@ describe('LLMPresetEditorModal keyboard lifecycle', () => {
     expect(screen.queryByRole('dialog', { name: titleMatches })).not.toBeInTheDocument()
     expect(screen.queryByDisplayValue('Fixture prompt')).not.toBeVisible()
     const cancel = within(confirmation).getByRole('button', { name: i18n.t('common.cancel') })
-    await waitFor(() => expect(cancel).toHaveFocus())
+    await waitFor(() => expect(within(screen.getByRole('alertdialog')).getByRole('button', { name: i18n.t('common.confirm') })).toHaveFocus())
     if (method === 'Escape') await user.keyboard('{Escape}')
     else await user.click(cancel)
     expect(editor()).toBe(dialog)
@@ -394,7 +394,7 @@ describe('LLMPresetEditorModal keyboard lifecycle', () => {
       panes[1].scrollTop = 21
       await user.click(remove)
       const cancel = within(screen.getByRole('alertdialog')).getByRole('button', { name: i18n.t('common.cancel') })
-      await waitFor(() => expect(cancel).toHaveFocus())
+      await waitFor(() => expect(within(screen.getByRole('alertdialog')).getByRole('button', { name: i18n.t('common.confirm') })).toHaveFocus())
 
       // The browser delivers the auto-growing textarea's ResizeObserver after
       // the first reveal frame. jsdom has no layout; control that ordering here.

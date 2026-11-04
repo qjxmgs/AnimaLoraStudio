@@ -1,5 +1,3 @@
-import { useEffect, useRef } from 'react'
-import { hasBlockingVisibleModal } from '../../../components/preprocess/inpaintPreferences'
 import { useSearchParams } from 'react-router-dom'
 import PreprocessUpscalePage from './Preprocess'
 import PreprocessCropPage from './PreprocessCrop'
@@ -28,24 +26,9 @@ import PreprocessOverviewPage from './PreprocessOverview'
 export default function PreprocessHub() {
   const [params] = useSearchParams()
   const tool = params.get('tool') ?? 'overview'
-  const saveButtonRef = useRef<HTMLButtonElement>(null)
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (
-        event.defaultPrevented || !(event.ctrlKey || event.metaKey) ||
-        event.shiftKey || event.altKey || event.key.toLowerCase() !== 's'
-      ) return
-      event.preventDefault()
-      if (!event.repeat && !event.isComposing && !hasBlockingVisibleModal()) {
-        saveButtonRef.current?.click()
-      }
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [])
   if (tool === 'dedupe') return <PreprocessDuplicatesPage />
   if (tool === 'upscale') return <PreprocessUpscalePage />
   if (tool === 'crop') return <PreprocessCropPage />
-  if (tool === 'inpaint') return <PreprocessInpaintPage saveButtonRef={saveButtonRef} />
+  if (tool === 'inpaint') return <PreprocessInpaintPage />
   return <PreprocessOverviewPage />
 }

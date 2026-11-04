@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
 import { DialogProvider, useDialog } from './Dialog'
@@ -50,6 +50,16 @@ describe('Dialog (useDialog API)', () => {
     await user.click(screen.getByText('trigger'))
     await user.click(screen.getByText('确认'))
     expect(screen.getByTestId('result')).toHaveTextContent('resolved:true')
+  })
+
+  it.each([false, true])('Enter activates the default confirmation or the explicitly focused cancel button (%s)', async (cancel) => {
+    const user = userEvent.setup()
+    wrap((api) => api.confirm('删除标签？', { title: '确认批量操作', tone: 'danger' }))
+    await user.click(screen.getByText('trigger'))
+    await waitFor(() => expect(screen.getByRole('button', { name: '确认' })).toHaveFocus())
+    if (cancel) await user.tab({ shift: true })
+    await user.keyboard('{Enter}')
+    expect(screen.getByTestId('result')).toHaveTextContent(cancel ? 'resolved:false' : 'resolved:true')
   })
 
   it('confirm 点取消返回 false', async () => {

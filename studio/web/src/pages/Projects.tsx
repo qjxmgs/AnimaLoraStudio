@@ -1040,6 +1040,7 @@ function NewProjectDialog({
 
   return (
     <div
+      role="dialog" aria-modal="true"
       className="fixed inset-0 z-40 flex items-center justify-center bg-black/45"
       onClick={onCancel}
     >
@@ -1103,7 +1104,7 @@ function NewProjectDialog({
           <button
             type="submit"
             className="btn btn-primary"
-            disabled={busy || !form.title.trim() || !slugValid}
+            aria-keyshortcuts="Control+S Meta+S" disabled={busy || !form.title.trim() || !slugValid}
           >
             {busy ? t('projects.creating') : t('common.create')}
           </button>
@@ -1139,6 +1140,7 @@ function EditProjectDialog({
 
   return (
     <div
+      role="dialog" aria-modal="true"
       className="fixed inset-0 z-40 flex items-center justify-center bg-black/45"
       onClick={onCancel}
     >
@@ -1186,7 +1188,7 @@ function EditProjectDialog({
           <button
             type="submit"
             className="btn btn-primary"
-            disabled={busy || !title.trim()}
+            aria-keyshortcuts="Control+S Meta+S" disabled={busy || !title.trim()}
           >
             {busy ? t('common.saving') : t('common.save')}
           </button>

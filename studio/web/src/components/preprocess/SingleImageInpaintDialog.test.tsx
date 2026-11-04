@@ -1,3 +1,4 @@
+import { installSaveShortcut } from '../../lib/saveShortcut'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -133,6 +134,29 @@ describe('SingleImageInpaintDialog', () => {
     expect(onClose).not.toHaveBeenCalled()
   })
 
+  it('switches tools with primary and alternate shortcuts and ignores text input', async () => {
+    const user = userEvent.setup()
+    render(<SingleImageInpaintDialog projectId={7} versionId={11} image={image} onClose={vi.fn()} />)
+    await waitFor(() => expect(screen.getByTestId('single-image-inpaint-editor-root')).toHaveFocus())
+    await user.keyboard('e')
+    const eraser = screen.getByRole('radio', { name: '橡皮' })
+    expect(eraser).toBeChecked()
+    await user.keyboard('b')
+    expect(screen.getByRole('radio', { name: '画笔' })).toBeChecked()
+    await user.keyboard('l')
+    expect(screen.getByRole('radio', { name: '套索' })).toBeChecked()
+    await user.keyboard('e')
+    expect(eraser).toBeChecked()
+    await user.keyboard('r')
+    expect(screen.getByRole('radio', { name: '套索' })).toBeChecked()
+    await user.keyboard('w')
+    const brush = screen.getByRole('radio', { name: '画笔' })
+    expect(brush).toBeChecked()
+    await user.click(screen.getByLabelText('画笔大小数值'))
+    await user.keyboard('erl')
+    expect(brush).toBeChecked()
+  })
+
   it('shows only the reusable single-image editing controls', () => {
     render(
       <SingleImageInpaintDialog
@@ -230,7 +254,8 @@ describe('SingleImageInpaintDialog', () => {
     await user.click(screen.getByRole('button', { name: 'Draw test stroke' }))
     await user.click(screen.getByRole('radio', { name: '训练遮罩' }))
     await user.click(screen.getByRole('button', { name: 'Draw test stroke' }))
-    await user.click(screen.getByRole('button', { name: '保存并关闭' }))
+    const removeShortcut = installSaveShortcut()
+    try { await user.keyboard('{Control>}s{/Control}') } finally { removeShortcut() }
 
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1))
     expect(api.saveInpaintTrain).toHaveBeenCalledWith(7, 11, '1_data/a.jpg', expect.any(Blob))

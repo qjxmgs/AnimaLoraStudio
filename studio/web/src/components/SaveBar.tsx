@@ -97,7 +97,7 @@ export default function SaveBar({
           <Button
             variant={dirtyCount > 0 ? 'danger' : 'secondary'}
             size="sm"
-            onClick={save}
+            aria-keyshortcuts="Control+S Meta+S" onClick={save}
             disabled={dirtyCount === 0}
             loading={saving}
             title={t('saveBar.tooltip')}

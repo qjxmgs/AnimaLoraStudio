@@ -1,3 +1,4 @@
+import { installSaveShortcut } from '../../../lib/saveShortcut'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Outlet, Route, Routes } from 'react-router-dom'
@@ -795,7 +796,8 @@ describe('TagEdit workspace', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
     expect(api.commitCaptions).not.toHaveBeenCalled()
     expect(screen.getByTestId('image-badge-人物 A/a1.png')).toHaveTextContent('未保存')
-    await user.click(screen.getByRole('button', { name: '保存（1）' }))
+    const removeShortcut = installSaveShortcut()
+    try { await user.keyboard('{Control>}s{/Control}') } finally { removeShortcut() }
 
     expect(mocks.confirm).not.toHaveBeenCalled()
     await waitFor(() => expect(api.commitCaptions).toHaveBeenCalledWith(7, 11, [{

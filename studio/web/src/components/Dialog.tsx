@@ -167,6 +167,7 @@ function DialogRoot({ state, onCancel, onOk }: RootProps) {
     state.type === 'prompt' ? (state.options.defaultValue ?? '') : '',
   )
   const [error, setError] = useState<string | null>(null)
+  const confirmRef = useRef<HTMLButtonElement>(null)
   const inputRef = useRef<HTMLInputElement | null>(null)
   const errorId = useId()
 
@@ -215,7 +216,7 @@ function DialogRoot({ state, onCancel, onOk }: RootProps) {
       onSubmit={handleSubmit}
       size="sm"
       role={state.options.tone && state.options.tone !== 'default' ? 'alertdialog' : 'dialog'}
-      initialFocusRef={state.type === 'prompt' ? inputRef : undefined}
+      initialFocusRef={state.type === 'prompt' ? inputRef : confirmRef}
       footer={(
         <ActionGroup
           secondary={state.type !== 'alert' ? (
@@ -230,6 +231,8 @@ function DialogRoot({ state, onCancel, onOk }: RootProps) {
           ) : undefined}
           primary={(
             <Button
+              ref={confirmRef}
+              aria-keyshortcuts={state.type === 'prompt' ? 'Control+S Meta+S' : undefined}
               type="submit"
               variant="primary"
               className="min-w-[96px] justify-center"

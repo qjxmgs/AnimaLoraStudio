@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type Ref } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link, useOutletContext } from 'react-router-dom'
 import {
@@ -66,12 +66,12 @@ function splitRel(name: string): { folder: string; filename: string } {
 /** 状态模型对齐裁剪页：双数据面双桶（strokesByImage / maskStrokesByImage），
  *  随便切图改动都留在内存，保存按当前模式分发（§9 决策 2）。只有活动图挂
  *  真实 canvas，「保存全部」对非活动图走离屏重放。 */
-export default function PreprocessInpaintPage(props: { saveButtonRef: Ref<HTMLButtonElement> }) {
+export default function PreprocessInpaintPage() {
   const { project, activeVersion } = useOutletContext<Ctx>()
-  return <InpaintWorkspace {...props} key={`${project.id}:${activeVersion?.id ?? 0}`} />
+  return <InpaintWorkspace key={`${project.id}:${activeVersion?.id ?? 0}`} />
 }
 
-function InpaintWorkspace({ saveButtonRef }: { saveButtonRef: Ref<HTMLButtonElement> }) {
+function InpaintWorkspace() {
   const { t } = useTranslation()
   const { project, activeVersion, reload } = useOutletContext<Ctx>()
   const { confirm } = useDialog()
@@ -400,19 +400,30 @@ function InpaintWorkspace({ saveButtonRef }: { saveButtonRef: Ref<HTMLButtonElem
   }, [undo, redo, busy, autoBusy, faceBusy])
 
   useEffect(() => {
-    const onToolShortcut = (event: KeyboardEvent) => {
+    const onEditorShortcut = (event: KeyboardEvent) => {
       const nextTool = INPAINT_TOOL_SHORTCUTS[event.code]
       if (
-        !nextTool || nextTool === tool || event.defaultPrevented || event.repeat ||
+        (!nextTool && event.key !== 'Tab') || event.defaultPrevented || event.repeat ||
         event.isComposing || event.ctrlKey || event.altKey || event.metaKey || event.shiftKey ||
         isInpaintTextEntryTarget(event.target) || hasBlockingVisibleModal()
       ) return
+      if (event.key === 'Tab') {
+        if (busy || autoBusy || faceBusy ||
+          (event.target instanceof Element && event.target.closest('[role="menu"]'))) return
+        const index = filteredImages.findIndex((image) => image.name === activeName)
+        const next = filteredImages[index + 1]
+        if (!next) return
+        event.preventDefault()
+        setActiveName(next.name)
+        return
+      }
+      if (!nextTool || nextTool === tool) return
       event.preventDefault()
       setTool(nextTool)
     }
-    window.addEventListener('keydown', onToolShortcut)
-    return () => window.removeEventListener('keydown', onToolShortcut)
-  }, [setTool, tool])
+    window.addEventListener('keydown', onEditorShortcut)
+    return () => window.removeEventListener('keydown', onEditorShortcut)
+  }, [activeName, autoBusy, busy, faceBusy, filteredImages, setTool, tool])
 
   const onPickColor = useCallback((hex: string) => {
     setBrush((prev) => ({ ...prev, color: hex }))
@@ -570,7 +581,6 @@ function InpaintWorkspace({ saveButtonRef }: { saveButtonRef: Ref<HTMLButtonElem
             <Button
               variant="primary"
               size="sm"
-              ref={saveButtonRef}
               aria-keyshortcuts="Control+S Meta+S"
               onClick={() => void saveActive()}
               disabled={busy || autoBusy || faceBusy || activeHistory.length === 0}

@@ -376,7 +376,7 @@ export default function SingleImageInpaintDialog({
                 </Button>
                 <Button
                   variant="primary"
-                  onClick={() => { void saveAndClose() }}
+                  aria-keyshortcuts="Control+S Meta+S" onClick={() => { void saveAndClose() }}
                   disabled={!dirty || busy}
                   loading={busy}
                 >

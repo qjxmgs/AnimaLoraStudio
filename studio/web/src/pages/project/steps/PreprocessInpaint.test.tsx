@@ -1,7 +1,8 @@
+import { installSaveShortcut } from '../../../lib/saveShortcut'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Outlet, Route, Routes } from 'react-router-dom'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { api, type CropWorkspaceItem } from '../../../api/client'
 import type { InpaintStroke, LassoShape } from '../../../components/preprocess/InpaintCanvas'
 import { DialogProvider } from '../../../components/Dialog'
@@ -96,7 +97,10 @@ function renderPage(projectId = 1) {
   )
 }
 
+let removeSaveShortcut: () => void
+afterEach(() => removeSaveShortcut())
 beforeEach(() => {
+  removeSaveShortcut = installSaveShortcut()
   vi.restoreAllMocks()
   vi.clearAllMocks()
   mocks.canvasProps.length = 0
@@ -168,7 +172,25 @@ describe('Preprocess inpaint contracts', () => {
     expect(screen.getByTestId('inpaint-canvas')).toHaveAttribute('data-tool', 'eraser')
   })
 
-  it('switches tools with B, E and L and exposes each shortcut on hover', async () => {
+  it('advances with Tab in filmstrip order and keeps pending edits when switching images', async () => {
+    const user = userEvent.setup()
+    const second = { ...image, name: '1_data/b.png' }
+    vi.mocked(api.listCropWorkspaceTrain).mockResolvedValue({ images: [second, image] })
+    renderPage()
+    await user.click(await screen.findByRole('button', { name: 'Draw stroke' }))
+    const active = (name: string) => screen.getByRole('button', { name: `编辑 ${name}` })
+    fireEvent.keyDown(screen.getByLabelText('画笔大小数值'), { key: 'Tab' })
+    expect(active(image.name)).toHaveAttribute('aria-pressed', 'true')
+    expect(fireEvent.keyDown(window, { key: 'Tab' })).toBe(false)
+    expect(active(second.name)).toHaveAttribute('aria-pressed', 'true')
+    expect(fireEvent.keyDown(window, { key: 'Tab' })).toBe(true)
+    await user.click(screen.getByRole('radio', { name: '待保存 1' }))
+    fireEvent.keyDown(window, { key: 'Tab' })
+    expect(active(image.name)).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('button', { name: '保存当前图' })).toBeEnabled()
+  })
+
+  it('switches tools with W, E and R and exposes each shortcut on hover', async () => {
     renderPage()
     await screen.findByRole('group', { name: '涂抹工作集图片' })
     const tools = within(screen.getByRole('radiogroup', { name: '工具' }))
@@ -176,18 +198,23 @@ describe('Preprocess inpaint contracts', () => {
     const eraser = tools.getByRole('radio', { name: '橡皮' })
     const lasso = tools.getByRole('radio', { name: '套索' })
 
-    expect(brush).toHaveAttribute('title', '画笔（快捷键 B）')
+    expect(brush).toHaveAttribute('title', '画笔（快捷键 W / B）')
     expect(eraser).toHaveAttribute('title', '橡皮（快捷键 E）')
-    expect(lasso).toHaveAttribute('title', '套索（快捷键 L）')
-    expect(brush).toHaveAttribute('aria-keyshortcuts', 'B')
+    expect(lasso).toHaveAttribute('title', '套索（快捷键 R / L）')
+    expect(brush).toHaveAttribute('aria-keyshortcuts', 'W B')
     expect(eraser).toHaveAttribute('aria-keyshortcuts', 'E')
-    expect(lasso).toHaveAttribute('aria-keyshortcuts', 'L')
+    expect(lasso).toHaveAttribute('aria-keyshortcuts', 'R L')
 
     fireEvent.keyDown(window, { code: 'KeyE', key: 'e' })
     expect(eraser).toBeChecked()
+    fireEvent.keyDown(window, { code: 'KeyB', key: 'b' })
+    expect(brush).toBeChecked()
     fireEvent.keyDown(window, { code: 'KeyL', key: 'l' })
     expect(lasso).toBeChecked()
-    fireEvent.keyDown(window, { code: 'KeyB', key: 'b' })
+    fireEvent.keyDown(window, { code: 'KeyE', key: 'e' })
+    fireEvent.keyDown(window, { code: 'KeyR', key: 'r' })
+    expect(lasso).toBeChecked()
+    fireEvent.keyDown(window, { code: 'KeyW', key: 'w' })
     expect(brush).toBeChecked()
     expect(window.localStorage.getItem('studio:inpaint:tool')).toBe(JSON.stringify('brush'))
   })

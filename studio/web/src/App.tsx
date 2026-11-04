@@ -1,3 +1,4 @@
+import { installSaveShortcut } from './lib/saveShortcut'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
@@ -137,6 +138,7 @@ const router = createBrowserRouter(
 )
 
 export default function App() {
+  useEffect(installSaveShortcut, [])
   const [projectCtx, setProjectCtx] = useState<ProjectCtxValue | null>(null)
   // 跨页保留的"已选中项目"快照（见 ProjectContext 注释）
   const [selectedProject, setSelectedProject] = useState<SelectedProjectValue | null>(null)

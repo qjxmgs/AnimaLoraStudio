@@ -65,7 +65,7 @@ export default function ExportBundleDialog({ onConfirm, onCancel }: Props) {
             </Button>
           )}
           primary={(
-            <Button type="submit" variant="primary" disabled={nothingSelected}>
+            <Button aria-keyshortcuts="Control+S Meta+S" type="submit" variant="primary" disabled={nothingSelected}>
               {t('common.export')}
             </Button>
           )}

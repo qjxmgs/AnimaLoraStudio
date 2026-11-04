@@ -1,3 +1,4 @@
+import { SAVE_PAGE_EVENT } from '../../lib/saveShortcut'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
@@ -239,7 +240,11 @@ export default function PresetsPage() {
     if (!dirty && !descDirty) return
     const name = selected
     const cfg = config
-    const timer = setTimeout(() => {
+    let started = false
+    const save = () => {
+      if (started) return
+      started = true
+      clearTimeout(timer)
       void (async () => {
         setSaveStatus({ state: 'saving' })
         try {
@@ -260,12 +265,18 @@ export default function PresetsPage() {
           setSaveStatus({ state: 'saved', at: Date.now() })
           refreshList()
         } catch (e) {
+          started = false
           setSaveStatus({ state: 'error', error: String(e) })
           toast(String(e), 'error')
         }
       })()
-    }, 600)
-    return () => clearTimeout(timer)
+    }
+    const timer = setTimeout(save, 600)
+    window.addEventListener(SAVE_PAGE_EVENT, save)
+    return () => {
+      clearTimeout(timer)
+      window.removeEventListener(SAVE_PAGE_EVENT, save)
+    }
     // descriptions 故意排除：保存回调 setDescriptions 后 descDirty 已 false，重跑即返回
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [config, descDraft, dirty, descDirty, isNew, selected])
@@ -641,7 +652,7 @@ export default function PresetsPage() {
             </>
           )}
           primary={isNew ? (
-            <Button variant="primary" size="sm" onClick={handleSave} disabled={saveDisabled}>
+            <Button variant="primary" size="sm" aria-keyshortcuts="Control+S Meta+S" onClick={handleSave} disabled={saveDisabled}>
               {t('common.save')}
             </Button>
           ) : undefined}
@@ -760,7 +771,7 @@ export default function PresetsPage() {
       {/* ── content：左表单（自己滚动）+ 锚点导航 + 把手 + YAML 预览抽屉。
           布局与 Train 页一致：抽屉收起时空间归表单。 ── */}
       <div className="flex-1 min-h-0 flex gap-4 p-4">
-        <div ref={scrollContainerRef} className="flex-[3] min-w-0 overflow-y-auto">
+        <div data-save-on-blur ref={scrollContainerRef} className="flex-[3] min-w-0 overflow-y-auto">
         <div className="flex flex-col gap-3 min-w-0">
 
           {/* 名称 / 描述 */}
@@ -980,7 +991,7 @@ function PresetExportDialog({
           <div className="font-medium text-fg-primary mb-1">{t('presets.exportDownload')}</div>
           <div className="text-xs text-fg-tertiary">{t('presets.exportDownloadHint')}</div>
         </button>
-        <button type="button" className="card p-4 text-left hover:border-dim" onClick={onDataExports}>
+        <button type="button" aria-keyshortcuts="Control+S Meta+S" className="card p-4 text-left hover:border-dim" onClick={onDataExports}>
           <div className="font-medium text-fg-primary mb-1">{t('presets.exportDataExports')}</div>
           <div className="text-xs text-fg-tertiary">{t('presets.exportDataExportsHint')}</div>
         </button>
@@ -1081,7 +1092,7 @@ function ImportConflictDialog({
           >
             {t('presets.importOverwrite')}
           </button>
-          <button type="submit" className="btn btn-primary">
+          <button aria-keyshortcuts="Control+S Meta+S" type="submit" className="btn btn-primary">
             {t('presets.importSaveAs')}
           </button>
         </div>

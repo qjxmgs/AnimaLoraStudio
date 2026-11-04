@@ -57,7 +57,7 @@ export default function LLMPresetEditorModal({ presetId, onClose }: {
   const confirmationBusyRef = useRef(false)
   const editorContentRef = useRef<HTMLDivElement>(null)
   const closeButtonRef = useRef<HTMLButtonElement>(null)
-  const cancelButtonRef = useRef<HTMLButtonElement>(null)
+  const confirmButtonRef = useRef<HTMLButtonElement>(null)
   const returnActionRef = useRef<HTMLButtonElement | null>(null)
   const scrollSnapshotRef = useRef<{ element: HTMLElement; top: number; left: number }[]>([])
   const mutationQueueRef = useRef<Promise<unknown>>(Promise.resolve())
@@ -93,7 +93,7 @@ export default function LLMPresetEditorModal({ presetId, onClose }: {
         if (confirmationBusy) {
           editorContentRef.current?.closest<HTMLElement>('[role="alertdialog"]')?.focus()
         } else {
-          cancelButtonRef.current?.focus()
+          confirmButtonRef.current?.focus()
         }
       } else {
         // Auto-growing textareas remeasure in ResizeObserver after the reveal
@@ -374,12 +374,12 @@ export default function LLMPresetEditorModal({ presetId, onClose }: {
           {confirmation && (
             <ActionGroup
               secondary={(
-                <Button ref={cancelButtonRef} variant="secondary" onClick={cancelConfirmation} disabled={confirmationBusy}>
+                <Button variant="secondary" onClick={cancelConfirmation} disabled={confirmationBusy}>
                   {t('common.cancel')}
                 </Button>
               )}
               primary={(
-                <Button variant="danger" loading={confirmationBusy} onClick={runConfirmedAction}>
+                <Button ref={confirmButtonRef} variant="danger" loading={confirmationBusy} onClick={runConfirmedAction}>
                   {t('common.confirm')}
                 </Button>
               )}
@@ -388,7 +388,7 @@ export default function LLMPresetEditorModal({ presetId, onClose }: {
         </>
       )}
     >
-      <div ref={editorContentRef} hidden={Boolean(confirmation)} className="h-full min-h-0">
+      <div data-save-on-blur ref={editorContentRef} hidden={Boolean(confirmation)} className="h-full min-h-0">
         {/* Preserve both input subtrees and their scroll owners across confirmation. */}
         <div className="h-full min-h-0 grid grid-cols-1 md:grid-cols-[1fr_2fr]">
           <div data-llm-editor-scroll="parameters" className="min-h-0 overflow-y-auto px-5 py-4 flex flex-col gap-4 border-r border-subtle">

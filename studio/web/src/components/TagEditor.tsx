@@ -570,7 +570,7 @@ export default function TagEditor({
             size="sm"
             disabled={saving || !dirty}
             loading={saving}
-            onClick={onSave}
+            aria-keyshortcuts="Control+S Meta+S" onClick={onSave}
             className="self-start"
           >
             {saving ? t('common.saving') : dirty ? t('common.save') : t('saveBar.saved')}
@@ -671,7 +671,7 @@ export default function TagEditor({
                       size="sm"
                       disabled={saving || !dirty}
                       loading={saving}
-                      onClick={onSave}
+                      aria-keyshortcuts="Control+S Meta+S" onClick={onSave}
                     >
                       {saving ? t('common.saving') : dirty ? t('common.save') : t('saveBar.saved')}
                     </Button>
@@ -735,7 +735,7 @@ export default function TagEditor({
                 size="sm"
                 disabled={saving || !dirty}
                 loading={saving}
-                onClick={onSave}
+                aria-keyshortcuts="Control+S Meta+S" onClick={onSave}
               >
                 {saving ? t('common.saving') : dirty ? t('common.save') : t('saveBar.saved')}
               </Button>

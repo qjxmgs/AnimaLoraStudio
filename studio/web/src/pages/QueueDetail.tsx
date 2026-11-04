@@ -1548,12 +1548,14 @@ function ConfirmDialog({
   danger?: boolean; busy?: boolean; onConfirm: () => void; onCancel: () => void
 }) {
   const { t } = useTranslation()
+  const confirmRef = useRef<HTMLButtonElement>(null)
   return (
     <Modal
       title={title}
       description={message}
       size="sm"
       role="alertdialog"
+      initialFocusRef={confirmRef}
       testId="queue-detail-confirm"
       onClose={() => { if (!busy) onCancel() }}
       closeOnEscape={!busy}
@@ -1566,7 +1568,7 @@ function ConfirmDialog({
             </Button>
           )}
           primary={(
-            <Button variant={danger ? 'danger' : 'primary'} size="sm" loading={busy}
+            <Button ref={confirmRef} variant={danger ? 'danger' : 'primary'} size="sm" loading={busy}
               onClick={() => { if (!busy) onConfirm() }}
             >{confirmLabel ?? t('common.confirm')}</Button>
           )}
