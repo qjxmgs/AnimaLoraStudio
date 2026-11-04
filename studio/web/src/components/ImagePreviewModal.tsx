@@ -30,6 +30,7 @@ interface Props {
   /** 列表中的 0-based 位置；与 total 同传时底部显示 "index+1 / total" 计数。 */
   index?: number
   total?: number
+  letterNavigation?: boolean
   hasPrev?: boolean
   hasNext?: boolean
   hasUp?: boolean
@@ -60,6 +61,7 @@ export default function ImagePreviewModal({
   caption,
   index,
   total,
+  letterNavigation,
   hasPrev,
   hasNext,
   hasUp,
@@ -133,6 +135,15 @@ export default function ImagePreviewModal({
 
     if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return
     const target = event.target instanceof Element ? event.target : null
+    if (letterNavigation && !target?.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])')) {
+      const key = event.key.toLowerCase()
+      if (key === 'a' || key === 'd') {
+        event.preventDefault()
+        if (key === 'a' && hasPrev) onPrev?.()
+        if (key === 'd' && hasNext) onNext?.()
+        return
+      }
+    }
     if (target?.closest('button, a[href], input, textarea, select, summary, [contenteditable]:not([contenteditable="false"])')) return
 
     let action: (() => void) | undefined

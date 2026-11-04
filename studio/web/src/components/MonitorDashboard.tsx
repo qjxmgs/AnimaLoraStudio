@@ -90,7 +90,7 @@ function sampleMarks(s: { path: string; step?: number }): { step: number | null;
   }
 }
 
-function SampleViewer({ samples, taskId }: {
+export function SampleViewer({ samples, taskId }: {
   samples: Array<{ path: string; step?: number }>
   taskId: number
 }) {
@@ -127,6 +127,24 @@ function SampleViewer({ samples, taskId }: {
       target.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'nearest', inline: 'nearest' })
     }
   }, [active])
+
+  useEffect(() => {
+    if (zoomOpen || list.length < 2) return
+    const navigate = (event: KeyboardEvent) => {
+      const key = event.key.toLowerCase()
+      if ((key !== 'a' && key !== 'd') || event.defaultPrevented || event.isComposing ||
+        event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return
+      if (event.target instanceof Element &&
+        event.target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])')) return
+      if (Array.from(document.querySelectorAll('[aria-modal="true"]')).some(
+        modal => !modal.closest('[hidden], [aria-hidden="true"]'),
+      )) return
+      event.preventDefault()
+      setActive(index => Math.max(0, Math.min(list.length - 1, index + (key === 'a' ? -1 : 1))))
+    }
+    window.addEventListener('keydown', navigate)
+    return () => window.removeEventListener('keydown', navigate)
+  }, [zoomOpen, list.length])
 
   if (!list.length) return (
     <div className="grid place-items-center h-[300px] text-fg-tertiary text-sm">
@@ -168,6 +186,7 @@ function SampleViewer({ samples, taskId }: {
           return (
             <button
               key={`${fn}-${i}`}
+              aria-pressed={isActive}
               onClick={() => setActive(i)}
               className="flex shrink-0 cursor-pointer flex-col items-center gap-1 rounded-md border-none bg-transparent p-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
               title={thumbTitle}
@@ -228,6 +247,8 @@ function SampleViewer({ samples, taskId }: {
       {/* 点击大图放大（参考下载页 ImagePreviewModal）；← / → 在采样序列里前后切 */}
       {zoomOpen && (
         <ImagePreviewModal
+          letterNavigation
+          shortcutHint="A / D"
           src={fullUrl}
           caption={[markText, filename].filter(Boolean).join(' · ')}
           index={active}
