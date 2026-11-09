@@ -353,7 +353,7 @@ describe('TagEdit workspace', () => {
     renderPage()
     await ready()
     const pane = document.getElementById('tag-edit-grid-pane')!
-    const selectAll = within(pane).getByRole('button', { name: '全选', exact: true })
+    const selectAll = within(pane).getByRole('button', { name: '全选' })
     const clear = within(pane).getByRole('button', { name: '取消选择' })
     expect(clear).toBeDisabled()
     await user.click(selectAll)
@@ -908,6 +908,12 @@ describe('TagEdit workspace', () => {
     renderPage()
     await ready()
 
+    const previewPane = screen.getByRole('region', { name: '单图编辑' })
+    const gridStyle = document.getElementById('tag-edit-grid-pane')!.style.flex
+    expect(previewPane).toBeVisible()
+    expect(screen.queryByTestId('preview-image')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '涂抹' })).toBeDisabled()
+
     await user.click(screen.getByRole('button', { name: '打开 人物 A/a1.png' }))
 
     expect(screen.getByRole('heading', { level: 2, name: '标签编辑' })).toBeInTheDocument()
@@ -916,6 +922,9 @@ describe('TagEdit workspace', () => {
     expect(closeButton.querySelector('svg')).toHaveAttribute('stroke', 'currentColor')
     await user.click(closeButton)
     expect(screen.queryByTestId('preview-image')).not.toBeInTheDocument()
+    expect(previewPane).toBeVisible()
+    expect(document.getElementById('tag-edit-grid-pane')!.style.flex).toBe(gridStyle)
+    expect(screen.getByRole('button', { name: '从训练集中移除当前图片' })).toBeDisabled()
   })
 
   it.each(['txt', 'none'] as const)('shows %s empty/missing Caption as untagged without an extra warning', async (format) => {

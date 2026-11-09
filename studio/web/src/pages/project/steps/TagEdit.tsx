@@ -1211,7 +1211,7 @@ export default function TagEditPage() {
           id={TAG_EDIT_GRID_PANE_ID}
           radius="compact"
           className="flex flex-col min-w-[240px] min-h-0 overflow-hidden"
-          style={{ flex: isEditing ? `0 0 ${boundedGridPct}%` : 1 }}
+          style={{ flex: `0 0 ${boundedGridPct}%` }}
         >
           <div className="px-field py-related flex flex-col gap-related shrink-0 border-b border-subtle">
             <div className="flex flex-wrap items-center gap-related min-w-0">
@@ -1311,7 +1311,6 @@ export default function TagEditPage() {
           />
         </Card>
 
-        {isEditing && (
           <PaneResizer
             containerRef={rowRef}
             value={boundedGridPct}
@@ -1321,14 +1320,11 @@ export default function TagEditPage() {
             ariaLabel={t('tagEdit.resizeGrid')}
             ariaControls={TAG_EDIT_GRID_PANE_ID}
           />
-        )}
-
-        {isEditing && (
-          <Card as="section" radius="compact" className="flex-1 min-w-[240px] min-h-0 flex flex-col overflow-hidden">
+          <Card as="section" radius="compact" aria-label={t('tagEdit.singleEdit')} className="flex-1 min-w-[240px] min-h-0 flex flex-col overflow-hidden">
             <div className="px-3 py-2 border-b border-subtle shrink-0 flex items-center gap-2">
               <span className="text-xs text-fg-tertiary">{t('tagEdit.singleEdit')}</span>
               <code className="flex-1 min-w-0 text-xs font-mono text-fg-secondary truncate">
-                {activeFolder}/{activeName}
+                {isEditing ? `${activeFolder}/${activeName}` : ''}
               </code>
               <Button
                 variant="ghost"
@@ -1343,6 +1339,7 @@ export default function TagEditPage() {
                 <Checkbox
                   controlSize="sm"
                   checked={showTrainingMask}
+                  disabled={!isEditing}
                   onChange={(event) => setShowTrainingMask(event.target.checked)}
                 />
                 <span className="whitespace-nowrap">{t('tagEdit.showTrainingMask')}</span>
@@ -1353,12 +1350,12 @@ export default function TagEditPage() {
                 iconOnly
                 className="shrink-0 text-err hover:text-err"
                 onClick={() => void removeActiveImage()}
-                disabled={Boolean(removingKey)}
-                loading={removingKey === activeKey}
+                disabled={!isEditing || Boolean(removingKey)}
+                loading={isEditing && removingKey === activeKey}
                 aria-label={t('tagEdit.removeImage')}
                 title={t('tagEdit.removeImage')}
               >
-                {removingKey !== activeKey && (
+                {(!isEditing || removingKey !== activeKey) && (
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                     <path d="M3 6h18" />
                     <path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2" />
@@ -1371,7 +1368,7 @@ export default function TagEditPage() {
               {/* 原图分辨率 + zoom/pan（核对细节 tag 需要看清局部）；
                   size=0 = 原图直出，本地服务加载可接受。
                   ZoomableImage 自带视口样式 + readout 条 */}
-              <ZoomableImage
+              {isEditing && <ZoomableImage
                 key={activeKey}
                 src={api.versionThumbUrl(project.id, activeVersion.id, 'train', activeName, activeFolder, 0) +
                   (activeImageMtime == null ? '' : `&_=${activeImageMtime}`)}
@@ -1379,11 +1376,9 @@ export default function TagEditPage() {
                 overlay={activeMaskUrl
                   ? <TrainingMaskOverlay key={activeMaskUrl} src={activeMaskUrl} />
                   : null}
-              />
+              />}
             </div>
           </Card>
-        )}
-
         <PaneResizer
           containerRef={rowRef}
           value={boundedSidePct}
