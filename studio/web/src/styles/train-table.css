@@ -1,0 +1,130 @@
+/* Training-only layout. Container queries follow the workspace, not the screen. */
+.train-workspace-container { container: train-workspace / inline-size; }
+.train-workbench {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 1px 300px;
+  gap: 10px;
+  overflow: hidden;
+}
+.train-workbench[data-preview-tab="config"] {
+  grid-template-columns: minmax(0, 1fr) 1px 360px;
+}
+
+.train-config-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+.train-config-toolbar-main {
+  display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: 4px;
+}
+.train-config-toolbar-main { flex: 1 1 300px; }
+.train-preset-trigger { flex: 0 1 auto; max-width: min(24rem, 100%); }
+.train-section-nav {
+  display: flex; flex: none; min-width: 0; overflow-x: auto; gap: 4px;
+  padding: 4px; border: 1px solid var(--border-subtle); border-radius: var(--r-md);
+  background: var(--bg-surface); scrollbar-width: thin;
+}
+.train-section-nav button {
+  flex: none; border: 0; border-radius: 4px; padding: 7px 11px;
+  background: transparent; color: var(--fg-secondary); font-size: 13px; cursor: pointer;
+}
+.train-section-nav button:hover { color: var(--fg-primary); background: var(--bg-sunken); }
+.train-section-nav button[aria-current] { background: var(--accent-control); color: var(--accent-fg); }
+/* One container controls every group's rails. CSS-only reflow keeps editors mounted. */
+.train-parameter-table { container: train-table / inline-size; min-width: 0; }
+.train-table-group {
+  display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0;
+  border: 1px solid var(--border-subtle); border-top: 0;
+  background: var(--bg-surface); scroll-margin-top: 0;
+}
+.train-table-group:first-child { border-top: 1px solid var(--border-subtle); }
+.train-group-heading { position: sticky; top: 0; z-index: 1; min-width: 0; background: var(--bg-sunken); }
+.train-group-heading h3 {
+  position: sticky; top: 0; margin: 0; padding: 12px;
+  color: var(--fg-primary); font-size: 14px; font-weight: 650; overflow-wrap: anywhere;
+}
+.train-table-fields {
+  --parameter-columns: 1;
+  display: grid; grid-template-columns: repeat(var(--parameter-columns), minmax(0, 1fr));
+  grid-auto-flow: row; min-width: 0; align-items: stretch;
+  /* One gap owns each internal rule, including empty cells. No overlapping borders. */
+  gap: 1px; background: var(--border-subtle);
+  border-top: 1px solid var(--border-subtle);
+}
+.train-field-slot {
+  min-width: 0; display: flex; align-items: center; padding: 5px 12px;
+  min-height: 40px; background: var(--bg-surface);
+}
+.train-empty-cell { display: none; background: var(--bg-surface); }
+.train-field-wide { grid-column: 1 / -1; background: var(--bg-surface); }
+.train-field { width: 100%; min-width: 0; }
+.train-field > div {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 160px);
+  align-items: center; gap: 4px 12px; padding-block: 0; min-width: 0;
+}
+.train-field .type-field-label {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px;
+  margin: 0; min-width: 0; color: var(--fg-secondary); font-size: 14px;
+  line-height: 1.4; overflow-wrap: anywhere;
+}
+.train-field .type-field-label > .text-warn { margin-left: 0; font-size: 11px; }
+.train-field .form-control { min-width: 0; min-height: 30px; font-size: 14px; padding-block: 4px; }
+.train-field > div > :nth-child(2) { min-width: 0; width: 100%; justify-self: end; }
+.train-field[data-kind="int"] > div,
+.train-field[data-kind="float"] > div { grid-template-columns: minmax(0, 1fr) 112px; }
+.train-field[data-kind="int-list"] > div { grid-template-columns: minmax(0, 1fr) 160px; }
+.train-field[data-kind="bool"] > div { grid-template-columns: minmax(0, 1fr) 34px; }
+.train-field > div > .text-err { grid-column: 2; overflow-wrap: anywhere; }
+.train-field-wide .train-field > div { grid-template-columns: minmax(100px, 160px) minmax(0, 1fr); }
+.train-field[data-kind="path"] .form-control { font-size: 13px; }
+.train-field[data-kind="textarea"] > div,
+.train-field[data-kind="string-list"] > div,
+.train-field[data-kind="code"] > div { align-items: start; }
+.train-field[data-kind="textarea"] .type-field-label,
+.train-field[data-kind="string-list"] .type-field-label,
+.train-field[data-kind="code"] .type-field-label { padding-top: 5px; }
+.train-field .train-field-toggle { min-height: 30px; }
+@container train-table (min-width: 800px) {
+  .train-table-group { grid-template-columns: 128px minmax(0, 1fr); }
+  .train-group-heading { position: static; z-index: auto; border-right: 1px solid var(--border-subtle); }
+  .train-table-fields { --parameter-columns: 2; border-top: 0; }
+  .train-empty-2 { display: block; }
+}
+@container train-table (min-width: 1440px) {
+  .train-table-fields { --parameter-columns: 4; }
+  .train-empty-2 { display: none; }
+  .train-empty-4 { display: block; }
+}
+@container train-table (max-width: 419px) {
+  .train-field-slot { padding-inline: 8px; }
+  .train-field > div { gap: 4px 8px; }
+  .train-field-wide .train-field > div { grid-template-columns: minmax(72px, 28%) minmax(0, 1fr); }
+  .train-field[data-kind="int-list"] > div { grid-template-columns: minmax(0, 1fr) 136px; }
+  .train-field[data-kind="path"] > div > .flex { flex-wrap: wrap; }
+  .train-field[data-kind="path"] > div > .flex > .relative { flex-basis: 100%; }
+}
+.train-switch { flex: none; width: 34px; height: 20px; border: 1px solid var(--border-default); border-radius: 20px; padding: 2px; background: var(--bg-sunken); cursor: pointer; }
+.train-switch span { display: block; width: 14px; height: 14px; border-radius: 50%; background: var(--fg-secondary); }
+.train-switch[aria-checked="true"] { background: var(--accent); border-color: var(--accent); }
+.train-switch[aria-checked="true"] span { transform: translateX(13px); background: var(--accent-fg); }
+.train-switch:disabled { opacity: .5; cursor: not-allowed; }
+.train-switch:focus-visible, .train-table-group button:focus-visible, .train-section-nav button:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
+.train-preview-rail { position: relative; display: flex; justify-content: center; }
+.train-preview-rail::before { content: ''; position: absolute; inset-block: 0; width: 1px; background: var(--border-subtle); }
+.train-run-summary { border: 1px solid var(--border-subtle); border-radius: 8px; background: var(--bg-surface); padding: 12px; }
+.train-preview { overflow-wrap: anywhere; }
+@container train-workspace (max-width: 1199px) {
+  .train-workbench[data-preview-open][data-preview-tab] {
+    grid-template-columns: minmax(0, 1fr); align-content: start; overflow-y: auto;
+  }
+  .train-workbench > .train-draft { min-height: auto; }
+  .train-workbench .train-form-layout { display: block; flex: none; }
+  .train-workbench .train-config-scroll { width: 100%; min-height: auto; overflow-y: visible; }
+  .train-workbench .train-stats-tab { flex: none; overflow-y: visible; }
+  .train-workbench .train-yaml-tab { flex: none; height: min(70vh, 36rem); }
+  .train-preview-rail { min-height: 1px; justify-content: flex-end; }
+  .train-preview-rail::before { inset-inline: 0; inset-block: 50% auto; width: auto; height: 1px; }
+}
+
+.train-field-title { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; min-width: 0; }
+.train-field-title > span { min-width: 0; }
+.train-field-title > button { flex-shrink: 0; }

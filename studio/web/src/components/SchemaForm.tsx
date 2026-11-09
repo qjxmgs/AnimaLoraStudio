@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { SchemaResponse, ConfigData } from '../api/client'
-import { evalShowWhen, schemaAltDescription, schemaDisableHint, schemaDescription, schemaGroupLabel } from '../lib/schema'
+import { controlKind, evalShowWhen, schemaAltDescription, schemaDisableHint, schemaDescription, schemaGroupLabel } from '../lib/schema'
+import { trainSchemaGroups } from '../lib/trainFormLayout'
 import Field from './Field'
 import RuleImpactDialog, { type RuleImpactChange } from './RuleImpactDialog'
 
@@ -20,8 +21,9 @@ interface Props {
   /** 字段右侧额外按钮槽（如「↺ 重置为全局默认」）。仅对 string/path 字段
    * 生效；按字段名查表。 */
   fieldSuffixes?: Record<string, React.ReactNode>
-  /** false（默认）= 简单模式，隐藏 advanced=true 的字段。 */
+  /** 纵向布局：false（默认）隐藏 advanced=true 的字段；训练表格始终显示全部适用字段。 */
   advancedMode?: boolean
+  layout?: 'stack' | 'train-table'
 }
 
 /** 计算当前 advancedMode 下哪些 group 至少有一个可见字段（用于侧栏锚点导航）。
@@ -44,13 +46,15 @@ export function visibleSchemaGroups(
 }
 
 /**
- * 按 schema.groups 分区渲染表单；分组可折叠。
+ * 按 schema.groups 分区渲染表单；默认纵向布局可折叠，训练表格完整展开。
  * show_when 用 evalShowWhen 做条件显示，依赖当前 values。
  */
 export default function SchemaForm({
   schema, values, onChange, disabledFields, disabledHints, autoHints, fieldSuffixes, advancedMode = false,
+  layout = 'stack',
 }: Props) {
   const { t } = useTranslation()
+  const compact = layout === 'train-table'
   const disabledSet = new Set(disabledFields ?? [])
   const dHints = disabledHints ?? {}
   const aHints = autoHints ?? {}
@@ -174,94 +178,130 @@ export default function SchemaForm({
   const buckets = new Map<string, string[]>()
   for (const [name, prop] of Object.entries(props)) {
     if (prop.hidden) continue
-    if (prop.advanced && !advancedMode) continue
+    if (prop.advanced && !advancedMode && !compact) continue
     const g = prop.group ?? 'misc'
     if (!buckets.has(g)) buckets.set(g, [])
     buckets.get(g)!.push(name)
   }
 
   return (
-    <div className="space-y-3">
-      {schema.groups.map(({ key, label }) => {
+    <div className={compact ? 'train-parameter-table' : 'space-y-3'}>
+      {(compact ? trainSchemaGroups(schema, values) : schema.groups).map(({ key, label }) => {
         const groupLabel = schemaGroupLabel(key, label, t)
-        const fields = buckets.get(key) ?? []
+        const fields = (buckets.get(key) ?? []).filter(name => !compact || evalShowWhen(props[name].show_when, values))
         if (fields.length === 0) return null
-        const isCollapsed = collapsed[key]
+        const isCollapsed = !compact && Boolean(collapsed[key])
+        const renderField = (name: string) => {
+          const prop = props[name]
+          if (!evalShowWhen(prop.show_when, values)) return null
+          // disable_when（schema 驱动条件 disable，如 Prodigy → lr_scheduler）
+          // 优先级低于全局 disabledFields（项目预填）。
+          const conditionallyDisabled = shouldDisableField(prop)
+          const isDisabled =
+            disabledSet.has(name) || conditionallyDisabled
+          const hint = disabledSet.has(name)
+            ? dHints[name]
+            : conditionallyDisabled
+              ? schemaDisableHint(name, prop.disable_hint, t)
+              : aHints[name]
+          const descriptionOverride =
+            prop.alt_description_when &&
+            evalShowWhen(prop.alt_description_when, values)
+              ? schemaAltDescription(name, prop.alt_description, t)
+              : schemaDescription(name, prop.description, t)
+          // option_show_when：按当前 values 过滤下拉选项（多模型 P4-2）。
+          // 当前已选中的值即使被门控也保留——表单如实反映 config，
+          // 越族值由后端校验报错，不在 UI 里凭空消失。
+          const gates = prop.option_show_when
+          const enumOptions = gates
+            ? (prop.enum ?? []).filter(
+                (opt) =>
+                  evalShowWhen(gates[String(opt)], values) ||
+                  String(opt) === String(values[name] ?? '')
+              )
+            : undefined
+          // option_disable_when：命中的选项灰显不可选（D4：不隐藏，
+          // 用户能看见为什么不可选——title 显示 disable_hint）。
+          const dGates = prop.option_disable_when
+          const disabledEnumOptions = dGates
+            ? Object.keys(dGates).filter((opt) =>
+                evalShowWhen(dGates[opt], values)
+              )
+            : undefined
+          const field = (
+            <Field
+              key={name}
+              presentation={compact ? 'table' : 'stack'}
+              name={name}
+              prop={prop}
+              value={values[name]}
+              onChange={(v) => setField(name, v)}
+              disabled={isDisabled}
+              hint={hint}
+              descriptionOverride={descriptionOverride}
+              suffix={suffixes[name]}
+              modelFamily={String(values.model_family ?? 'anima')}
+              enumOptions={enumOptions}
+              disabledEnumOptions={disabledEnumOptions}
+              disabledOptionHint={schemaDisableHint(name, prop.disable_hint, t)}
+            />
+          )
+          if (!compact) return field
+          const wide = ['path', 'string', 'textarea', 'string-list', 'code'].includes(controlKind(prop)) && name !== 'output_name'
+          return <div key={name} className={`train-field-slot${wide ? ' train-field-wide' : ''}`}>{field}</div>
+        }
+        // Empty cells complete each row at either responsive column count.
+        // They have no editor or accessible content; field keys stay stable on resize.
+        const tableCells: ReactNode[] = []
+        let shortCount = 0
+        const completeRow = (before: string) => {
+          for (const columns of [2, 4]) {
+            const missing = (columns - shortCount % columns) % columns
+            for (let i = 0; i < missing; i++) {
+              tableCells.push(<div key={`blank:${before}:${columns}:${i}`} aria-hidden="true"
+                className={`train-empty-cell train-empty-${columns}`} />)
+            }
+          }
+          shortCount = 0
+        }
+        if (compact) {
+          for (const name of fields) {
+            const wide = ['path', 'string', 'textarea', 'string-list', 'code'].includes(controlKind(props[name])) && name !== 'output_name'
+            if (wide) completeRow(name)
+            else shortCount++
+            tableCells.push(renderField(name))
+          }
+          completeRow('end')
+        }
         return (
           <section
             key={key}
             id={`schema-group-${key}`}
-            className="rounded-md border border-subtle bg-surface scroll-mt-4"
+            aria-labelledby={`schema-title-${key}`}
+            className={compact ? 'train-table-group' : 'rounded-md border border-subtle bg-surface scroll-mt-4'}
           >
-            <button
-              type="button"
-              onClick={() =>
-                setCollapsed({ ...collapsed, [key]: !isCollapsed })
-              }
-              className="w-full flex items-center justify-between px-4 py-3 text-sm font-semibold text-fg-primary bg-transparent border-none cursor-pointer"
-            >
-              <span>{groupLabel}</span>
-              <span className="text-fg-tertiary text-xs">
-                {t('schema.fieldCount', { n: fields.length })} {isCollapsed ? '▸' : '▾'}
-              </span>
-            </button>
+            {compact ? (
+              <div className="train-group-heading">
+                <h3 id={`schema-title-${key}`}>{groupLabel}</h3>
+              </div>
+            ) : (
+              <button
+                type="button"
+                id={`schema-title-${key}`}
+                aria-expanded={!isCollapsed}
+                aria-controls={`schema-fields-${key}`}
+                onClick={() => setCollapsed({ ...collapsed, [key]: !isCollapsed })}
+                className="w-full flex items-center justify-between px-4 py-3 text-sm font-semibold text-fg-primary bg-transparent border-none cursor-pointer"
+              >
+                <span>{groupLabel}</span>
+                <span className="text-fg-tertiary text-xs">
+                  {t('schema.fieldCount', { n: fields.length })} {isCollapsed ? '▸' : '▾'}
+                </span>
+              </button>
+            )}
             {!isCollapsed && (
-              <div className="px-4 pb-3 space-y-1">
-                {fields.map((name) => {
-                  const prop = props[name]
-                  if (!evalShowWhen(prop.show_when, values)) return null
-                  // disable_when（schema 驱动条件 disable，如 Prodigy → lr_scheduler）
-                  // 优先级低于全局 disabledFields（项目预填）。
-                  const conditionallyDisabled = shouldDisableField(prop)
-                  const isDisabled =
-                    disabledSet.has(name) || conditionallyDisabled
-                  const hint = disabledSet.has(name)
-                    ? dHints[name]
-                    : conditionallyDisabled
-                      ? schemaDisableHint(name, prop.disable_hint, t)
-                      : aHints[name]
-                  const descriptionOverride =
-                    prop.alt_description_when &&
-                    evalShowWhen(prop.alt_description_when, values)
-                      ? schemaAltDescription(name, prop.alt_description, t)
-                      : schemaDescription(name, prop.description, t)
-                  // option_show_when：按当前 values 过滤下拉选项（多模型 P4-2）。
-                  // 当前已选中的值即使被门控也保留——表单如实反映 config，
-                  // 越族值由后端校验报错，不在 UI 里凭空消失。
-                  const gates = prop.option_show_when
-                  const enumOptions = gates
-                    ? (prop.enum ?? []).filter(
-                        (opt) =>
-                          evalShowWhen(gates[String(opt)], values) ||
-                          String(opt) === String(values[name] ?? '')
-                      )
-                    : undefined
-                  // option_disable_when：命中的选项灰显不可选（D4：不隐藏，
-                  // 用户能看见为什么不可选——title 显示 disable_hint）。
-                  const dGates = prop.option_disable_when
-                  const disabledEnumOptions = dGates
-                    ? Object.keys(dGates).filter((opt) =>
-                        evalShowWhen(dGates[opt], values)
-                      )
-                    : undefined
-                  return (
-                    <Field
-                      key={name}
-                      name={name}
-                      prop={prop}
-                      value={values[name]}
-                      onChange={(v) => setField(name, v)}
-                      disabled={isDisabled}
-                      hint={hint}
-                      descriptionOverride={descriptionOverride}
-                      suffix={suffixes[name]}
-                      modelFamily={String(values.model_family ?? 'anima')}
-                      enumOptions={enumOptions}
-                      disabledEnumOptions={disabledEnumOptions}
-                      disabledOptionHint={schemaDisableHint(name, prop.disable_hint, t)}
-                    />
-                  )
-                })}
+              <div id={`schema-fields-${key}`} className={compact ? 'train-table-fields' : 'px-4 pb-3 space-y-1'}>
+                {compact ? tableCells : fields.map(renderField)}
               </div>
             )}
           </section>

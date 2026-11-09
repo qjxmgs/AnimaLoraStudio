@@ -38,6 +38,24 @@ function renderPicker(field: string, onChange = vi.fn(), value = '') {
 }
 
 describe('ModelPathPicker', () => {
+  it('keeps a training-card picker outside clipping containers and still selects a model', async () => {
+    vi.mocked(api.getModelPathChoices).mockResolvedValue(CHOICES)
+    const anchorRef = createRef<HTMLButtonElement>()
+    const onChange = vi.fn()
+    const onClose = vi.fn()
+    const { container } = render(<>
+      <button ref={anchorRef}>Choose model</button>
+      <ModelPathPicker field="transformer_path" family="anima" value="" portal
+        anchorRef={anchorRef} onChange={onChange} onClose={onClose} />
+    </>)
+    const row = await screen.findByText('my-finetune.safetensors')
+    expect(container).not.toContainElement(row)
+    expect(row.closest('[data-field-picker]')?.parentElement).toBe(document.body)
+    await userEvent.click(row)
+    expect(onChange).toHaveBeenCalledWith('G:/other/my-finetune.safetensors')
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
   it('picking a choice writes back its absolute path', async () => {
     vi.mocked(api.getModelPathChoices).mockResolvedValue(CHOICES)
     const onChange = renderPicker('transformer_path')

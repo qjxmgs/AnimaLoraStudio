@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, type LoraCkpt, type StateCkpt, type VersionCkptGroup } from '../api/client'
+import FieldPickerSurface from './FieldPickerSurface'
 
 /**
  * 字段内 dropdown picker：用户点字段旁的「📁 浏览本项目」按钮触发，
@@ -22,6 +23,7 @@ export default function ResumeFieldPicker({
   onChange,
   onClose,
   anchorRef,
+  portal = false,
 }: {
   pid: number
   kind: 'state' | 'lora'
@@ -29,6 +31,7 @@ export default function ResumeFieldPicker({
   onChange: (path: string) => void
   onClose: () => void
   anchorRef: React.RefObject<HTMLElement | null>
+  portal?: boolean
 }) {
   const [stateGroups, setStateGroups] = useState<VersionCkptGroup<StateCkpt>[] | null>(null)
   const [loraGroups, setLoraGroups] = useState<VersionCkptGroup<LoraCkpt>[] | null>(null)
@@ -73,11 +76,7 @@ export default function ResumeFieldPicker({
   const totalItems = groups?.reduce((s, g) => s + g.items.length, 0) ?? 0
 
   return (
-    <div
-      ref={popRef}
-      className="absolute z-40 mt-1 max-h-[360px] overflow-y-auto rounded-md border border-dim bg-elevated shadow-xl text-xs"
-      style={{ top: '100%', left: 0, width: '100%', minWidth: 420 }}
-    >
+    <FieldPickerSurface popRef={popRef} anchorRef={anchorRef} portal={portal} onClose={onClose}>
       {error ? (
         <div className="px-3 py-2 text-err">{error}</div>
       ) : !loaded ? (
@@ -114,7 +113,7 @@ export default function ResumeFieldPicker({
           </div>
         ))
       )}
-    </div>
+    </FieldPickerSurface>
   )
 }
 

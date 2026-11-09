@@ -91,7 +91,8 @@ export function TrainRunSummary({ config, plan }: { config: ConfigData | null; p
     [t('train.summary.loraType'), String(config.lora_type || '—')],
     [t('train.summary.prefix'), String(config.output_name || '—')],
     [t('train.summary.epochs'), String(config.epochs ?? '—')],
-    [t('train.summary.steps'), plan.finalTotal === null ? '—' : `≈ ${plan.finalTotal}`],
+    [t('train.summary.unbatchedSteps'), plan.shownEffective > 0 && plan.epochs > 0 ? String(plan.shownEffective * plan.epochs) : '—'],
+    [t('train.summary.steps'), plan.finalTotal === null ? '—' : String(plan.finalTotal)],
   ]
 
   return (

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { api, type ModelPathChoice } from '../api/client'
 import { archLabel } from './BaseModelSelect'
+import FieldPickerSurface from './FieldPickerSurface'
 
 /**
  * 模型路径字段的 dropdown picker：点字段旁的「选择模型」按钮触发，列出模型设置里
@@ -19,6 +20,7 @@ export default function ModelPathPicker({
   onChange,
   onClose,
   anchorRef,
+  portal = false,
 }: {
   field: string
   family: string
@@ -26,6 +28,7 @@ export default function ModelPathPicker({
   onChange: (path: string) => void
   onClose: () => void
   anchorRef: React.RefObject<HTMLElement | null>
+  portal?: boolean
 }) {
   const { t } = useTranslation()
   const [choices, setChoices] = useState<ModelPathChoice[] | null>(null)
@@ -66,11 +69,7 @@ export default function ModelPathPicker({
   }
 
   return (
-    <div
-      ref={popRef}
-      className="absolute z-40 mt-1 max-h-[360px] overflow-y-auto rounded-md border border-dim bg-elevated shadow-xl text-xs"
-      style={{ top: '100%', left: 0, width: '100%', minWidth: 420 }}
-    >
+    <FieldPickerSurface popRef={popRef} anchorRef={anchorRef} portal={portal} onClose={onClose}>
       {error ? (
         <div className="px-3 py-2 text-err">{error}</div>
       ) : choices === null ? (
@@ -96,7 +95,7 @@ export default function ModelPathPicker({
           </div>
         ))
       )}
-    </div>
+    </FieldPickerSurface>
   )
 }
 

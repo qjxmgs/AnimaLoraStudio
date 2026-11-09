@@ -424,3 +424,41 @@ describe('SchemaForm pin + forbid pairing', () => {
     expect(option?.disabled).toBe(true)
   })
 })
+
+
+describe('training table and preset layout isolation', () => {
+  const schema: SchemaResponse = {
+    groups: [{ key: 'training', label: 'Training', default_collapsed: true }],
+    schema: { properties: {
+      epochs: { type: 'integer', default: 10, group: 'training' },
+      advanced_number: { type: 'number', default: 1, advanced: true, group: 'training' },
+      secret: { type: 'string', hidden: true, group: 'training' },
+    } },
+  }
+  const values = { epochs: 10, advanced_number: 1, secret: 'retained' }
+
+  it('keeps the preset form collapsible and its simple/advanced mode intact', () => {
+    const page = render(<SchemaForm schema={schema} values={values} onChange={vi.fn()} />)
+    const group = screen.getByRole('button', { name: /Training/ })
+    expect(group).toHaveAttribute('aria-expanded', 'false')
+    fireEvent.click(group)
+    expect(screen.getByRole('textbox', { name: 'Epochs' })).toHaveValue('10')
+    expect(screen.queryByRole('textbox', { name: 'Advanced Number' })).not.toBeInTheDocument()
+    page.rerender(<SchemaForm schema={schema} values={values} onChange={vi.fn()} advancedMode />)
+    expect(screen.getByRole('textbox', { name: 'Advanced Number' })).toHaveValue('1')
+    expect(page.container.querySelector('.train-parameter-table')).toBeNull()
+    expect(screen.queryByRole('textbox', { name: 'Secret' })).not.toBeInTheDocument()
+  })
+
+  it('ignores group collapse defaults and exposes advanced editors immediately in the table', () => {
+    const onChange = vi.fn()
+    const page = render(<SchemaForm schema={schema} values={values} onChange={onChange} layout="train-table" />)
+    expect(screen.getByRole('heading', { name: 'Training' })).toBeVisible()
+    expect(screen.queryByRole('button', { name: /Training/ })).not.toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: 'Advanced Number' })).toHaveValue('1')
+    fireEvent.change(screen.getByRole('textbox', { name: 'Epochs' }), { target: { value: '12' } })
+    fireEvent.blur(screen.getByRole('textbox', { name: 'Epochs' }))
+    expect(onChange).toHaveBeenCalledWith({ ...values, epochs: 12 })
+    expect(page.container.querySelectorAll('[data-field]')).toHaveLength(2)
+  })
+})

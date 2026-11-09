@@ -2958,6 +2958,58 @@
     "saveBeforeDownload": "Save the preset first; download streams the on-disk yaml from the server."
   },
   "train": {
+    "table": {
+      "navigation": "Parameter sections",
+      "top": "Top",
+      "help": "{{field}}: help"
+    },
+    "fields": {
+      "reg_weight": "Regularization weight",
+      "cache_latents": "Cache latents",
+      "flip_augment": "Horizontal flip",
+      "tag_dropout": "Tag dropout",
+      "prefer_json": "Prefer JSON captions",
+      "save_every_steps": "Save every N steps",
+      "save_state_every_steps": "Save state every N steps",
+      "resume_lora": "Resume LoRA",
+      "resume_state": "Resume state",
+      "model_family": "Model family",
+      "transformer_path": "Base model path",
+      "vae_path": "VAE path",
+      "text_encoder_path": "Text encoder path",
+      "t5_tokenizer_path": "T5 Tokenizer path",
+      "data_dir": "Training directory",
+      "resolution": "Resolution",
+      "aspect_ratio_limit": "Aspect ratio limit",
+      "reg_data_dir": "Regularization directory",
+      "reg_caption": "Regularization caption",
+      "lora_type": "LoRA type",
+      "lora_rank": "Rank",
+      "lora_alpha": "Alpha",
+      "lora_dropout": "Dropout",
+      "epochs": "Epochs",
+      "max_steps": "Max steps",
+      "batch_size": "Batch size",
+      "grad_accum": "Gradient accumulation",
+      "grad_checkpoint": "Gradient checkpointing",
+      "learning_rate": "Learning rate",
+      "optimizer_type": "Optimizer",
+      "lr_scheduler": "LR scheduler",
+      "lr_scheduler_warmup_steps": "Warmup steps",
+      "seed": "Seed",
+      "mixed_precision": "Mixed precision",
+      "save_dtype": "Save precision",
+      "output_dir": "Output directory",
+      "output_name": "Filename prefix",
+      "save_every_epochs": "Save every N epochs",
+      "save_state_every_epochs": "Save state every N epochs",
+      "caption_extension": "Caption extension",
+      "shuffle_caption": "Shuffle captions",
+      "keep_tokens": "Keep tokens",
+      "caption_dropout_rate": "Caption dropout",
+      "num_workers": "Data workers",
+      "attention_backend": "Attention backend"
+    },
     "loadConfigFailed": "Failed to load training config: {{error}}",
     "loadSchemaFailed": "Failed to load schema: {{error}}",
     "saveFailed": "Save failed: {{error}}",
@@ -3076,12 +3128,13 @@
       "blockedByResourceHint": "Task #{{id}} is using training resources. You can keep editing the draft, but cannot submit until resources are released."
     },
     "summary": {
+      "unbatchedSteps": "Unbatched steps",
       "label": "Training summary",
       "baseModel": "Base model",
       "loraType": "LoRA type",
       "prefix": "Filename prefix",
       "epochs": "Epochs",
-      "steps": "Estimated steps"
+      "steps": "Estimated actual steps"
     }
   },
   "reg": {

@@ -2958,6 +2958,58 @@
     "saveBeforeDownload": "请先保存预设，再触发下载（服务端直发磁盘上的原 yaml）"
   },
   "train": {
+    "table": {
+      "navigation": "参数分类",
+      "top": "页首",
+      "help": "{{field}}：说明"
+    },
+    "fields": {
+      "reg_weight": "正则权重",
+      "cache_latents": "缓存 Latents",
+      "flip_augment": "水平翻转增强",
+      "tag_dropout": "标签丢弃率",
+      "prefer_json": "优先读取 JSON",
+      "save_every_steps": "保存间隔（Steps）",
+      "save_state_every_steps": "状态保存间隔（Steps）",
+      "resume_lora": "续训 LoRA",
+      "resume_state": "续训状态",
+      "model_family": "模型系列",
+      "transformer_path": "基础模型路径",
+      "vae_path": "VAE 路径",
+      "text_encoder_path": "文本编码器路径",
+      "t5_tokenizer_path": "T5 Tokenizer 路径",
+      "data_dir": "训练数据目录",
+      "resolution": "分辨率",
+      "aspect_ratio_limit": "长宽比上限",
+      "reg_data_dir": "正则数据目录",
+      "reg_caption": "正则 Caption",
+      "lora_type": "LoRA 类型",
+      "lora_rank": "Rank（秩）",
+      "lora_alpha": "Alpha",
+      "lora_dropout": "Dropout",
+      "epochs": "训练轮数（Epochs）",
+      "max_steps": "最大步数",
+      "batch_size": "批大小（Batch size）",
+      "grad_accum": "梯度累积",
+      "grad_checkpoint": "梯度检查点",
+      "learning_rate": "学习率",
+      "optimizer_type": "优化器",
+      "lr_scheduler": "学习率调度器",
+      "lr_scheduler_warmup_steps": "预热步数",
+      "seed": "随机种子",
+      "mixed_precision": "混合精度",
+      "save_dtype": "保存精度",
+      "output_dir": "输出目录",
+      "output_name": "文件名前缀",
+      "save_every_epochs": "保存间隔（Epochs）",
+      "save_state_every_epochs": "状态保存间隔",
+      "caption_extension": "Caption 扩展名",
+      "shuffle_caption": "打乱 Caption",
+      "keep_tokens": "保留 Token 数",
+      "caption_dropout_rate": "Caption 丢弃率",
+      "num_workers": "数据加载线程",
+      "attention_backend": "注意力后端"
+    },
     "loadConfigFailed": "加载训练配置失败: {{error}}",
     "loadSchemaFailed": "schema 加载失败: {{error}}",
     "saveFailed": "保存失败：{{error}}",
@@ -3076,12 +3128,13 @@
       "blockedByResourceHint": "任务 #{{id}} 正在占用训练资源。草稿可继续编辑，资源释放前不可提交。"
     },
     "summary": {
+      "unbatchedSteps": "非批量步数",
       "label": "训练摘要",
       "baseModel": "底模",
       "loraType": "LoRA 类型",
       "prefix": "文件名前缀",
       "epochs": "Epochs",
-      "steps": "预计步数"
+      "steps": "预计实际步数"
     }
   },
   "reg": {

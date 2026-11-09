@@ -18,16 +18,14 @@ import Alert from '../../../components/Alert'
 import Button from '../../../components/Button'
 import ConfigSkeleton from '../../../components/ConfigSkeleton'
 import EmptyState from '../../../components/EmptyState'
-import { Input, Select } from '../../../components/FormControl'
+import { Input } from '../../../components/FormControl'
 import { useDialog } from '../../../components/Dialog'
 import SaveIndicator from '../../../components/SaveIndicator'
-import SchemaForm, { visibleSchemaGroups } from '../../../components/SchemaForm'
-import SchemaSectionIndex from '../../../components/SchemaSectionIndex'
+import SchemaForm from '../../../components/SchemaForm'
 import StepShell from '../../../components/StepShell'
 import type { SaveStatus } from '../../../lib/SettingsData'
 import { useToast } from '../../../components/Toast'
 import { useSettingsDrawer } from '../../../lib/SettingsDrawer'
-import { useAdvancedMode } from '../../../lib/useAdvancedMode'
 import { useLocalStorageState } from '../../../lib/useLocalStorageState'
 import {
   PRESET_NAME_RE,
@@ -36,9 +34,9 @@ import {
 } from '../../../lib/preset-helpers'
 import FamilySwitchDialog from '../../../components/FamilySwitchDialog'
 import Modal from '../../../components/Modal'
-import { SegmentedControl } from '../../../components/SelectionGroup'
 import { useEventStream } from '../../../lib/useEventStream'
 import { schemaGroupLabel } from '../../../lib/schema'
+import { trainSchemaGroups } from '../../../lib/trainFormLayout'
 import TrainPlanPanel, {
   LoadError,
   TrainRunSummary,
@@ -112,7 +110,6 @@ export default function TrainPage() {
   // 0.17 P-B — 定时训练弹层（延迟 N 小时 / 指定绝对时间两种入口，D7）。
   const [scheduleOpen, setScheduleOpen] = useState(false)
   const [scheduleTime, setScheduleTime] = useState('')
-  const [advancedMode, toggleAdvancedMode] = useAdvancedMode()
   const pickerAnchorRef = useRef<HTMLButtonElement | null>(null)
   const pickerPopRef = useRef<HTMLDivElement | null>(null)
   const scheduleInputRef = useRef<HTMLInputElement | null>(null)
@@ -458,23 +455,22 @@ export default function TrainPage() {
 
   // 配置表单的局部滚动根与章节锚点。
   const schemaScrollRef = useRef<HTMLDivElement | null>(null)
-  const previewToggleRef = useRef<HTMLButtonElement | null>(null)
-  const [storedPreviewOpen, setPreviewOpen] = useLocalStorageState('train.previewOpen', true)
-  const previewOpen = storedPreviewOpen !== false
+  const previewOpen = true
   const [storedPreviewTab, setPreviewTab] = useLocalStorageState<'stats' | 'config'>('train.previewTab', 'stats')
   const previewTab = storedPreviewTab === 'config' ? 'config' : 'stats'
   const datasetPlan = useTrainDatasetPlan({ projectId: project.id, activeVersion, reg, config })
-  const [compactGroup, setCompactGroup] = useState('')
+  const [activeGroup, setActiveGroup] = useState('top')
   const visibleGroups = useMemo(
-    () => (schema ? visibleSchemaGroups(schema, advancedMode) : []),
-    [schema, advancedMode],
+    () => (schema && config ? trainSchemaGroups(schema, config) : []),
+    [schema, config],
   )
-  useEffect(() => {
-    if (!visibleGroups.some((group) => group.key === compactGroup)) {
-      setCompactGroup(visibleGroups[0]?.key ?? '')
-    }
-  }, [compactGroup, visibleGroups])
-
+  const navigateGroup = (key: string) => {
+    setActiveGroup(key)
+    requestAnimationFrame(() => {
+      const target = key === 'top' ? schemaScrollRef.current?.firstElementChild : document.getElementById(`schema-group-${key}`)
+      target?.scrollIntoView({ block: 'start' })
+    })
+  }
   // popover 关闭：点外面 / Esc
   useEffect(() => {
     if (!pickerOpen) return
@@ -730,7 +726,7 @@ export default function TrainPage() {
         />
       )}
     >
-      <div className="flex flex-col h-full min-h-0">
+      <div className="train-workspace-container flex flex-col h-full min-h-0">
         <div data-save-on-blur className="train-workbench flex-1 min-h-0" data-preview-open={previewOpen} data-preview-tab={previewTab}>
 
           {/* 左栏：配置工作区 */}
@@ -798,27 +794,6 @@ export default function TrainPage() {
               {t('train.saveAsPreset')}
             </Button>
             </div>
-            {configResp?.has_config && config && (
-              <div className="train-config-toolbar-mode flex shrink-0 items-center gap-related" data-train-display-mode>
-                <span className="text-sm text-fg-secondary">{t('train.parameterDisplay')}</span>
-                <SegmentedControl
-                value={advancedMode ? 'advanced' : 'simple'}
-                onChange={(value) => {
-                  const wantsAdvanced = value === 'advanced'
-                  if (wantsAdvanced !== advancedMode) toggleAdvancedMode()
-                }}
-                items={[
-                  { value: 'simple', label: t('train.simpleMode') },
-                  { value: 'advanced', label: t('train.advancedMode') },
-                ]}
-                ariaLabel={t('train.modeLabel')}
-                idPrefix="train-mode"
-                layout="content"
-                className="shrink-0"
-              />
-              </div>
-            )}
-
             {/* popover */}
             {pickerOpen && (
               <div
@@ -938,23 +913,16 @@ export default function TrainPage() {
             )}
 
             {configResp?.has_config && config && visibleGroups.length > 0 && (
-              <label className="train-section-select shrink-0">
-                <span className="caption block mb-1">{t('settings.pageIndex')}</span>
-                <Select
-                  value={compactGroup || visibleGroups[0].key}
-                  onChange={(event) => {
-                    const key = event.target.value
-                    setCompactGroup(key)
-                    document.getElementById(`schema-group-${key}`)?.scrollIntoView({ block: 'start' })
-                  }}
-                >
-                  {visibleGroups.map((group) => (
-                    <option key={group.key} value={group.key}>
-                      {schemaGroupLabel(group.key, group.label, t)}
-                    </option>
-                  ))}
-                </Select>
-              </label>
+              <nav className="train-section-nav" aria-label={t('train.table.navigation')}>
+                <button type="button" aria-current={activeGroup === 'top' ? 'location' : undefined}
+                  onClick={() => navigateGroup('top')}>{t('train.table.top')}</button>
+                {visibleGroups.map(group => (
+                  <button type="button" key={group.key} aria-current={activeGroup === group.key ? 'location' : undefined}
+                    aria-controls={`schema-group-${group.key}`} onClick={() => navigateGroup(group.key)}>
+                    {schemaGroupLabel(group.key, group.label, t)}
+                  </button>
+                ))}
+              </nav>
             )}
 
             <div className="train-form-layout flex flex-1 min-h-0 gap-3">
@@ -1024,7 +992,7 @@ export default function TrainPage() {
                   autoHints={makeAutoHints(config, onFormChange)}
                   disabledFields={busy ? Object.keys(schema.schema.properties ?? {}) : []}
                   disabledHints={busy ? Object.fromEntries(Object.keys(schema.schema.properties ?? {}).map((name) => [name, false])) : undefined}
-                  advancedMode={advancedMode}
+                  layout="train-table"
                 />
                 {familySwitchTarget && config && (
                   <FamilySwitchDialog
@@ -1043,37 +1011,11 @@ export default function TrainPage() {
               <ConfigSkeleton label={t('train.loadingConfig')} />
             )}
 
-            {configResp?.has_config && config && visibleGroups.length > 0 && (
-              <div className="train-section-index shrink-0 overflow-y-auto">
-                <SchemaSectionIndex
-                  groups={visibleGroups}
-                  scrollContainer={schemaScrollRef}
-                />
-              </div>
-            )}
+
             </div>
           </div>
 
-          <div className="train-preview-rail">
-            <Button
-              ref={previewToggleRef}
-              variant="ghost"
-              size="xs"
-              className="train-preview-toggle"
-              aria-label={t(previewOpen ? 'train.collapsePreview' : 'train.expandPreview')}
-              title={t(previewOpen ? 'train.collapsePreview' : 'train.expandPreview')}
-              aria-expanded={previewOpen}
-              aria-controls="train-preview-panel"
-              onClick={() => {
-                setPreviewOpen(!previewOpen)
-                previewToggleRef.current?.focus()
-              }}
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                <path d={previewOpen ? 'm9 5 7 7-7 7' : 'm15 5-7 7 7 7'} />
-              </svg>
-            </Button>
-          </div>
+          <div className="train-preview-rail" aria-hidden="true" />
           <TrainPlanPanel
             plan={datasetPlan}
             previewOpen={previewOpen}

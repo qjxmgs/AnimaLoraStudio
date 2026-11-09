@@ -8,8 +8,10 @@ import { Checkbox, Input, Select, Textarea } from './FormControl'
 import ModelPathPicker from './ModelPathPicker'
 import PathPicker from './PathPicker'
 import ResumeFieldPicker from './ResumeFieldPicker'
+import { InfoButton } from './InfoButton'
 
 interface Props {
+  presentation?: 'stack' | 'table'
   name: string
   prop: SchemaProperty
   value: unknown
@@ -43,20 +45,43 @@ const FieldHint = ({ children }: { children: React.ReactNode }) => (
 )
 
 /** 单个表单字段，按 control kind 分发渲染。 */
-export default function Field({
+export default function Field(props: Props) {
+  if (props.presentation !== 'table') return <FieldControl {...props} />
+  return (
+    <div className="train-field" data-field={props.name} data-kind={controlKind(props.prop)}>
+      <FieldControl {...props} />
+    </div>
+  )
+}
+
+function FieldControl({
   name, prop, value, onChange, disabled = false, hint, descriptionOverride, suffix,
-  modelFamily, enumOptions, disabledEnumOptions, disabledOptionHint,
+  modelFamily, enumOptions, disabledEnumOptions, disabledOptionHint, presentation = 'stack',
 }: Props) {
   const { t } = useTranslation()
+  const compact = presentation === 'table'
   const kind = controlKind(prop)
-  const label = fieldLabel(name)
-  const help = descriptionOverride ?? prop.description
+  const label = compact ? t(`train.fields.${name}`, { defaultValue: fieldLabel(name) }) : fieldLabel(name)
+  const description = descriptionOverride ?? prop.description
+  const help = compact ? undefined : description
   const hintText = hint ?? (disabled ? t('field.autoProject') : null)
-  const hintNode = hintText ? <FieldHint>{hintText}</FieldHint> : null
-  void name
+  const helpIcon = compact && description ? <InfoButton ariaLabel={t('train.table.help', { field: label })}>{description}</InfoButton> : null
+  const hintNode = <>
+    {helpIcon}
+    {hintText && <FieldHint>{hintText}</FieldHint>}
+  </>
 
   // bool ----------------------------------------------------------------
   if (kind === 'bool') {
+    if (compact) return (
+      <div className="train-field-toggle">
+        <span className="type-field-label">{label}{hintNode}</span>
+        <button type="button" role="switch" aria-label={label} aria-checked={Boolean(value)}
+          disabled={disabled} className="train-switch" onClick={() => onChange(!value)}>
+          <span />
+        </button>
+      </div>
+    )
     return (
       <label className={`flex items-start gap-3 py-1.5 ${disabled ? 'cursor-not-allowed' : 'cursor-pointer'}`}>
         <Checkbox
@@ -85,6 +110,7 @@ export default function Field({
           {label}{hintNode}
         </div>
         <Select
+          aria-label={label}
           value={triValue}
           onChange={(e) => {
             const v = e.target.value
@@ -111,6 +137,7 @@ export default function Field({
           {label}{hintNode}
         </div>
         <Select
+          aria-label={label}
           value={String(value ?? '')}
           onChange={(e) => onChange(e.target.value)}
           disabled={disabled}
@@ -218,6 +245,7 @@ export default function Field({
   // string / path -------------------------------------------------------
   return (
     <PathStringField
+      compact={compact}
       name={name}
       label={label}
       kind={kind}
@@ -225,7 +253,8 @@ export default function Field({
       value={value}
       onChange={onChange}
       disabled={disabled}
-      hintNode={hintNode}
+      titleNode={compact ? <span className="train-field-title"><span>{label}</span>{helpIcon}</span> : undefined}
+      hintNode={hintText ? <FieldHint>{hintText}</FieldHint> : null}
       suffix={suffix}
       modelFamily={modelFamily}
     />
@@ -253,6 +282,7 @@ function TextareaField({
         {label}{hintNode}
       </div>
       <Textarea
+        aria-label={label}
         ref={taRef}
         rows={5}
         value={text}
@@ -293,6 +323,7 @@ function StringListField({
         {label}{hintNode}
       </div>
       <Textarea
+        aria-label={label}
         ref={taRef}
         rows={5}
         value={raw}
@@ -368,6 +399,7 @@ function JsonCodeField({
         {label}{hintNode}
       </div>
       <Textarea
+        aria-label={label}
         ref={inputRef}
         rows={Math.max(3, raw.split('\n').length + 1)}
         value={raw}
@@ -437,6 +469,7 @@ function IntListField({
         {label}{hintNode}
       </div>
       <Input
+        aria-label={label}
         ref={inputRef}
         type="text"
         inputMode="numeric"
@@ -516,6 +549,7 @@ function NumberField({
         {label}{hintNode}
       </div>
       <Input
+        aria-label={label}
         ref={inputRef}
         type="text"
         inputMode={kind === 'int' ? 'numeric' : 'decimal'}
@@ -539,6 +573,8 @@ function NumberField({
 }
 
 interface PathFieldProps {
+  titleNode?: React.ReactNode
+  compact?: boolean
   /** schema 字段名，让 path 字段判定是否走专用 picker（resume_state / resume_lora）。 */
   name: string
   label: string
@@ -560,8 +596,8 @@ const MODEL_PATH_FIELDS = [
 ]
 
 function PathStringField({
-  name, label, kind, help, value, onChange, disabled = false, hintNode, suffix,
-  modelFamily,
+  name, label, titleNode, kind, help, value, onChange, disabled = false, hintNode, suffix,
+  modelFamily, compact = false,
 }: PathFieldProps) {
   const { t } = useTranslation()
   const [picking, setPicking] = useState(false)
@@ -585,16 +621,14 @@ function PathStringField({
   return (
     <div className="py-1.5 relative">
       <div className="type-field-label mb-1">
-        {label}
-        {kind === 'path' && (
-          <span className="ml-2 text-xs text-fg-tertiary">{t('field.pathHint')}</span>
-        )}
+        {titleNode ?? label}
         {hintNode}
       </div>
       <div className="flex gap-2">
         {/* 模型路径字段：input 末尾内嵌下箭头开 dropdown，不额外占一个按钮位 */}
         <div className="relative flex-1 min-w-0">
           <Input
+            aria-label={label}
             type="text"
             value={text}
             onChange={(e) => onChange(e.target.value)}
@@ -633,6 +667,7 @@ function PathStringField({
           {/* 候选列表贴着输入框展开（锚到本容器而非整个字段块） */}
           {useModelPicker && modelPicking && !disabled && (
             <ModelPathPicker
+              portal={compact}
               field={name}
               family={modelFamily!}
               value={text}
@@ -659,6 +694,7 @@ function PathStringField({
       {/* resume_state / resume_lora：贴字段的 dropdown，按 version 分组列文件 */}
       {useResumePicker && picking && !disabled && (
         <ResumeFieldPicker
+          portal={compact}
           pid={projectCtx!.project.id}
           kind={resumeKind!}
           value={text}

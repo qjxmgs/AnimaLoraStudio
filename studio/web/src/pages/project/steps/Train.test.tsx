@@ -96,6 +96,8 @@ beforeEach(async () => {
   vi.restoreAllMocks()
   vi.clearAllMocks()
   localStorage.clear()
+  // Most existing summary regressions exercise a returning user with preview open.
+  localStorage.setItem('train.previewOpen', 'true')
   await i18n.changeLanguage('zh')
   mocks.onEvent = undefined
   mocks.guard = null
@@ -123,20 +125,112 @@ beforeEach(async () => {
 })
 
 describe('Train workbench', () => {
-  it('keeps submission in the header and display mode in the config toolbar', async () => {
-    renderPage()
+  const installTableSchema = () => {
+    if (!HTMLElement.prototype.scrollIntoView) Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, writable: true, value: vi.fn() })
+    vi.spyOn(HTMLElement.prototype, 'scrollIntoView').mockImplementation(() => {})
+    vi.mocked(api.schema).mockResolvedValue({
+      groups: [{ key: 'model', label: '模型' }, { key: 'training', label: '训练' },
+        { key: 'caption', label: 'Caption' }, { key: 'loss', label: '损失' }],
+      schema: { properties: {
+        transformer_path: { type: 'string', control: 'path', group: 'model' },
+        epochs: { type: 'integer', default: 10, group: 'training', description: 'How many passes through the dataset.' },
+        lr_scheduler: { type: 'string', group: 'training', enum: ['none', 'cosine_with_warmup'] },
+        lr_scheduler_warmup_steps: { type: 'integer', default: 100, group: 'training', advanced: true, show_when: 'lr_scheduler==cosine_with_warmup' },
+        custom_json: { control: 'code', group: 'training', advanced: true },
+        keep_tokens: { type: 'integer', default: 0, group: 'caption', advanced: true },
+        loss_weight: { type: 'number', default: 1, group: 'loss', advanced: true },
+        future_field: { type: 'integer', default: 1, group: 'future' },
+        internal_field: { type: 'integer', group: 'training', hidden: true },
+      } },
+    })
+    vi.mocked(api.getVersionConfig).mockResolvedValue({ has_config: true,
+      config: { ...config, lr_scheduler: 'cosine_with_warmup', lr_scheduler_warmup_steps: 100, keep_tokens: 0, loss_weight: 1, future_field: 1 },
+    } as never)
+  }
 
-    const mode = await screen.findByRole('radiogroup', { name: '参数显示模式' })
-    expect(within(mode).getByRole('radio', { name: '简单' })).toHaveAttribute('aria-checked', 'true')
-    const toolbar = screen.getByRole('region', { name: '配置工具栏' })
-    const toolbarMain = toolbar.querySelector('.train-config-toolbar-main')
-    const modeColumn = mode.closest('[data-train-display-mode]')
+  it('shows all applicable fields in schema order regardless of legacy visibility preferences', async () => {
+    installTableSchema()
+    localStorage.setItem('studio:train:collapsedGroups', '{"model":true,"loss":true}')
+    localStorage.setItem('studio:train:advancedGroups', '{}')
+    localStorage.setItem('studio:advanced_mode', 'false')
+    const page = renderPage()
+    expect(await screen.findByRole('textbox', { name: '基础模型路径' })).toBeVisible()
+    for (const label of ['预热步数', '保留 Token 数', 'Loss Weight', 'Future Field']) {
+      expect(screen.getByRole('textbox', { name: label })).toBeVisible()
+    }
+    const fields = page.container.querySelectorAll('#schema-fields-training [data-field]')
+    expect([...fields].map(field => field.getAttribute('data-field'))).toEqual([
+      'epochs', 'lr_scheduler', 'lr_scheduler_warmup_steps', 'custom_json',
+    ])
+    expect(screen.queryByRole('textbox', { name: 'Internal Field', hidden: true })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /高级参数|展开全部参数/ })).not.toBeInTheDocument()
+    expect(api.putVersionConfig).not.toHaveBeenCalled()
+    expect(localStorage.getItem('studio:advanced_mode')).toBe('false')
+  })
+
+  it('always displays the sidebar even with a saved collapsed preference', async () => {
+    localStorage.setItem('train.previewOpen', 'false')
+    renderPage()
+    expect(await screen.findByRole('complementary', { name: '训练预览' })).toBeVisible()
+    expect(screen.queryByRole('button', { name: /展开预览|收起预览/ })).not.toBeInTheDocument()
+  })
+
+  it('retains the same JSON editor, unfinished text and validation error across preview tab changes', async () => {
+    installTableSchema()
+    const user = userEvent.setup()
+    renderPage()
+    const editor = await screen.findByRole('textbox', { name: 'Custom Json' })
+    await user.type(editor, '{{unfinished')
+    await user.click(screen.getByRole('tab', { name: 'YAML 预览' }))
+    expect(editor).toHaveValue('{unfinished')
+    expect(editor).toHaveAttribute('aria-invalid', 'true')
+    await user.click(screen.getByRole('tab', { name: '数据分布' }))
+    expect(screen.getByRole('textbox', { name: 'Custom Json' })).toBe(editor)
+    expect(editor).toHaveValue('{unfinished')
+    expect(editor).toHaveAttribute('aria-invalid', 'true')
+    expect(api.putVersionConfig).not.toHaveBeenCalled()
+  })
+
+  it('scrolls to groups and the page top without changing configuration or mounting new editors', async () => {
+    installTableSchema()
+    const user = userEvent.setup()
+    renderPage()
+    const nav = await screen.findByRole('navigation', { name: '参数分类' })
+    const model = screen.getByRole('textbox', { name: '基础模型路径' })
+    for (const name of ['模型路径', '损失', 'future', '页首']) {
+      await user.click(within(nav).getByRole('button', { name }))
+      expect(within(nav).getByRole('button', { name })).toHaveAttribute('aria-current', 'location')
+    }
+    await waitFor(() => expect(HTMLElement.prototype.scrollIntoView).toHaveBeenCalled())
+    expect(screen.getByRole('textbox', { name: '基础模型路径' })).toBe(model)
+    expect(screen.getByRole('textbox', { name: '保留 Token 数' })).toBeVisible()
+    expect(api.putVersionConfig).not.toHaveBeenCalled()
+  })
+
+  it('keeps conditional advanced fields reachable and exposes help on demand', async () => {
+    installTableSchema()
+    const user = userEvent.setup()
+    renderPage()
+    await screen.findByRole('textbox', { name: '预热步数' })
+    await user.selectOptions(screen.getByRole('combobox', { name: '学习率调度器' }), 'none')
+    expect(screen.queryByRole('textbox', { name: '预热步数' })).not.toBeInTheDocument()
+    await user.selectOptions(screen.getByRole('combobox', { name: '学习率调度器' }), 'cosine_with_warmup')
+    expect(screen.getByRole('textbox', { name: '预热步数' })).toHaveValue('100')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    const help = screen.getByRole('button', { name: '训练轮数（Epochs）：说明' })
+    await user.click(help)
+    expect(screen.getByRole('dialog', { name: '训练轮数（Epochs）：说明' })).toBeVisible()
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('keeps submission in the header and presets in the config toolbar without display modes', async () => {
+    renderPage()
+    const toolbar = await screen.findByRole('region', { name: '配置工具栏' })
     expect(toolbar).toHaveClass('train-config-toolbar')
-    expect(toolbarMain).not.toBeNull()
-    expect(toolbarMain).not.toContainElement(mode)
-    expect(toolbar).toContainElement(mode)
-    expect(modeColumn).toHaveClass('train-config-toolbar-mode')
+    expect(toolbar.querySelector('.train-config-toolbar-main')).not.toBeNull()
     expect(within(toolbar).getByRole('button', { name: '另存为新预设' })).toBeInTheDocument()
+    expect(toolbar.querySelector('[data-train-display-mode]')).toBeNull()
 
     const actions = screen.getByRole('group', { name: '训练操作' })
     expect(actions.closest('.ui-page-header')).not.toBeNull()
@@ -146,7 +240,6 @@ describe('Train workbench', () => {
     expect(screen.getAllByRole('status')).toHaveLength(1)
 
     const preview = screen.getByRole('complementary', { name: '训练预览' })
-    expect(within(toolbar).getByText('参数显示')).toBeVisible()
     expect(within(toolbar).getByRole('button', { name: '配置 Demo / v1 配置' })).toHaveClass('train-preset-trigger')
     const summary = within(preview).getByLabelText('训练摘要')
     expect(summary.tagName).toBe('DIV')
@@ -154,36 +247,14 @@ describe('Train workbench', () => {
     expect(within(summary).getByText('lora')).toBeInTheDocument()
     expect(within(summary).getByText('demo')).toBeInTheDocument()
     expect(within(summary).getByText('10')).toBeInTheDocument()
-    expect(within(summary).getByText('≈ 20')).toBeInTheDocument()
-    expect(within(summary).getAllByRole('term')).toHaveLength(5)
+    expect(within(summary).getByText('20')).toBeInTheDocument()
+    expect(within(summary).getAllByRole('term')).toHaveLength(6)
+    expect(within(summary).getByText('非批量步数').nextElementSibling).toHaveTextContent('40')
     expect(within(summary).queryByText(/秩|rank/)).not.toBeInTheDocument()
     expect(within(preview).queryByRole('button', { name: '开始训练' })).not.toBeInTheDocument()
     for (const text of ['本次训练方案', '可提交', '训练精度', '优化器 · 学习率', '训练时长', 'adamw', 'bf16']) {
       expect(within(preview).queryByText(text)).not.toBeInTheDocument()
     }
-  })
-
-  it('restores the collapse handle, focus, saved state and content-specific widths', async () => {
-    const user = userEvent.setup()
-    const page = renderPage()
-    const toggle = await screen.findByRole('button', { name: '收起预览' })
-    const workspace = document.querySelector('.train-workbench')
-    expect(workspace).toHaveAttribute('data-preview-tab', 'stats')
-    await user.click(screen.getByRole('tab', { name: 'YAML 预览' }))
-    expect(workspace).toHaveAttribute('data-preview-tab', 'config')
-    await user.click(toggle)
-    expect(workspace).toHaveAttribute('data-preview-open', 'false')
-    expect(toggle).toHaveFocus()
-    expect(toggle).toHaveAttribute('aria-expanded', 'false')
-    expect(screen.queryByRole('complementary', { name: '训练预览' })).not.toBeInTheDocument()
-    expect(localStorage.getItem('train.previewOpen')).toBe('false')
-    page.unmount()
-
-    renderPage()
-    await user.click(await screen.findByRole('button', { name: '展开预览' }))
-    expect(screen.getByRole('complementary', { name: '训练预览' })).toBeVisible()
-    expect(screen.getByRole('tab', { name: 'YAML 预览' })).toHaveAttribute('aria-selected', 'true')
-    expect(localStorage.getItem('train.previewOpen')).toBe('true')
   })
 
   it('names the configured custom model rather than assuming a family default', async () => {
@@ -199,7 +270,7 @@ describe('Train workbench', () => {
     const user = userEvent.setup()
     const page = renderPage()
     const stats = await screen.findByRole('tab', { name: '数据分布' })
-    await screen.findByRole('radiogroup', { name: '参数显示模式' })
+    await screen.findByRole('button', { name: '配置 Demo / v1 配置' })
     expect(stats).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByRole('tabpanel', { name: '数据分布' })).toBeVisible()
     expect(screen.queryByRole('tabpanel', { name: 'YAML 预览' })).not.toBeInTheDocument()
@@ -242,7 +313,7 @@ describe('Train workbench', () => {
     expect(within(panel).getByText('≈ 20 steps')).toBeInTheDocument()
     expect(within(panel).getByText('≈ 15')).toBeInTheDocument()
     expect(within(panel).getByText(i18n.t('train.maxStepsLabel', { n: 15 }))).toBeInTheDocument()
-    expect(within(screen.getByRole('group', { name: '训练摘要' })).getByText('≈ 15')).toBeInTheDocument()
+    expect(within(screen.getByRole('group', { name: '训练摘要' })).getByText('15')).toBeInTheDocument()
   })
 
   it('enables masked loss from the dataset warning when masks are present', async () => {
@@ -523,7 +594,7 @@ describe('Train workbench', () => {
 
     expect(await screen.findByText(/加载训练配置失败.*offline/)).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '重试' }))
-    expect(await screen.findByRole('radiogroup', { name: '参数显示模式' })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: '配置 Demo / v1 配置' })).toBeInTheDocument()
     expect(screen.queryByText(/加载训练配置失败/)).not.toBeInTheDocument()
   })
 
@@ -573,7 +644,7 @@ async function editDraft(value: string) {
 describe('Train save lifecycle', () => {
   it('keeps the dev idle indicator on load and a clean version guard', async () => {
     renderPage()
-    await screen.findByRole('radiogroup', { name: '参数显示模式' })
+    await screen.findByRole('button', { name: '配置 Demo / v1 配置' })
     expect(screen.getByRole('status')).toHaveAttribute('data-state', 'idle')
     expect(screen.getByRole('status')).toBeEmptyDOMElement()
     await act(async () => expect(await mocks.guard!()).toBe(true))
