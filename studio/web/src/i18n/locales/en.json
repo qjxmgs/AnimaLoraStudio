@@ -2959,6 +2959,10 @@
   },
   "train": {
     "duration": {
+      "speed": "Speed (it/s)",
+      "speedPlaceholder": "Auto if blank",
+      "invalidSpeed": "Enter a valid speed above 0",
+      "manualHelp": "Uses estimated actual steps divided by the entered speed (it/s), converted to minutes. Use stable optimizer updates per second from a similar configuration. Loading, caching, sampling and saving time are not added. Clear the speed to restore the historical estimate.",
       "label": "Estimated training time",
       "unavailable": "No estimate available",
       "loading": "Estimating…",

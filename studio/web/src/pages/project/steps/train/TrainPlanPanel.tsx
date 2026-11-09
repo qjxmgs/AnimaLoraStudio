@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useId, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router-dom'
 import {
@@ -16,7 +16,9 @@ import Button from '../../../../components/Button'
 import Card from '../../../../components/Card'
 import ConfigYamlPanel from '../../../../components/ConfigYamlPanel'
 import { InfoButton } from '../../../../components/InfoButton'
+import { Input } from '../../../../components/FormControl'
 import { parseFolderMeta } from '../../../../lib/folderMeta'
+import { useLocalStorageState } from '../../../../lib/useLocalStorageState'
 import type { SaveStatus } from '../../../../lib/SettingsData'
 
 export function LoadError({ message, onRetry }: { message: string; onRetry: () => void | Promise<void> }) {
@@ -81,10 +83,17 @@ function ActiveTrainTaskCard({ task }: { task: Task }) {
 
 export function TrainDurationEstimate({ config, totalSteps }: { config: ConfigData; totalSteps: number | null }) {
   const { t } = useTranslation()
+  const speedId = useId()
+  const [storedSpeedText, setSpeedText] = useLocalStorageState('train.estimateSpeed', '')
+  const speedText = typeof storedSpeedText === 'string' ? storedSpeedText : ''
+  const useHistory = speedText.trim() === ''
+  const speed = Number(speedText)
+  const manualSeconds = totalSteps ? totalSteps / speed : null
+  const invalidSpeed = !useHistory && (!Number.isFinite(speed) || speed <= 0 || (manualSeconds !== null && !Number.isFinite(manualSeconds)))
   const query = JSON.stringify({ config, totalSteps })
   const [result, setResult] = useState<{ query: string; seconds: number | null; count: number; error?: boolean } | null>(null)
   useEffect(() => {
-    if (!totalSteps || totalSteps <= 0) return
+    if (!useHistory || !totalSteps || totalSteps <= 0) return
     let cancelled = false
     const timer = window.setTimeout(() => {
       const request = JSON.parse(query) as { config: ConfigData; totalSteps: number }
@@ -95,22 +104,36 @@ export function TrainDurationEstimate({ config, totalSteps }: { config: ConfigDa
       })
     }, 500)
     return () => { cancelled = true; window.clearTimeout(timer) }
-  }, [query, totalSteps])
+  }, [query, totalSteps, useHistory])
   const current = result?.query === query ? result : null
-  const pending = !!totalSteps && !current
-  const value = !totalSteps ? t('train.duration.unavailable')
+  const pending = useHistory && !!totalSteps && !current
+  const value = invalidSpeed ? t('train.duration.invalidSpeed')
+    : !totalSteps ? t('train.duration.unavailable')
+      : !useHistory ? t('train.duration.minutes', { count: Math.max(1, Math.ceil(manualSeconds! / 60)) })
     : pending ? t('train.duration.loading')
       : current?.error ? t('train.duration.error')
         : current?.seconds == null ? t('train.duration.unavailable')
           : t('train.duration.minutes', { count: Math.max(1, Math.ceil(current.seconds / 60)) })
-  return <div className="contents">
+  return <>
+    <div className="contents">
+      <dt className="text-fg-secondary self-center"><label htmlFor={speedId}>{t('train.duration.speed')}</label></dt>
+      <dd className="m-0 min-w-0">
+        <Input id={speedId} type="text" inputMode="decimal" value={speedText}
+          onChange={event => setSpeedText(event.target.value)} placeholder={t('train.duration.speedPlaceholder')}
+          controlSize="sm" surface="canvas" mono invalid={invalidSpeed}
+          aria-describedby={invalidSpeed ? `${speedId}-result` : undefined}
+          style={{ width: 112, maxWidth: '100%' }} />
+      </dd>
+    </div>
+    <div className="contents">
     <dt className="text-fg-secondary">
       {t('train.duration.label')} <InfoButton ariaLabel={t('train.duration.helpLabel')}>
-        {t('train.duration.help')}{current?.count ? ` ${t('train.duration.sources', { count: current.count })}` : ''}
+        {t(useHistory ? 'train.duration.help' : 'train.duration.manualHelp')}{useHistory && current?.count ? ` ${t('train.duration.sources', { count: current.count })}` : ''}
       </InfoButton>
     </dt>
-    <dd className="m-0 break-words font-mono text-fg-primary" aria-busy={pending}>{value}</dd>
-  </div>
+    <dd id={`${speedId}-result`} className="m-0 break-words font-mono text-fg-primary" aria-busy={pending}>{value}</dd>
+    </div>
+  </>
 }
 
 export function TrainRunSummary({ config, plan }: { config: ConfigData | null; plan: TrainDatasetPlan }) {

@@ -141,3 +141,14 @@
   color: var(--accent-strong); border-color: var(--accent); background: var(--accent-soft); font-weight: 600;
 }
 .train-text-toggle:disabled { opacity: .5; cursor: not-allowed; }
+
+/* The four workload controls use the active theme's emphasis palette. */
+.train-field:is([data-field="epochs"], [data-field="max_steps"], [data-field="batch_size"], [data-field="grad_accum"]) > div > .type-field-label {
+  color: var(--accent-strong);
+  font-weight: 600;
+}
+.train-field:is([data-field="epochs"], [data-field="max_steps"], [data-field="batch_size"], [data-field="grad_accum"]) > div > input.form-control:not(:disabled) {
+  border-color: var(--accent);
+  background-color: var(--accent-soft);
+  color: var(--accent-strong);
+}
