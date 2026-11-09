@@ -213,6 +213,7 @@ export default function TagEditPage() {
   const [customTagsBusy, setCustomTagsBusy] = useState(false)
 
   const [activeKey, setActiveKey] = useState<string>('')
+  const [sidebarMode, setSidebarMode] = useState<'single' | 'bulk'>('single')
   const [tagEditorMode, setTagEditorMode] = useState<TagEditorMode>('chip')
   const [inpaintOpen, setInpaintOpen] = useState(false)
   const [inpaintDirty, setInpaintDirty] = useState(false)
@@ -562,6 +563,22 @@ export default function TagEditPage() {
   const navKeys = activeKey && selectedKeys.includes(activeKey) ? selectedKeys : orderedKeys
   const activeIndex = activeKey ? navKeys.indexOf(activeKey) : -1
 
+  const selectImages = useCallback((next: Set<string>) => {
+    setSel(next)
+    setAnchor(null)
+    setSidebarMode(next.size ? 'bulk' : 'single')
+  }, [])
+
+  const navigateImage = useCallback((name: string) => {
+    if (hasVisibleModal()) return
+    setActiveKey(name)
+    setGridLocateRequest((previous) => ({ name, revision: (previous?.revision ?? 0) + 1 }))
+  }, [])
+
+  useEffect(() => {
+    if (sel.size === 0) setSidebarMode('single')
+  }, [sel.size])
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (
@@ -580,16 +597,13 @@ export default function TagEditPage() {
       ) {
         if (orderedKeys.length === 0) return
         event.preventDefault()
-        setSel(new Set(orderedKeys))
-        setAnchor(null)
-        setActiveKey('')
+        selectImages(new Set(orderedKeys))
         return
       }
 
       if (event.key === 'Escape' && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
         event.preventDefault()
-        setSel(new Set())
-        setAnchor(null)
+        selectImages(new Set())
         return
       }
 
@@ -608,12 +622,12 @@ export default function TagEditPage() {
       const next = nextGridIndex(current, orderedKeys.length, gridColumnCount, direction)
       if (next === current || next < 0) return
       event.preventDefault()
-      setActiveKey(orderedKeys[next])
+      navigateImage(orderedKeys[next])
     }
 
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [activeKey, orderedKeys, gridColumnCount])
+  }, [activeKey, orderedKeys, gridColumnCount, navigateImage, selectImages])
 
   const tagSuggestions = useMemo(() => {
     const set = new Set<string>()
@@ -627,12 +641,12 @@ export default function TagEditPage() {
       for (const k of orderedKeys) {
         if ((cache.get(k) ?? []).includes(tag)) matched.add(k)
       }
-      setSel(matched); setAnchor(null)
+      selectImages(matched)
       const first = matched.values().next().value
-      if (first) setGridLocateRequest((previous) => ({ name: first, revision: (previous?.revision ?? 0) + 1 }))
+      if (first) navigateImage(first)
       toast(t('tagEdit.selectedContaining', { tag, n: matched.size }), 'success')
     },
-    [orderedKeys, cache, toast, t]
+    [orderedKeys, cache, toast, t, selectImages, navigateImage]
   )
 
   if (!activeVersion) {
@@ -650,13 +664,14 @@ export default function TagEditPage() {
   const handleClick = (key: string, e: React.MouseEvent) => {
     const r = applySelection(sel, key, e, orderedKeys, anchor)
     setSel(r.next); setAnchor(r.anchor)
+    setSidebarMode(r.next.size ? 'bulk' : 'single')
   }
 
   const navActive = (delta: number) => {
     if (navKeys.length === 0) return
     const i = activeKey ? navKeys.indexOf(activeKey) : -1
     const next = i < 0 ? 0 : (i + delta + navKeys.length) % navKeys.length
-    setActiveKey(navKeys[next])
+    navigateImage(navKeys[next])
   }
 
   const markKeysEdited = (changedKeys: Iterable<string>) => {
@@ -1209,6 +1224,24 @@ export default function TagEditPage() {
                   {t('tagEdit.imageListCount', { n: orderedKeys.length })}
                 </span>
               </h2>
+              <div className="flex items-center gap-1 shrink-0">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => selectImages(new Set(orderedKeys))}
+                  disabled={orderedKeys.length === 0}
+                  title={t('bulkAction.selectAllImagesHint')}
+                  aria-keyshortcuts="Control+A Meta+A"
+                >{t('common.selectAll')}</Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => selectImages(new Set())}
+                  disabled={sel.size === 0}
+                  aria-keyshortcuts="Escape"
+                  title={`${t('common.deselect')} (Esc)`}
+                >{t('common.deselect')}</Button>
+              </div>
               <Input
                 type="search"
                 controlSize="sm"
@@ -1255,14 +1288,18 @@ export default function TagEditPage() {
             items={captionItems}
             onReveal={revealImage}
             selected={sel}
-            activeName={activeKey || undefined}
+            activeName={activeKey}
+            selectionFrameMode="active"
+            checkboxPosition="top-right"
             onColumnCountChange={setGridColumnCount}
             onSelect={handleClick}
             locateRequest={gridLocateRequest}
             tabThroughSelection
-            onMarqueeSelect={(next) => { setSel(next); setAnchor(null); setActiveKey('') }}
-            onActivate={setActiveKey}
-            clickMode={sel.size > 0 ? 'select' : 'activate'}
+            onNavigateSelected={navigateImage}
+            navigationDisabled={inpaintOpen || Boolean(removingKey)}
+            onMarqueeSelect={selectImages}
+            onActivate={navigateImage}
+            clickMode="activate"
             ariaLabel={t('tagEdit.gridLabel')}
             emptyHint={
               filenameQuery
@@ -1363,10 +1400,23 @@ export default function TagEditPage() {
           className="flex flex-col gap-2.5 min-w-[260px] min-h-0"
           style={{ flex: `0 0 ${boundedSidePct}%` }}
         >
-          {isEditing ? (
-            // editing 时：bulk + 标签分布 都和"调单图标签"无关，整个侧栏让位给
-            // TagEditor。退出 editing 后自动回来，sel / folderFilter 等 state
-            // 保留（隐藏的是 UI 不是状态）。
+          {isEditing && (
+            <SegmentedControl
+              items={[
+                { value: 'single', label: t('tagEdit.singleEdit') },
+                { value: 'bulk', label: t('tagEdit.bulkEdit') },
+              ]}
+              value={sidebarMode}
+              onChange={setSidebarMode}
+              ariaLabel={t('tagEdit.sidebarMode')}
+              idPrefix="tag-edit-sidebar-mode"
+              size="sm"
+              layout="content"
+            />
+          )}
+          {isEditing && sidebarMode === 'single' ? (
+            // Sidebar mode is independent of the active image: switching to
+            // bulk tools keeps the centre pane and per-image drafts intact.
             <Card
               as="section"
               radius="compact"
@@ -1460,8 +1510,6 @@ export default function TagEditPage() {
                 selectedKeys={selectedKeys}
                 onApply={applyBulkUpdates}
                 tagSuggestions={tagSuggestions}
-                onClearSelection={() => { setSel(new Set()); setAnchor(null) }}
-                onSelectAll={() => setSel(new Set(orderedKeys))}
                 totalCount={orderedKeys.length}
               />
               <TagStatsPanel

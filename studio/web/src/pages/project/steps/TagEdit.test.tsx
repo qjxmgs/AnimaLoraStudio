@@ -348,13 +348,31 @@ beforeEach(() => {
 })
 
 describe('TagEdit workspace', () => {
-  it('locates the first tag match without opening the single-image editor', async () => {
+  it('keeps selection controls in the image header in both sidebar modes', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await ready()
+    const pane = document.getElementById('tag-edit-grid-pane')!
+    const selectAll = within(pane).getByRole('button', { name: '全选', exact: true })
+    const clear = within(pane).getByRole('button', { name: '取消选择' })
+    expect(clear).toBeDisabled()
+    await user.click(selectAll)
+    expect(screen.getByTestId('bulk-selection')).toHaveTextContent('3')
+    await user.click(screen.getByRole('button', { name: '打开 人物 A/a1.png' }))
+    await user.click(screen.getByRole('radio', { name: '单图编辑' }))
+    expect(selectAll).toBeVisible()
+    await user.click(clear)
+    expect(clear).toBeDisabled()
+    expect(screen.getByTestId('preview-image')).toHaveTextContent('a1.png')
+  })
+  it('locates the first tag match while retaining the bulk panel', async () => {
     const user = userEvent.setup()
     renderPage()
     const grid = await ready()
     await user.click(screen.getByRole('button', { name: '选择 cat 图片' }))
     expect(grid).toHaveAttribute('data-locate', '人物 A/a1.png')
-    expect(screen.queryByTestId('preview-image')).not.toBeInTheDocument()
+    expect(screen.getByTestId('preview-image')).toHaveTextContent('a1.png')
+    expect(screen.getByRole('radio', { name: '批量操作' })).toBeChecked()
     await user.click(screen.getByRole('button', { name: '选择 cat 图片' }))
     expect(grid).toHaveAttribute('data-locate-revision', '2')
   })
@@ -672,7 +690,7 @@ describe('TagEdit workspace', () => {
     expect(screen.getByTestId('bulk-selection')).toHaveTextContent('2')
   })
 
-  it('keeps bulk selection visible instead of opening a single-image editor', async () => {
+  it('opens the clicked image without changing bulk selection or hiding its tools', async () => {
     const user = userEvent.setup()
     renderPage()
     await ready()
@@ -680,9 +698,9 @@ describe('TagEdit workspace', () => {
     await user.click(screen.getByRole('button', { name: '选择 人物 A/a1.png' }))
     await user.click(screen.getByRole('button', { name: '打开 人物 A/a2.png' }))
 
-    expect(screen.queryByTestId('preview-image')).not.toBeInTheDocument()
-    expect(screen.getByTestId('bulk-selection')).toHaveTextContent('2')
-    expect(screen.getByRole('button', { name: '选择 人物 A/a2.png' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByTestId('preview-image')).toHaveTextContent('a2.png')
+    expect(screen.getByTestId('bulk-selection')).toHaveTextContent('1')
+    expect(screen.getByRole('button', { name: '选择 人物 A/a2.png' })).toHaveAttribute('aria-pressed', 'false')
   })
 
   it('navigates within the selection when the open image belongs to it', async () => {
@@ -694,6 +712,7 @@ describe('TagEdit workspace', () => {
     await user.click(screen.getByRole('button', { name: '选择 人物 A/a1.png' }))
     await user.click(screen.getByRole('button', { name: '选择 人物 A/a2.png' }))
 
+    await user.click(screen.getByRole('radio', { name: '单图编辑' }))
     expect(screen.getByText('1/2')).toHaveAttribute('title', '在当前选中的图片中切换')
     await user.click(screen.getByRole('button', { name: '下一张' }))
     expect(screen.getByTestId('preview-image')).toHaveTextContent('a2.png')
@@ -707,6 +726,7 @@ describe('TagEdit workspace', () => {
     await user.click(screen.getByRole('button', { name: '打开 人物 A/a1.png' }))
     expect(screen.getByText('1/3')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '选择 人物 A/a2.png' }))
+    await user.click(screen.getByRole('radio', { name: '单图编辑' }))
     expect(screen.getByText('1/3')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '下一张' }))
     expect(screen.getByTestId('preview-image')).toHaveTextContent('a2.png')
@@ -731,15 +751,18 @@ describe('TagEdit workspace', () => {
     expect(screen.getByRole('button', { name: '选择 人物 A/a1.png' })).toHaveAttribute('aria-pressed', 'true')
   })
 
-  it('switches from single editing to select all without losing pending edits', async () => {
+  it('retains the single-image pane and grid width when selecting all, preserving pending edits', async () => {
     const user = userEvent.setup()
     renderPage()
     await ready()
     await user.click(screen.getByRole('button', { name: '打开 人物 A/a1.png' }))
     await user.click(screen.getByRole('button', { name: '修改标签' }))
+    const gridPane = document.getElementById('tag-edit-grid-pane')!
+    const originalFlex = gridPane.style.flex
 
     await user.keyboard('{Control>}a{/Control}')
-    expect(screen.queryByTestId('preview-image')).not.toBeInTheDocument()
+    expect(screen.getByTestId('preview-image')).toHaveTextContent('a1.png')
+    expect(gridPane.style.flex).toBe(originalFlex)
     expect(screen.getByTestId('bulk-selection')).toHaveTextContent('3')
     expect(screen.getByRole('button', { name: '保存（1）' })).toBeEnabled()
     await user.click(screen.getByRole('button', { name: '保存（1）' }))
@@ -1365,7 +1388,8 @@ describe('TagEdit workspace', () => {
     expect(screen.getByTestId('bulk-selection')).toHaveTextContent('2')
     const search = screen.getByRole('searchbox', { name: '按文件名筛选图片' })
     await user.type(search, '1.png')
-    expect(screen.getByTestId('bulk-selection')).toHaveTextContent('0')
+    expect(screen.getByRole('button', { name: '选择 人物 A/a1.png' })).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.getByRole('radio', { name: '单图编辑' })).toBeChecked()
 
     await user.click(screen.getByRole('button', { name: '打开 人物 A/a1.png' }))
     await user.click(screen.getByRole('button', { name: '下一张' }))

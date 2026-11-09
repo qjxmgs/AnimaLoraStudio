@@ -2202,6 +2202,8 @@
     "saveThenDownloadToast": "先保存标签，再下载训练集",
     "downloadFailed": "下载失败: {{error}}",
     "singleEdit": "单图编辑",
+    "bulkEdit": "批量操作",
+    "sidebarMode": "标签编辑面板模式",
     "inpaintAction": "涂抹",
     "inpaintDialogTitle": "单图涂抹",
     "inpaintSaveAndClose": "保存并关闭",

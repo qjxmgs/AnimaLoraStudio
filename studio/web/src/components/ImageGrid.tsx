@@ -30,6 +30,10 @@ export interface ImageGridProps {
   /** Explicit navigation without activating the single-image editor. */
   locateRequest?: { name: string; revision: number }
   tabThroughSelection?: boolean
+  onNavigateSelected?: (name: string) => void
+  navigationDisabled?: boolean
+  selectionFrameMode?: 'selected' | 'active'
+  checkboxPosition?: 'top-left' | 'top-right'
   /** 鼠标悬停时回调：用于驱动外部「大图预览面板」。 */
   onHover?: (name: string) => void
   /** 全屏 modal 预览，由 cell 上的放大镜按钮触发（可选）。 */
@@ -136,6 +140,10 @@ export default function ImageGrid({
   onMarqueeSelect,
   locateRequest,
   tabThroughSelection = false,
+  onNavigateSelected,
+  navigationDisabled = false,
+  selectionFrameMode = 'selected',
+  checkboxPosition = 'top-left',
   onHover,
   onPreview,
   onReveal,
@@ -195,6 +203,15 @@ export default function ImageGrid({
 
   useEffect(() => {
     if (activeIndex < 0) return
+    if (selectionFrameMode === 'active') {
+      navigationName.current = items[activeIndex].name
+      // Explicit locate requests own scrolling, including repeated navigation
+      // to the same item. Avoid racing their top alignment with nearest/centre.
+      if (locateRequest?.name !== items[activeIndex].name) {
+        virtuosoRef.current?.scrollToIndex({ index: activeIndex, align: 'start', behavior: 'auto' })
+      }
+      return
+    }
     const root = rootRef.current
     const activeCell = root?.querySelector<HTMLElement>(
       `.${GRID_LIST_MARKER} > [data-index="${activeIndex}"]`,
@@ -214,7 +231,7 @@ export default function ImageGrid({
     if (outsideViewport && typeof activeCell.scrollIntoView === 'function') {
       activeCell.scrollIntoView({ block: 'nearest', inline: 'nearest' })
     }
-  }, [activeIndex])
+  }, [activeIndex, selectionFrameMode, items, locateRequest])
 
   if (items.length === 0) {
     return (
@@ -229,7 +246,7 @@ export default function ImageGrid({
   const hasDistinctActiveFrame =
     activeIndex >= 0 && activeName != null && !selected.has(activeName)
   const framedSelectionCount = visibleSelection.size + (hasDistinctActiveFrame ? 1 : 0)
-  const animateSelectionFrame = framedSelectionCount <= 1
+  const animateSelectionFrame = selectionFrameMode === 'active' || framedSelectionCount <= 1
 
   // role="grid" + aria-label 放在外层 wrapper：VirtuosoGrid 内部 List/Item 包多
   // 层 div（scroller/list/item），role 直接挂内层会被 Virtuoso 改写 className/
@@ -241,12 +258,12 @@ export default function ImageGrid({
       role="grid"
       aria-label={ariaLabel}
       tabIndex={tabThroughSelection ? 0 : undefined}
-      onMouseDownCapture={tabThroughSelection ? (event) => {
+      onMouseDownCapture={tabThroughSelection && selectionFrameMode !== 'active' ? (event) => {
         const target = (event.target as Element).closest<HTMLElement>('[data-index]')
         if (target) navigationName.current = items[Number(target.dataset.index)]?.name ?? null
       } : undefined}
       onKeyDown={tabThroughSelection ? (event) => {
-        if (event.key !== 'Tab' || event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey
+        if (navigationDisabled || event.key !== 'Tab' || event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey
           || event.nativeEvent.isComposing
           || (event.target as Element).closest('input, textarea, select, [contenteditable="true"]')) return
         const selectedItems = items.filter((item) => selected.has(item.name))
@@ -257,7 +274,8 @@ export default function ImageGrid({
         const name = selectedItems[next].name
         navigationName.current = name
         event.preventDefault()
-        virtuosoRef.current?.scrollToIndex({ index: items.findIndex((item) => item.name === name), align: 'start', behavior: 'auto' })
+        if (onNavigateSelected) onNavigateSelected(name)
+        else virtuosoRef.current?.scrollToIndex({ index: items.findIndex((item) => item.name === name), align: 'start', behavior: 'auto' })
         rootRef.current?.focus({ preventScroll: true })
       } : undefined}
       className={`relative h-full min-h-0 ${className}`.trim()}
@@ -280,6 +298,8 @@ export default function ImageGrid({
               item={it}
               selected={isSel}
               borderHighlight={borderHighlight}
+              showFrame={selectionFrameMode === 'active' ? isActive : isSel || borderHighlight}
+              checkboxPosition={checkboxPosition}
               animateSelectionFrame={animateSelectionFrame}
               onSelect={onSelect}
               onHover={onHover}
@@ -305,13 +325,14 @@ export default function ImageGrid({
  * 全部重新创建 DOM。
  *
  * `borderHighlight` 标识当前活跃项，跟 `selected`（checkbox 状态）解耦。
- * RGB frame 对两种状态取并集：TagEdit 等解耦路径上，当前图和批量选中图都
- * 清晰可见，两者重合时仍只渲染一层。批量选择超过一张时统一切换为静态
- * RGB，避免每个可见缩略图都维持独立的合成动画。 */
+ * showFrame is independent of selection: TagEdit frames only the located image,
+ * while other grids retain their selected/active union and animation policy. */
 const Cell = memo(function Cell({
   item,
   selected,
   borderHighlight,
+  showFrame,
+  checkboxPosition,
   animateSelectionFrame,
   onSelect,
   onHover,
@@ -324,6 +345,8 @@ const Cell = memo(function Cell({
   item: ImageGridItem
   selected: boolean
   borderHighlight: boolean
+  showFrame: boolean
+  checkboxPosition: 'top-left' | 'top-right'
   animateSelectionFrame: boolean
   onSelect: (name: string, e: React.MouseEvent) => void
   onHover?: (name: string) => void
@@ -417,7 +440,7 @@ const Cell = memo(function Cell({
           (loaded ? 'opacity-100' : 'opacity-0')
         }
       />
-      {(selected || borderHighlight) && (
+      {showFrame && (
         <ImageSelectionFrame animated={animateSelectionFrame} />
       )}
       <button
@@ -425,7 +448,8 @@ const Cell = memo(function Cell({
         onClick={handleSelectionClick}
         aria-label={`${selected ? t('common.deselect') : t('common.select')} ${item.name}`}
         className={
-          'absolute top-1 left-1 w-5 h-5 rounded-sm flex items-center justify-center text-[12px] font-bold transition-opacity ' +
+          'absolute w-5 h-5 rounded-sm flex items-center justify-center text-[12px] font-bold transition-opacity ' +
+          (checkboxPosition === 'top-right' ? 'top-2 right-2 ' : 'top-1 left-1 ') +
           (selected
             ? 'bg-accent text-accent-fg opacity-100'
             : 'bg-black/50 border border-subtle text-transparent opacity-0 group-hover:opacity-100 focus-visible:opacity-100')
@@ -442,7 +466,7 @@ const Cell = memo(function Cell({
             onPreview(item.name)
           }}
           aria-label={`${t('common.preview')} ${item.name}`}
-          className="absolute top-1 right-1 w-5 h-5 rounded-sm bg-black/60 text-white text-[11px] opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:bg-black/80"
+          className={`absolute ${checkboxPosition === 'top-right' ? 'top-2 left-2' : 'top-1 right-1'} w-5 h-5 rounded-sm bg-black/60 text-white text-[11px] opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:bg-black/80`}
         >
           ⤢
         </button>

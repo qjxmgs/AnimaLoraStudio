@@ -96,6 +96,30 @@ describe('applySelection (PP3 — checkbox semantics)', () => {
 })
 
 describe('ImageGrid (PP3)', () => {
+  it('draws only the located RGB frame and moves selection checkboxes to the inset top right', () => {
+    const props = { items, selected: new Set(items.map((item) => item.name)), onSelect: vi.fn(),
+      selectionFrameMode: 'active' as const, checkboxPosition: 'top-right' as const }
+    const { container, rerender } = render(<ImageGrid {...props} activeName="b.png" />)
+    expect(container.querySelectorAll('.ui-image-selection-frame')).toHaveLength(1)
+    expect(screen.getAllByRole('gridcell')[1].querySelector('.ui-image-selection-frame')).not.toBeNull()
+    for (const item of items) expect(screen.getByRole('button', { name: `取消选择 ${item.name}` })).toHaveClass('top-2', 'right-2')
+    rerender(<ImageGrid {...props} activeName="" />)
+    expect(container.querySelectorAll('.ui-image-selection-frame')).toHaveLength(0)
+  })
+
+  it('delegates Tab navigation to the page and respects modal navigation blocking', () => {
+    const onNavigateSelected = vi.fn()
+    const props = { items, selected: new Set(['a.png', 'c.png']), activeName: 'a.png',
+      selectionFrameMode: 'active' as const, tabThroughSelection: true, onSelect: vi.fn(), onNavigateSelected }
+    const { rerender } = render(<ImageGrid {...props} />)
+    // Checkbox interaction must not move the navigation cursor away from a.png.
+    fireEvent.mouseDown(screen.getByRole('button', { name: '取消选择 c.png' }))
+    fireEvent.keyDown(screen.getByRole('grid'), { key: 'Tab' })
+    expect(onNavigateSelected).toHaveBeenCalledWith('c.png')
+    rerender(<ImageGrid {...props} navigationDisabled />)
+    fireEvent.keyDown(screen.getByRole('grid'), { key: 'Tab' })
+    expect(onNavigateSelected).toHaveBeenCalledTimes(1)
+  })
   it('locates a selected image at the top and cycles selected images with Tab', () => {
     const onActivate = vi.fn(), onSelect = vi.fn()
     gridMocks.omitIndex = 2

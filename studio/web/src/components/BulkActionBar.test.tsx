@@ -20,8 +20,6 @@ function renderBar(overrides: Partial<ComponentProps<typeof BulkActionBar>> = {}
     selectedKeys: ['a.png', 'b.png'],
     onApply,
     tagSuggestions: ['cat', 'dog', 'solo', 'warm'],
-    onSelectAll: vi.fn(),
-    onClearSelection: vi.fn(),
     totalCount: 3,
     ...overrides,
   }
@@ -65,10 +63,9 @@ describe('BulkActionBar (with confirm modal)', () => {
     expect(onApply).not.toHaveBeenCalled()
   })
 
-  it('disables organizing when no images are selected and advertises Escape', () => {
+  it('disables organizing when no images are selected', () => {
     renderBar({ selectedKeys: [] })
     expect(screen.getByRole('button', { name: '整理提示词' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: '取消选择' })).toHaveAttribute('aria-keyshortcuts', 'Escape')
   })
   it('add at front (default position) prepends after confirm', async () => {
     const user = userEvent.setup()
@@ -159,11 +156,6 @@ describe('BulkActionBar (with confirm modal)', () => {
     expect(screen.getByRole('button', { name: '删除' })).toBeDisabled()
     expect(screen.getByRole('button', { name: '替换' })).toBeDisabled()
     expect(screen.getByRole('button', { name: '去重' })).toBeDisabled()
-  })
-
-  it('select-all-images button uses image-specific label', () => {
-    renderBar()
-    expect(screen.getByRole('button', { name: '全选图片' })).toBeInTheDocument()
   })
 
   it('ranks 30 prefix matches before 20 fuzzy matches in dataset suggestions', async () => {

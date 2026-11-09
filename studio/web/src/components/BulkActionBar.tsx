@@ -22,8 +22,6 @@ interface Props {
   cache: Map<string, string[]>
   selectedKeys: string[]
   onApply: (updates: Map<string, string[]>) => void
-  onSelectAll: () => void
-  onClearSelection: () => void
   tagSuggestions?: string[]
   /** 用来给"未选时"的 hint 显示总数。 */
   totalCount: number
@@ -45,8 +43,6 @@ export default function BulkActionBar({
   cache,
   selectedKeys,
   onApply,
-  onSelectAll,
-  onClearSelection,
   tagSuggestions = [],
   totalCount,
 }: Props) {
@@ -186,21 +182,6 @@ export default function BulkActionBar({
           disabled={noneSelected || tagDict.status === 'loading'}
           title={t('tagEditor.organizeHint')}
         >{t('tagEditor.organize')}</Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={onSelectAll}
-          disabled={totalCount === 0}
-          title={t('bulkAction.selectAllImagesHint')}
-        >{t('bulkAction.selectAllImages')}</Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={onClearSelection}
-          disabled={noneSelected}
-          aria-keyshortcuts="Escape"
-          title={`${t('common.deselect')} (Esc)`}
-        >{t('common.deselect')}</Button>
       </div>
 
       {/* V2 行式：四操作各一行，按钮列右对齐。 */}

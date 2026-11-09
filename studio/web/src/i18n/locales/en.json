@@ -2202,6 +2202,8 @@
     "saveThenDownloadToast": "Save tags first, then download",
     "downloadFailed": "Download failed: {{error}}",
     "singleEdit": "Single image edit",
+    "bulkEdit": "Bulk operations",
+    "sidebarMode": "Tag editing panel mode",
     "inpaintAction": "Inpaint",
     "inpaintDialogTitle": "Single-image inpaint",
     "inpaintSaveAndClose": "Save and close",
