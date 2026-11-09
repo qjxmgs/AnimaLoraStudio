@@ -609,6 +609,15 @@ export default function TagEditPage() {
 
       if (!activeKey || event.ctrlKey || event.metaKey) return
 
+      if (!event.shiftKey) {
+        const key = event.key.toLowerCase()
+        if (event.code === 'KeyQ' || key === 'q' || event.code === 'KeyE' || key === 'e') {
+          event.preventDefault()
+          setSidebarMode(event.code === 'KeyQ' || key === 'q' ? 'single' : 'bulk')
+          return
+        }
+      }
+
       const directionByCode: Partial<Record<string, GridDirection>> = {
         KeyW: 'up',
         KeyS: 'down',

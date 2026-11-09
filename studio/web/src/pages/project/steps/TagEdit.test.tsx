@@ -348,6 +348,36 @@ beforeEach(() => {
 })
 
 describe('TagEdit workspace', () => {
+  it('switches sidebar modes with Q/E while preserving the active image and selection', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await ready()
+    await user.click(screen.getByRole('button', { name: '打开 人物 A/a1.png' }))
+    await user.click(screen.getByRole('button', { name: '全选' }))
+    fireEvent.keyDown(window, { key: 'q', code: 'KeyQ' })
+    expect(screen.getByRole('radio', { name: '单图编辑' })).toBeChecked()
+    fireEvent.keyDown(window, { key: 'e', code: 'KeyE' })
+    expect(screen.getByRole('radio', { name: '批量操作' })).toBeChecked()
+    expect(screen.getByTestId('bulk-selection')).toHaveTextContent('3')
+    expect(screen.getByTestId('preview-image')).toHaveTextContent('a1.png')
+    for (const modifiers of [{ ctrlKey: true }, { metaKey: true }, { altKey: true }, { shiftKey: true }, { isComposing: true }]) {
+      fireEvent.keyDown(window, { key: 'q', code: 'KeyQ', ...modifiers })
+      expect(screen.getByRole('radio', { name: '批量操作' })).toBeChecked()
+    }
+    const input = document.createElement('input')
+    document.body.appendChild(input)
+    fireEvent.keyDown(input, { key: 'q', code: 'KeyQ' })
+    input.remove()
+    expect(screen.getByRole('radio', { name: '批量操作' })).toBeChecked()
+    const modal = document.createElement('div')
+    modal.setAttribute('aria-modal', 'true')
+    document.body.appendChild(modal)
+    fireEvent.keyDown(window, { key: 'q', code: 'KeyQ' })
+    modal.remove()
+    expect(screen.getByRole('radio', { name: '批量操作' })).toBeChecked()
+    expect(api.commitCaptions).not.toHaveBeenCalled()
+  })
+
   it('keeps selection controls in the image header in both sidebar modes', async () => {
     const user = userEvent.setup()
     renderPage()
