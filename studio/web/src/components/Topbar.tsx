@@ -69,6 +69,7 @@ function useBreadcrumbs(): Crumb[] {
   if (parts[0] === 'tools') {
     const labels: Record<string, string> = {
       presets: t('breadcrumb.presets'),
+      'tag-topics': t('breadcrumb.tagTopics'),
       monitor: t('breadcrumb.monitor'),
       settings: t('breadcrumb.settings'),
       generate: t('breadcrumb.generate'),

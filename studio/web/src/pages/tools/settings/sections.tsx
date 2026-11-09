@@ -1,3 +1,4 @@
+import TopicLibraryLink from '../../../components/TopicLibraryLink'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { TFunction } from 'i18next'
 import { Trans, useTranslation } from 'react-i18next'
@@ -710,6 +711,7 @@ export function TagDictionarySection() {
 
   return (
     <SettingsSection id="tag-dictionary" title={t('settings.tagDictionary.title')}>
+      <TopicLibraryLink />
       <SettingsField label={t('settings.tagDictionary.statusLabel')}>
         {dict.status === 'loading' && (
           <span className="text-xs text-fg-tertiary">{t('settings.tagDictionary.loading')}</span>

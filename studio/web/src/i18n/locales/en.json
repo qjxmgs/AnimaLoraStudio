@@ -130,6 +130,7 @@
     }
   },
   "breadcrumb": {
+    "tagTopics": "Tag topics",
     "projects": "Projects",
     "queue": "Queue",
     "presets": "Presets",

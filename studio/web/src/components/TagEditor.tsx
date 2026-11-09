@@ -1,3 +1,5 @@
+import { useTagTopics } from '../tagDict/topics'
+import TopicLibraryLink from './TopicLibraryLink'
 import { TAG_TONES, TAG_CHIP_CLASS, tagChipStyle } from './tagDisplay/tagChipStyle'
 export { TAG_TONES } from './tagDisplay/tagChipStyle'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
@@ -248,6 +250,7 @@ export default function TagEditor({
 }: Props) {
   const { t } = useTranslation()
   const tagDict = useTagDict()
+  const semantic = useTagTopics()
   const [draft, setDraft] = useState('')
   const selectedTags = useMemo(
     () => tags.filter((tag) => !inactiveTags.has(tag)),
@@ -522,7 +525,7 @@ export default function TagEditor({
     const source = tagsEqual(textTags, selectedTags)
       ? tags
       : [...textTags, ...tags.filter((tag) => inactiveTags.has(tag) && !textTags.includes(tag))]
-    const next = organizeTags(source, tagDict.categories)
+    const next = organizeTags(source, tagDict.categories, semantic.snapshot)
     if (mode === 'text') {
       const active = next.filter((tag) => !inactiveTags.has(tag))
       setTextBuf(active.join(', '))
@@ -591,11 +594,12 @@ export default function TagEditor({
         <Button
           size="xs"
           onClick={organize}
-          disabled={saving || activeTag !== null || tags.length < 2 || tagDict.status === 'loading'}
+          disabled={saving || activeTag !== null || tags.length < 2 || (tagDict.status === 'loading' || (semantic.loading && !semantic.snapshot))}
           title={t('tagEditor.organizeHint')}
         >
           {t('tagEditor.organize')}
         </Button>
+        <TopicLibraryLink error={semantic.error} cached={Boolean(semantic.snapshot)} />
         {showTagCount && (
           <span className="text-fg-tertiary tnum">
             {t('tagEditor.tagCount', { n: selectedTags.length })}

@@ -33,6 +33,8 @@
 
 ## 状态值
 
+- [0022 — 独立本地提示词主题词库](0022-local-tag-topics.md) · Accepted · 2026-11-09
+
 - **Proposed** — 草拟中，未决
 - **Accepted** — 已采纳并落地
 - **Superseded by #N** — 被新 ADR 取代（保留原文，不删）

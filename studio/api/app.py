@@ -43,6 +43,7 @@ from .routers import (
     studio_data,
     system,
     tag_dictionary,
+    tag_topics,
     tagger,
     upscalers,
 )
@@ -93,6 +94,7 @@ app.include_router(llm_presets.router)
 app.include_router(models.router)
 app.include_router(upscalers.router)
 app.include_router(tag_dictionary.router)
+app.include_router(tag_topics.router)
 app.include_router(lora_catalog.router)
 # PR-6 commit 3: installs router（10 routes: wd14/torch/flash-attn/xformers/llm-tagger admin）
 app.include_router(installs.router)

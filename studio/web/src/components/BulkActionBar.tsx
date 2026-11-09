@@ -1,3 +1,5 @@
+import { useTagTopics } from '../tagDict/topics'
+import TopicLibraryLink from './TopicLibraryLink'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import Button from './Button'
@@ -50,6 +52,7 @@ export default function BulkActionBar({
   const { toast } = useToast()
   const { confirm } = useDialog()
   const tagDict = useTagDict()
+  const semantic = useTagTopics()
   const [addInput, setAddInput] = useState('')
   const [removeInput, setRemoveInput] = useState('')
   const [oldTag, setOldTag] = useState('')
@@ -157,7 +160,7 @@ export default function BulkActionBar({
     for (const key of selectedKeys) {
       const current = cache.get(key)
       if (!current) continue
-      const next = organizeTags(current, tagDict.categories)
+      const next = organizeTags(current, tagDict.categories, semantic.snapshot)
       if (next !== current) updates.set(key, next)
     }
     if (updates.size) onApply(updates)
@@ -179,9 +182,10 @@ export default function BulkActionBar({
           variant="ghost"
           size="sm"
           onClick={organizeSelected}
-          disabled={noneSelected || tagDict.status === 'loading'}
+          disabled={noneSelected || (tagDict.status === 'loading' || (semantic.loading && !semantic.snapshot))}
           title={t('tagEditor.organizeHint')}
         >{t('tagEditor.organize')}</Button>
+        <TopicLibraryLink error={semantic.error} cached={Boolean(semantic.snapshot)} />
       </div>
 
       {/* V2 行式：四操作各一行，按钮列右对齐。 */}

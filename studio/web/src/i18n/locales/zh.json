@@ -130,6 +130,7 @@
     }
   },
   "breadcrumb": {
+    "tagTopics": "主题词库",
     "projects": "项目",
     "queue": "队列",
     "presets": "预设",

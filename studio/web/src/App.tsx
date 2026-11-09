@@ -37,6 +37,7 @@ import TrainPage from './pages/project/steps/Train'
 import GeneratePage from './pages/tools/Generate'
 import MonitorPage from './pages/tools/Monitor'
 import PresetsPage from './pages/tools/Presets'
+import TagTopicsPage from './pages/tools/TagTopics'
 
 /**
  * 老路径 `/tools/settings?section=…` 的兼容跳转：跳首页同时把抽屉打开（保留
@@ -121,6 +122,7 @@ const router = createBrowserRouter(
           ],
         },
         { path: '/tools/presets', element: <PresetsPage /> },
+        { path: '/tools/tag-topics', element: <TagTopicsPage /> },
         { path: '/tools/monitor', element: <MonitorPage /> },
         { path: '/tools/settings', element: <SettingsRedirect /> },
         { path: '/tools/generate', element: <GeneratePage /> },
