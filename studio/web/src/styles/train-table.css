@@ -128,3 +128,16 @@
 .train-field-title { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; min-width: 0; }
 .train-field-title > span { min-width: 0; }
 .train-field-title > button { flex-shrink: 0; }
+
+.train-field-subtitle { flex-basis: 100%; }
+
+.train-inline-option { display: inline-flex; align-items: center; gap: 3px; margin-left: auto; }
+.train-text-toggle {
+  border: 1px solid var(--border-default); border-radius: 4px; padding: 3px 6px;
+  min-height: 28px; background: transparent; color: var(--fg-tertiary);
+  font-size: 12px; white-space: nowrap; cursor: pointer;
+}
+.train-text-toggle[aria-pressed="true"] {
+  color: var(--accent-strong); border-color: var(--accent); background: var(--accent-soft); font-weight: 600;
+}
+.train-text-toggle:disabled { opacity: .5; cursor: not-allowed; }

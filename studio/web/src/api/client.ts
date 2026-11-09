@@ -3424,6 +3424,11 @@ export const api = {
     return `/api/projects/${pid}/versions/${vid}/thumb?${qs.toString()}`
   },
 
+  estimateTrainingDuration: (config: ConfigData, totalSteps: number) =>
+    req<{ seconds: number | null; task_ids: number[] }>('/api/training/estimate-duration', {
+      method: 'POST', body: JSON.stringify({ config, total_steps: totalSteps }),
+    }),
+
   // Queue --------------------------------------------------------------
   listQueue: (status?: TaskStatus, opts?: { includeGenerate?: boolean }) => {
     const params: string[] = []

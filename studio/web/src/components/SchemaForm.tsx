@@ -189,9 +189,19 @@ export default function SchemaForm({
       {(compact ? trainSchemaGroups(schema, values) : schema.groups).map(({ key, label }) => {
         const groupLabel = schemaGroupLabel(key, label, t)
         const fields = (buckets.get(key) ?? []).filter(name => !compact || evalShowWhen(props[name].show_when, values))
+        // Keep the sampling prompt editors in positive / batch / negative order.
+        if (compact && key === 'sample' && fields.includes('sample_prompts')) {
+          const negativeIndex = fields.indexOf('sample_negative_prompt')
+          if (negativeIndex >= 0) {
+            fields.splice(negativeIndex, 1)
+            fields.splice(fields.indexOf('sample_prompts') + 1, 0, 'sample_negative_prompt')
+          }
+        }
+        const integratedCheckpoint = compact && fields.includes('grad_accum') && fields.includes('grad_checkpoint')
+        if (integratedCheckpoint) fields.splice(fields.indexOf('grad_checkpoint'), 1)
         if (fields.length === 0) return null
         const isCollapsed = !compact && Boolean(collapsed[key])
-        const renderField = (name: string) => {
+        const renderField = (name: string, inline = false): ReactNode => {
           const prop = props[name]
           if (!evalShowWhen(prop.show_when, values)) return null
           // disable_when（schema 驱动条件 disable，如 Prodigy → lr_scheduler）
@@ -231,7 +241,8 @@ export default function SchemaForm({
           const field = (
             <Field
               key={name}
-              presentation={compact ? 'table' : 'stack'}
+              presentation={inline ? 'text-toggle' : compact ? 'table' : 'stack'}
+              inlineControl={integratedCheckpoint && name === 'grad_accum' ? renderField('grad_checkpoint', true) : undefined}
               name={name}
               prop={prop}
               value={values[name]}
@@ -246,7 +257,7 @@ export default function SchemaForm({
               disabledOptionHint={schemaDisableHint(name, prop.disable_hint, t)}
             />
           )
-          if (!compact) return field
+          if (!compact || inline) return field
           const wide = ['path', 'string', 'textarea', 'string-list', 'code'].includes(controlKind(prop)) && name !== 'output_name'
           return <div key={name} className={`train-field-slot${wide ? ' train-field-wide' : ''}`}>{field}</div>
         }
@@ -301,7 +312,7 @@ export default function SchemaForm({
             )}
             {!isCollapsed && (
               <div id={`schema-fields-${key}`} className={compact ? 'train-table-fields' : 'px-4 pb-3 space-y-1'}>
-                {compact ? tableCells : fields.map(renderField)}
+                {compact ? tableCells : fields.map(name => renderField(name))}
               </div>
             )}
           </section>

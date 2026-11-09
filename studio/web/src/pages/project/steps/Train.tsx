@@ -459,7 +459,7 @@ export default function TrainPage() {
   const [storedPreviewTab, setPreviewTab] = useLocalStorageState<'stats' | 'config'>('train.previewTab', 'stats')
   const previewTab = storedPreviewTab === 'config' ? 'config' : 'stats'
   const datasetPlan = useTrainDatasetPlan({ projectId: project.id, activeVersion, reg, config })
-  const [activeGroup, setActiveGroup] = useState('top')
+  const [activeGroup, setActiveGroup] = useState('model')
   const visibleGroups = useMemo(
     () => (schema && config ? trainSchemaGroups(schema, config) : []),
     [schema, config],
@@ -467,8 +467,8 @@ export default function TrainPage() {
   const navigateGroup = (key: string) => {
     setActiveGroup(key)
     requestAnimationFrame(() => {
-      const target = key === 'top' ? schemaScrollRef.current?.firstElementChild : document.getElementById(`schema-group-${key}`)
-      target?.scrollIntoView({ block: 'start' })
+      const target = document.getElementById(`schema-group-${key}`)
+      target?.scrollIntoView({ behavior: 'smooth', block: 'start', inline: 'nearest' })
     })
   }
   // popover 关闭：点外面 / Esc
@@ -914,8 +914,6 @@ export default function TrainPage() {
 
             {configResp?.has_config && config && visibleGroups.length > 0 && (
               <nav className="train-section-nav" aria-label={t('train.table.navigation')}>
-                <button type="button" aria-current={activeGroup === 'top' ? 'location' : undefined}
-                  onClick={() => navigateGroup('top')}>{t('train.table.top')}</button>
                 {visibleGroups.map(group => (
                   <button type="button" key={group.key} aria-current={activeGroup === group.key ? 'location' : undefined}
                     aria-controls={`schema-group-${group.key}`} onClick={() => navigateGroup(group.key)}>

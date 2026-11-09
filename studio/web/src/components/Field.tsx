@@ -11,7 +11,8 @@ import ResumeFieldPicker from './ResumeFieldPicker'
 import { InfoButton } from './InfoButton'
 
 interface Props {
-  presentation?: 'stack' | 'table'
+  presentation?: 'stack' | 'table' | 'text-toggle'
+  inlineControl?: React.ReactNode
   name: string
   prop: SchemaProperty
   value: unknown
@@ -56,16 +57,18 @@ export default function Field(props: Props) {
 
 function FieldControl({
   name, prop, value, onChange, disabled = false, hint, descriptionOverride, suffix,
-  modelFamily, enumOptions, disabledEnumOptions, disabledOptionHint, presentation = 'stack',
+  modelFamily, enumOptions, disabledEnumOptions, disabledOptionHint, presentation = 'stack', inlineControl,
 }: Props) {
   const { t } = useTranslation()
-  const compact = presentation === 'table'
+  const compact = presentation !== 'stack'
   const kind = controlKind(prop)
   const label = compact ? t(`train.fields.${name}`, { defaultValue: fieldLabel(name) }) : fieldLabel(name)
   const description = descriptionOverride ?? prop.description
   const help = compact ? undefined : description
   const hintText = hint ?? (disabled ? t('field.autoProject') : null)
-  const helpIcon = compact && description ? <InfoButton ariaLabel={t('train.table.help', { field: label })}>{description}</InfoButton> : null
+  const helpIcon = compact && description ? <InfoButton ariaLabel={t('train.table.help', { field: label })}>
+    {description.includes('\n\n') ? description.split('\n\n').map((paragraph, index) => <p key={index}>{paragraph}</p>) : description}
+  </InfoButton> : null
   const hintNode = <>
     {helpIcon}
     {hintText && <FieldHint>{hintText}</FieldHint>}
@@ -73,6 +76,15 @@ function FieldControl({
 
   // bool ----------------------------------------------------------------
   if (kind === 'bool') {
+    if (presentation === 'text-toggle') return (
+      <span className="train-inline-option" data-field={name} data-kind="bool">
+        <button type="button" className="train-text-toggle" aria-pressed={Boolean(value)}
+          disabled={disabled} onClick={() => onChange(!value)}>
+          {t('train.table.checkGradient')}
+        </button>
+        {hintNode}
+      </span>
+    )
     if (compact) return (
       <div className="train-field-toggle">
         <span className="type-field-label">{label}{hintNode}</span>
@@ -183,9 +195,12 @@ function FieldControl({
 
   // string-list ---------------------------------------------------------
   if (kind === 'string-list') {
+    const batchSample = compact && name === 'sample_prompts'
+    const listHint = t(batchSample ? 'train.table.batchPromptHint' : 'field.multilineHint')
     return (
       <StringListField
-        label={`${label}${t('field.multilineHint')}`}
+        label={`${label}${listHint}`}
+        labelContent={batchSample ? <>{label}{hintNode}<span className="train-field-subtitle">{listHint}</span></> : undefined}
         help={help}
         value={value}
         onChange={onChange}
@@ -229,6 +244,7 @@ function FieldControl({
     return (
       <NumberField
         label={label}
+        inlineControl={inlineControl}
         kind={kind}
         help={help}
         value={value}
@@ -262,6 +278,7 @@ function FieldControl({
 }
 
 interface TextareaFieldProps {
+  labelContent?: React.ReactNode
   label: string
   help: string | undefined
   value: unknown
@@ -303,7 +320,7 @@ function TextareaField({
  *  行。raw 保留用户原始输入，解析后的数组仍每次击键同步给父级，blur 时把
  *  raw 归一化（去空行 / 首尾空白）。 */
 function StringListField({
-  label, help, value, onChange, disabled = false, hintNode,
+  label, labelContent, help, value, onChange, disabled = false, hintNode,
 }: TextareaFieldProps) {
   const joined = Array.isArray(value) ? (value as string[]).join('\n') : ''
   const [raw, setRaw] = useState<string>(joined)
@@ -320,7 +337,7 @@ function StringListField({
   return (
     <div className="py-1.5">
       <div className="type-field-label mb-1">
-        {label}{hintNode}
+        {labelContent ?? <>{label}{hintNode}</>}
       </div>
       <Textarea
         aria-label={label}
@@ -494,6 +511,7 @@ function IntListField({
 }
 
 interface NumberFieldProps {
+  inlineControl?: React.ReactNode
   label: string
   kind: 'int' | 'float'
   help: string | undefined
@@ -507,7 +525,7 @@ interface NumberFieldProps {
 }
 
 function NumberField({
-  label, kind, help, value, defaultValue, minimum, maximum,
+  label, kind, help, value, defaultValue, minimum, maximum, inlineControl,
   onChange, disabled = false, hintNode,
 }: NumberFieldProps) {
   const formatNum = (v: unknown) =>
@@ -546,7 +564,7 @@ function NumberField({
   return (
     <div className="py-1.5">
       <div className="type-field-label mb-1">
-        {label}{hintNode}
+        {label}{hintNode}{inlineControl}
       </div>
       <Input
         aria-label={label}

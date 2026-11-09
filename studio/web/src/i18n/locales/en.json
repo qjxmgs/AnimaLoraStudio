@@ -499,9 +499,9 @@
       "lora_rank_dropout": "Dropout on LoRA's rank dimensions (a subset of rank dims is randomly active each step): larger = stronger regularization; 0 = disabled",
       "lora_module_dropout": "Probability of skipping the entire LoRA module (stochastic depth): the module contributes nothing on that step; larger = stronger regularization; 0 = disabled",
       "lycoris_backend": "LyCORIS compute backend. Torch is the stable default; Triton is an experimental CUDA bypass for LoRA / LoHa and currently cannot be enabled with Flash Attention",
-      "epochs": "Training epochs",
-      "max_steps": "Maximum steps (0 = unlimited)",
-      "batch_size": "Batch size",
+      "epochs": "Meaning: the number of passes through the constructed training dataset. An epoch uses effective samples, including folder repeats and regularization data, rather than necessarily the original image count. Minimum: 1.\n\nSteps: an epoch usually contains multiple optimizer updates. For ordinary batching, updates per epoch are approximately effective samples divided by (batch size × gradient accumulation), rounded up. Bucketing, partial batches and NaViT packing can change this; runtime counts are authoritative.\n\nExample: with 16 effective samples, batch size 2 and gradient accumulation 4, complete ordinary batches produce 2 updates per epoch, or about 60 updates over 30 epochs.\n\nStopping: training stops at whichever limit is reached first: epochs or maximum steps. More epochs increase repeated exposure and runtime, but do not guarantee better results; review samples and loss trends.",
+      "max_steps": "Meaning: an upper limit on optimizer updates. One step is one parameter update, not one image and not an image-generation sampling step. With gradient accumulation, multiple micro-batches contribute to one update.\n\nZero means no additional step cap. Training still ends at the epoch limit; zero does not skip training or run indefinitely. A positive integer caps optimizer updates.\n\nInteraction with epochs: the first limit reached wins. If the epoch plan gives 240 updates, a cap of 100 stops early; a cap of 500 does not extend the plan to 500 steps.\n\nResuming: restoring a full training state continues global_step, so this limit applies to cumulative steps, not additional steps. Starting a new run from LoRA weights differs from restoring full training state.",
+      "batch_size": "Meaning: the number of samples processed together in one ordinary forward/backward pass (micro-batch). Minimum: 1. It is not the epoch count or total dataset size.\n\nGradient accumulation: on one device with complete batches, effective batch size per optimizer update is approximately batch_size × grad_accum. Batch size 2 and accumulation 4 usually process about 8 samples before one update. Partial batches can contain fewer samples.\n\nImpact: larger batches usually require more VRAM and reduce the number of updates for the same dataset. Throughput need not improve proportionally. Smaller batches can help with out-of-memory errors; using accumulation to preserve effective batch size still requires checking speed and training behavior.\n\nNaViT exception: packing uses a token budget instead of batch_size, so this field is pinned to 1. VAE cache encoding uses the separate vae_cache_batch_size setting.",
       "grad_checkpoint": "Gradient checkpointing (saves VRAM, roughly +1/3 compute)",
       "grad_accum": "Gradient accumulation steps (effective batch = batch_size × grad_accum)",
       "learning_rate": "Learning rate. Automagic recommends 1e-6 (auto-applied on switch); Lion recommends AdamW lr / 3; Prodigy / PPSF require 1.0",
@@ -2958,12 +2958,27 @@
     "saveBeforeDownload": "Save the preset first; download streams the on-disk yaml from the server."
   },
   "train": {
+    "duration": {
+      "label": "Estimated training time",
+      "unavailable": "No estimate available",
+      "loading": "Estimating…",
+      "error": "Estimate temporarily unavailable",
+      "minutes": "About {{count}} min",
+      "helpLabel": "Estimated training time: help",
+      "help": "Uses up to 5 matching runs among the last 100 successful local training tasks, including historical loading, sampling and saving costs but excluding queue time. Data/model paths and core settings must match; step counts must be within 0.5–2× the historical run. Resumed runs are excluded. Assumes unchanged hardware and dataset contents; actual duration may differ.",
+      "sources": "Based on {{count}} historical runs."
+    },
     "table": {
+      "checkGradient": "Checkpointing",
+      "batchPromptHint": "(one per line)",
       "navigation": "Parameter sections",
       "top": "Top",
       "help": "{{field}}: help"
     },
     "fields": {
+      "sample_negative_prompt": "Negative prompt",
+      "sample_prompt": "Positive prompt",
+      "sample_prompts": "Batch positive prompts",
       "reg_weight": "Regularization weight",
       "cache_latents": "Cache latents",
       "flip_augment": "Horizontal flip",

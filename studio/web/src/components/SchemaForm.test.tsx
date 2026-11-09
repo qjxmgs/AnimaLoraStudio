@@ -462,3 +462,30 @@ describe('training table and preset layout isolation', () => {
     expect(page.container.querySelectorAll('[data-field]')).toHaveLength(2)
   })
 })
+
+
+it('integrates checkpointing into accumulation only in the training table', () => {
+  const schema: SchemaResponse = {
+    groups: [{ key: 'training', label: 'Training' }],
+    schema: { properties: {
+      grad_checkpoint: { type: 'boolean', default: false, group: 'training' },
+      grad_accum: { type: 'integer', default: 2, group: 'training' },
+    } },
+  }
+  const values = { grad_checkpoint: false, grad_accum: 2 }
+  const onChange = vi.fn()
+  const page = render(<SchemaForm schema={schema} values={values} onChange={onChange} layout="train-table" />)
+  const button = screen.getByRole('button', { name: 'train.table.checkGradient' })
+  expect(button).toHaveAttribute('aria-pressed', 'false')
+  expect(button.closest('.train-field-slot')).toContainElement(screen.getByRole('textbox', { name: 'Grad Accum' }))
+  expect(page.container.querySelectorAll('[data-field="grad_checkpoint"]')).toHaveLength(1)
+  expect(screen.queryByRole('switch')).not.toBeInTheDocument()
+  fireEvent.click(button)
+  expect(onChange).toHaveBeenCalledWith({ grad_checkpoint: true, grad_accum: 2 })
+  page.rerender(<SchemaForm schema={schema} values={{ ...values, grad_checkpoint: true }} onChange={onChange} layout="train-table" disabledFields={['grad_checkpoint']} />)
+  expect(button).toHaveAttribute('aria-pressed', 'true')
+  expect(button).toBeDisabled()
+  page.rerender(<SchemaForm schema={schema} values={values} onChange={onChange} />)
+  expect(screen.getByRole('checkbox')).toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'train.table.checkGradient' })).not.toBeInTheDocument()
+})

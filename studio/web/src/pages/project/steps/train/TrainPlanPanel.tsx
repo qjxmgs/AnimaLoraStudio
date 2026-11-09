@@ -15,6 +15,7 @@ import Badge from '../../../../components/Badge'
 import Button from '../../../../components/Button'
 import Card from '../../../../components/Card'
 import ConfigYamlPanel from '../../../../components/ConfigYamlPanel'
+import { InfoButton } from '../../../../components/InfoButton'
 import { parseFolderMeta } from '../../../../lib/folderMeta'
 import type { SaveStatus } from '../../../../lib/SettingsData'
 
@@ -78,6 +79,40 @@ function ActiveTrainTaskCard({ task }: { task: Task }) {
   )
 }
 
+export function TrainDurationEstimate({ config, totalSteps }: { config: ConfigData; totalSteps: number | null }) {
+  const { t } = useTranslation()
+  const query = JSON.stringify({ config, totalSteps })
+  const [result, setResult] = useState<{ query: string; seconds: number | null; count: number; error?: boolean } | null>(null)
+  useEffect(() => {
+    if (!totalSteps || totalSteps <= 0) return
+    let cancelled = false
+    const timer = window.setTimeout(() => {
+      const request = JSON.parse(query) as { config: ConfigData; totalSteps: number }
+      api.estimateTrainingDuration(request.config, request.totalSteps).then(data => {
+        if (!cancelled) setResult({ query, seconds: data.seconds, count: data.task_ids.length })
+      }).catch(() => {
+        if (!cancelled) setResult({ query, seconds: null, count: 0, error: true })
+      })
+    }, 500)
+    return () => { cancelled = true; window.clearTimeout(timer) }
+  }, [query, totalSteps])
+  const current = result?.query === query ? result : null
+  const pending = !!totalSteps && !current
+  const value = !totalSteps ? t('train.duration.unavailable')
+    : pending ? t('train.duration.loading')
+      : current?.error ? t('train.duration.error')
+        : current?.seconds == null ? t('train.duration.unavailable')
+          : t('train.duration.minutes', { count: Math.max(1, Math.ceil(current.seconds / 60)) })
+  return <div className="contents">
+    <dt className="text-fg-secondary">
+      {t('train.duration.label')} <InfoButton ariaLabel={t('train.duration.helpLabel')}>
+        {t('train.duration.help')}{current?.count ? ` ${t('train.duration.sources', { count: current.count })}` : ''}
+      </InfoButton>
+    </dt>
+    <dd className="m-0 break-words font-mono text-fg-primary" aria-busy={pending}>{value}</dd>
+  </div>
+}
+
 export function TrainRunSummary({ config, plan }: { config: ConfigData | null; plan: TrainDatasetPlan }) {
   const { t } = useTranslation()
   if (!config) return null
@@ -104,6 +139,7 @@ export function TrainRunSummary({ config, plan }: { config: ConfigData | null; p
             <dd className="m-0 break-words font-mono text-fg-primary" title={title || value}>{value}</dd>
           </div>
         ))}
+        <TrainDurationEstimate config={config} totalSteps={plan.finalTotal} />
       </dl>
     </div>
   )

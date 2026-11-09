@@ -103,6 +103,7 @@ beforeEach(async () => {
   mocks.guard = null
   mocks.prompt.mockResolvedValue(null)
 
+  vi.spyOn(api, 'estimateTrainingDuration').mockResolvedValue({ seconds: null, task_ids: [] })
   vi.spyOn(api, 'schema').mockResolvedValue({
     schema: { properties: {} },
     groups: [],
@@ -191,17 +192,18 @@ describe('Train workbench', () => {
     expect(api.putVersionConfig).not.toHaveBeenCalled()
   })
 
-  it('scrolls to groups and the page top without changing configuration or mounting new editors', async () => {
+  it('scrolls to groups without changing configuration or mounting new editors', async () => {
     installTableSchema()
     const user = userEvent.setup()
     renderPage()
     const nav = await screen.findByRole('navigation', { name: '参数分类' })
+    expect(within(nav).queryByRole('button', { name: '页首' })).not.toBeInTheDocument()
     const model = screen.getByRole('textbox', { name: '基础模型路径' })
-    for (const name of ['模型路径', '损失', 'future', '页首']) {
+    for (const name of ['模型路径', '损失', 'future']) {
       await user.click(within(nav).getByRole('button', { name }))
       expect(within(nav).getByRole('button', { name })).toHaveAttribute('aria-current', 'location')
     }
-    await waitFor(() => expect(HTMLElement.prototype.scrollIntoView).toHaveBeenCalled())
+    await waitFor(() => expect(HTMLElement.prototype.scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'start', inline: 'nearest' }))
     expect(screen.getByRole('textbox', { name: '基础模型路径' })).toBe(model)
     expect(screen.getByRole('textbox', { name: '保留 Token 数' })).toBeVisible()
     expect(api.putVersionConfig).not.toHaveBeenCalled()
@@ -248,7 +250,7 @@ describe('Train workbench', () => {
     expect(within(summary).getByText('demo')).toBeInTheDocument()
     expect(within(summary).getByText('10')).toBeInTheDocument()
     expect(within(summary).getByText('20')).toBeInTheDocument()
-    expect(within(summary).getAllByRole('term')).toHaveLength(6)
+    expect(within(summary).getAllByRole('term')).toHaveLength(7)
     expect(within(summary).getByText('非批量步数').nextElementSibling).toHaveTextContent('40')
     expect(within(summary).queryByText(/秩|rank/)).not.toBeInTheDocument()
     expect(within(preview).queryByRole('button', { name: '开始训练' })).not.toBeInTheDocument()
