@@ -17,6 +17,7 @@ import type { ReverseEntry, TagDictMeta, TagDictPayload, TagDictStatus } from '.
 interface State {
   status: TagDictStatus
   entries: Map<string, string[]>
+  categories: ReadonlyMap<string, number>
   /** tag 列表（保持词典文件行序；默认源即 post_count DESC 的热度排序，
    * 用户上传的词典无此保证。autocomplete 扫描用）。 */
   tagKeys: readonly string[]
@@ -33,6 +34,7 @@ interface State {
 let state: State = {
   status: 'idle',
   entries: new Map(),
+  categories: new Map(),
   tagKeys: [],
   compactedKeys: [],
   searchIndex: buildTagSearchIndex([]),
@@ -80,6 +82,7 @@ async function fetchDict(): Promise<void> {
       setState({
         status: 'empty',
         entries: new Map(),
+        categories: new Map(),
         tagKeys: [],
         compactedKeys: [],
         searchIndex: buildTagSearchIndex([]),
@@ -102,6 +105,7 @@ async function fetchDict(): Promise<void> {
     setState({
       status: 'ready',
       entries,
+      categories: new Map(Object.entries(payload.categories ?? {})),
       tagKeys,
       compactedKeys,
       searchIndex,

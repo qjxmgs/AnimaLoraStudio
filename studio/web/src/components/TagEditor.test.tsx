@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { __setTagPrefsForTest } from '../tagDict/prefs'
@@ -43,7 +43,7 @@ const rect = (left: number, top: number, width: number, height: number): DOMRect
 
 describe('TagEditor (PP4 chip mode)', () => {
   beforeEach(() => {
-    __setStateForTest({ status: 'empty', entries: new Map() })
+    __setStateForTest({ status: 'empty', entries: new Map(), categories: new Map() })
     __setTagPrefsForTest({ loaded: true, showTranslation: true })
   })
 
@@ -54,6 +54,67 @@ describe('TagEditor (PP4 chip mode)', () => {
     expect(screen.getByText('2 个标签')).toBeInTheDocument()
     expect(container.querySelector('[data-tag-chip="a"]')?.tagName).toBe('BUTTON')
     expect(screen.queryByLabelText('删除 a')).not.toBeInTheDocument()
+  })
+
+  it('organizes only on click, retaining inactive tags and avoiding redundant changes', async () => {
+    const user = userEvent.setup()
+    const onChange = vi.fn()
+    const inactive = new Set(['blue eyes'])
+    function Harness() {
+      const [tags, setTags] = useState(['my_trigger', 'indoors', 'blue eyes', '1girl', 'smile'])
+      return <TagEditor tags={tags} inactiveTags={inactive} onChange={(next, hidden) => {
+        onChange(next, hidden)
+        setTags(next)
+      }} />
+    }
+    const { container } = render(<Harness />)
+    expect(onChange).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: '整理提示词' }))
+    expect(onChange).toHaveBeenLastCalledWith(['my_trigger', '1girl', 'blue eyes', 'smile', 'indoors'], inactive)
+    expect(Array.from(container.querySelectorAll('[data-tag-chip]'), (chip) => chip.getAttribute('data-tag-chip')))
+      .toEqual(['my_trigger', '1girl', 'blue eyes', 'smile', 'indoors'])
+    await user.click(screen.getByRole('button', { name: '整理提示词' }))
+    expect(onChange).toHaveBeenCalledTimes(1)
+  })
+
+  it('organizes the latest text and reflects it in the chips', async () => {
+    const user = userEvent.setup()
+    function Harness() {
+      const [tags, setTags] = useState(['indoors', '1girl'])
+      return <TagEditor tags={tags} onChange={setTags} />
+    }
+    const { container } = render(<Harness />)
+    await user.click(screen.getByText('文本'))
+    fireEvent.change(screen.getByRole('textbox', { name: '以文本编辑标签' }), {
+      target: { value: 'indoors，smile\nblue eyes, 1girl, ' },
+    })
+    await user.click(screen.getByRole('button', { name: '整理提示词' }))
+    expect(screen.getByRole('textbox', { name: '以文本编辑标签' })).toHaveValue('1girl, blue eyes, smile, indoors')
+    await user.click(screen.getByText('标签块'))
+    expect(Array.from(container.querySelectorAll('[data-tag-chip]'), (chip) => chip.getAttribute('data-tag-chip')))
+      .toEqual(['1girl', 'blue eyes', 'smile', 'indoors'])
+  })
+
+  it('retains inactive chip positions when organizing from text mode', async () => {
+    const user = userEvent.setup()
+    const onChange = vi.fn()
+    render(<TagEditor tags={['indoors', 'custom', '1girl']} inactiveTags={new Set(['custom'])} onChange={onChange} />)
+    await user.click(screen.getByText('文本'))
+    await user.click(screen.getByRole('button', { name: '整理提示词' }))
+    expect(onChange).toHaveBeenLastCalledWith(['1girl', 'custom', 'indoors'], new Set(['custom']))
+    expect(screen.getByRole('textbox', { name: '以文本编辑标签' })).toHaveValue('1girl, indoors')
+  })
+
+  it('disables organization while saving or loading metadata and hides it for prose', () => {
+    const { rerender } = render(<TagEditor tags={['solo']} onChange={() => {}} />)
+    expect(screen.getByRole('button', { name: '整理提示词' })).toBeDisabled()
+    rerender(<TagEditor tags={['indoors', 'solo']} saving onChange={() => {}} />)
+    expect(screen.getByRole('button', { name: '整理提示词' })).toBeDisabled()
+    act(() => __setStateForTest({ status: 'loading' }))
+    rerender(<TagEditor tags={['indoors', 'solo']} onChange={() => {}} />)
+    expect(screen.getByRole('button', { name: '整理提示词' })).toBeDisabled()
+    rerender(<TagEditor tags={['Some prose, with commas.']} natural onChange={() => {}} />)
+    expect(screen.queryByRole('button', { name: '整理提示词' })).not.toBeInTheDocument()
   })
 
   it('keeps the single-tag input directly below the chip flow and above quick tags', () => {

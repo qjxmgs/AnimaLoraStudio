@@ -15,7 +15,7 @@ import Button from '../../../components/Button'
 import Card from '../../../components/Card'
 import { useDialog } from '../../../components/Dialog'
 import EmptyState from '../../../components/EmptyState'
-import { Checkbox, Select } from '../../../components/FormControl'
+import { Checkbox, Input, Select } from '../../../components/FormControl'
 import ImageGrid, { applySelection } from '../../../components/ImageGrid'
 import { useTrainImageReveal } from '../../../lib/useTrainImageReveal'
 import PaneResizer, { normalizePanePair } from '../../../components/PaneResizer'
@@ -223,6 +223,7 @@ export default function TagEditPage() {
   // '' = 全部；否则限定到该 folder（1_data / 2_data ...）。命名特意区分于下面
   // editing 时用的 `activeFolder`（那个是当前编辑图所在 folder，纯展示）。
   const [folderFilter, setFolderFilter] = useState<string>('')
+  const [filenameFilter, setFilenameFilter] = useState('')
   const [storedSortMode, setStoredSortMode] = useLocalStorageState<string>(
     TAG_EDIT_SORT_STORAGE_KEY,
     DEFAULT_TAG_EDIT_SORT,
@@ -357,6 +358,7 @@ export default function TagEditPage() {
     setSel(new Set())
     setAnchor(null)
     setFolderFilter('')
+    setFilenameFilter('')
     void reloadCache('initial')
   }, [reloadCache])
 
@@ -459,7 +461,7 @@ export default function TagEditPage() {
     setVersionSwitchGuard, t, unsavedExitMessage,
   ])
 
-  // folder 列表 + 每个 folder 的原始张数（不受 filterTag 影响，让 tab 数字稳定
+  // folder 列表 + 每个 folder 的原始张数（不受文件名筛选影响，让 tab 数字稳定
   // 不抖动 — 同 Preprocess chip 风格）。单 folder 项目时 UI 不显示 tabs。
   const folderNames = useMemo(() => {
     const set = new Set<string>()
@@ -485,10 +487,22 @@ export default function TagEditPage() {
     }
   }, [folderFilter, folderNames, keys])
 
-  const filteredKeys = useMemo(() => {
-    if (!folderFilter) return keys
-    return keys.filter((k) => meta.get(k)?.folder === folderFilter)
-  }, [keys, meta, folderFilter])
+  const filenameQuery = filenameFilter.trim().toLowerCase()
+  const filteredKeys = useMemo(() => keys.filter((key) => {
+    const image = meta.get(key)
+    return (!folderFilter || image?.folder === folderFilter)
+      && (!filenameQuery || image?.name.toLowerCase().includes(filenameQuery))
+  }), [keys, meta, folderFilter, filenameQuery])
+
+  const handleFilenameChange = (value: string) => {
+    setFilenameFilter(value)
+    setSel(new Set())
+    setAnchor(null)
+    const query = value.trim().toLowerCase()
+    setActiveKey((key) => (
+      !query || meta.get(key)?.name.toLowerCase().includes(query) ? key : ''
+    ))
+  }
 
   const orderedKeys = useMemo(() => {
     const needsImportedAt = sortMode === 'imported-asc' || sortMode === 'imported-desc'
@@ -550,17 +564,28 @@ export default function TagEditPage() {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (
-        !activeKey ||
         event.defaultPrevented ||
         event.isComposing ||
-        event.ctrlKey ||
         event.altKey ||
-        event.metaKey ||
         isTextEntryTarget(event.target) ||
         hasVisibleModal()
       ) {
         return
       }
+
+      if (
+        (event.ctrlKey || event.metaKey) && !event.shiftKey
+        && (event.code === 'KeyA' || event.key.toLowerCase() === 'a')
+      ) {
+        if (orderedKeys.length === 0) return
+        event.preventDefault()
+        setSel(new Set(orderedKeys))
+        setAnchor(null)
+        setActiveKey('')
+        return
+      }
+
+      if (!activeKey || event.ctrlKey || event.metaKey) return
 
       const directionByCode: Partial<Record<string, GridDirection>> = {
         KeyW: 'up',
@@ -1164,9 +1189,9 @@ export default function TagEditPage() {
           style={{ flex: isEditing ? `0 0 ${boundedGridPct}%` : 1 }}
         >
           <div className="px-field py-related flex flex-col gap-related shrink-0 border-b border-subtle">
-            <div className="flex items-center gap-related min-w-0">
+            <div className="flex flex-wrap items-center gap-related min-w-0">
               <h2
-                className="type-panel-title m-0 flex-1 min-w-0 truncate"
+                className="type-panel-title m-0 flex-1 min-w-[8rem] truncate"
                 aria-label={`${t('tagEdit.imageListTitle')}${t('tagEdit.imageListCount', { n: orderedKeys.length })}`}
               >
                 {t('tagEdit.imageListTitle')}
@@ -1174,6 +1199,15 @@ export default function TagEditPage() {
                   {t('tagEdit.imageListCount', { n: orderedKeys.length })}
                 </span>
               </h2>
+              <Input
+                type="search"
+                controlSize="sm"
+                className="w-32 min-w-0"
+                value={filenameFilter}
+                onChange={(event) => handleFilenameChange(event.target.value)}
+                placeholder={t('tagEdit.filenameFilterPlaceholder')}
+                aria-label={t('tagEdit.filenameFilterLabel')}
+              />
               <Select
                 controlSize="sm"
                 className="shrink-0 max-w-[11rem]"
@@ -1218,7 +1252,9 @@ export default function TagEditPage() {
             clickMode={sel.size > 0 ? 'select' : 'activate'}
             ariaLabel={t('tagEdit.gridLabel')}
             emptyHint={
-              folderFilter
+              filenameQuery
+                ? t('tagEdit.noFilenameMatches')
+                : folderFilter
                 ? t('tagEdit.noImagesInFolder', { folder: folderFilter })
                 : t('tagEdit.noImagesHint')
             }

@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   setVersionSwitchGuard: vi.fn(),
   onEvent: undefined as undefined | ((event: Record<string, unknown>) => void),
   gridColumns: 2,
+  realTagEditor: false,
   inpaintProps: [] as Array<Record<string, unknown>>,
 }))
 
@@ -147,7 +148,9 @@ vi.mock('../../../components/ImageGrid', async () => {
     default: MockImageGrid,
   }
 })
-vi.mock('../../../components/TagEditor', () => ({
+vi.mock('../../../components/TagEditor', async (importOriginal) => {
+  const { default: RealTagEditor } = await importOriginal<typeof import('../../../components/TagEditor')>()
+  return {
   default: ({
     tags,
     inactiveTags = new Set<string>(),
@@ -167,6 +170,7 @@ vi.mock('../../../components/TagEditor', () => ({
     onDeleteCustomTag?: (tag: string) => void | Promise<void>
     onReplaceCustomTags?: (tags: string[]) => void | Promise<void>
   }) => {
+    if (mocks.realTagEditor) return <RealTagEditor tags={tags} inactiveTags={inactiveTags} onChange={onChange} />
     const activeTags = tags.filter((tag) => !inactiveTags.has(tag))
     return (
       <div>
@@ -245,7 +249,8 @@ vi.mock('../../../components/TagEditor', () => ({
       </div>
     )
   },
-}))
+  }
+})
 vi.mock('../../../components/BulkActionBar', () => ({
   default: ({ selectedKeys }: { selectedKeys: string[] }) => (
     <div data-testid="bulk-selection">{selectedKeys.length}</div>
@@ -318,6 +323,7 @@ beforeEach(() => {
   localStorage.clear()
   mocks.onEvent = undefined
   mocks.gridColumns = 2
+  mocks.realTagEditor = false
   mocks.inpaintProps.length = 0
   vi.spyOn(api, 'listCaptionsFull').mockResolvedValue(captions)
   vi.spyOn(api, 'listCropWorkspaceTrain').mockResolvedValue(cropWorkspace)
@@ -340,6 +346,35 @@ beforeEach(() => {
 })
 
 describe('TagEdit workspace', () => {
+  it('organizes the current image with the real editor and commits only its sorted caption', async () => {
+    mocks.realTagEditor = true
+    const original = ['my_trigger', 'indoors', 'smile', 'blue eyes', '1girl']
+    vi.mocked(api.listCaptionsFull).mockResolvedValue({
+      ...captions,
+      items: captions.items.map((item) => item.name === 'a1.png'
+        ? { ...item, tags: original, tags_preview: original, tag_count: original.length }
+        : item),
+    })
+    const user = userEvent.setup()
+    renderPage()
+    await ready()
+    await user.click(screen.getByRole('button', { name: '打开 人物 A/a1.png' }))
+    await user.click(screen.getByRole('button', { name: '整理提示词' }))
+    expect(api.commitCaptions).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: '保存（1）' })).toBeEnabled()
+    // Moving to another image and back must retain the pending order.
+    await user.click(screen.getByRole('button', { name: '打开 人物 A/a2.png' }))
+    expect(screen.getByRole('button', { name: '整理提示词' })).toBeDisabled()
+    await user.click(screen.getByRole('button', { name: '打开 人物 A/a1.png' }))
+    await user.click(screen.getByText('文本'))
+    expect(screen.getByRole('textbox', { name: '以文本编辑标签' }))
+      .toHaveValue('my_trigger, 1girl, blue eyes, smile, indoors')
+    await user.click(screen.getByRole('button', { name: '保存（1）' }))
+    await waitFor(() => expect(api.commitCaptions).toHaveBeenCalledWith(7, 11, [{
+      folder: '人物 A', name: 'a1.png', tags: ['my_trigger', '1girl', 'blue eyes', 'smile', 'indoors'],
+    }]))
+  })
+
   it('separates first-load failure from an empty dataset and retries', async () => {
     vi.mocked(api.listCaptionsFull)
       .mockRejectedValueOnce(new Error('offline'))
@@ -634,6 +669,70 @@ describe('TagEdit workspace', () => {
     expect(screen.getByText('1/3')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '下一张' }))
     expect(screen.getByTestId('preview-image')).toHaveTextContent('a2.png')
+  })
+
+  it('selects all visible images with Ctrl+A, including folder and filename filters', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await ready()
+
+    expect(fireEvent.keyDown(window, { code: 'KeyA', key: 'a', ctrlKey: true })).toBe(false)
+    expect(screen.getByTestId('bulk-selection')).toHaveTextContent('3')
+    expect(screen.getByTestId('stats-selection')).toHaveTextContent('人物 A/a1.png|人物 A/a2.png|人物 B/b1.png')
+
+    await user.click(screen.getByRole('radio', { name: /人物 A/ }))
+    const search = screen.getByRole('searchbox', { name: '按文件名筛选图片' })
+    await user.type(search, '1.png')
+    search.blur()
+    fireEvent.keyDown(window, { code: 'KeyA', key: 'a', ctrlKey: true })
+    expect(screen.getByTestId('bulk-selection')).toHaveTextContent('1')
+    expect(screen.getByTestId('stats-selection')).toHaveTextContent('人物 A/a1.png')
+    expect(screen.getByRole('button', { name: '选择 人物 A/a1.png' })).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('switches from single editing to select all without losing pending edits', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await ready()
+    await user.click(screen.getByRole('button', { name: '打开 人物 A/a1.png' }))
+    await user.click(screen.getByRole('button', { name: '修改标签' }))
+
+    await user.keyboard('{Control>}a{/Control}')
+    expect(screen.queryByTestId('preview-image')).not.toBeInTheDocument()
+    expect(screen.getByTestId('bulk-selection')).toHaveTextContent('3')
+    expect(screen.getByRole('button', { name: '保存（1）' })).toBeEnabled()
+    await user.click(screen.getByRole('button', { name: '保存（1）' }))
+    await waitFor(() => expect(api.commitCaptions).toHaveBeenCalledWith(7, 11, [{
+      folder: '人物 A', name: 'a1.png', tags: ['cat', 'edited'],
+    }]))
+  })
+
+  it('leaves Ctrl+A to text fields and dialogs and ignores modified or composing shortcuts', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await ready()
+    const shortcut = { code: 'KeyA', key: 'a', ctrlKey: true }
+    const search = screen.getByRole('searchbox', { name: '按文件名筛选图片' })
+    expect(fireEvent.keyDown(search, shortcut)).toBe(true)
+    expect(screen.getByTestId('bulk-selection')).toHaveTextContent('0')
+
+    await user.click(screen.getByRole('button', { name: '打开 人物 A/a1.png' }))
+    const input = screen.getByRole('textbox', { name: '以文本编辑标签' })
+    expect(fireEvent.keyDown(input, shortcut)).toBe(true)
+    expect(fireEvent.keyDown(window, { ...shortcut, shiftKey: true })).toBe(true)
+    expect(fireEvent.keyDown(window, { ...shortcut, altKey: true })).toBe(true)
+    expect(fireEvent.keyDown(window, { ...shortcut, isComposing: true })).toBe(true)
+
+    const modal = document.createElement('div')
+    modal.setAttribute('aria-modal', 'true')
+    document.body.appendChild(modal)
+    try {
+      expect(fireEvent.keyDown(window, shortcut)).toBe(true)
+      expect(screen.getByTestId('preview-image')).toHaveTextContent('a1.png')
+      expect(screen.getByRole('button', { name: '选择 人物 A/a1.png' })).toHaveAttribute('aria-pressed', 'false')
+    } finally {
+      modal.remove()
+    }
   })
 
   it('navigates horizontally with A/D across rows without wrapping the whole list', async () => {
@@ -1190,6 +1289,58 @@ describe('TagEdit workspace', () => {
       '人物 A/a1.png',
       '人物 B/b1.png',
     ])
+  })
+
+  it('filters filenames case-insensitively within the folder and preserves sorting when cleared', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await ready()
+
+    const search = screen.getByRole('searchbox', { name: '按文件名筛选图片' })
+    await user.selectOptions(screen.getByRole('combobox', { name: '图片排序' }), 'filename-desc')
+    await user.type(search, '  1.PNG  ')
+    expect(openImageOrder()).toEqual(['人物 B/b1.png', '人物 A/a1.png'])
+    expect(screen.getByRole('heading', { name: '训练图片（2 张）' })).toBeInTheDocument()
+
+    await user.click(screen.getByRole('radio', { name: /人物 A/ }))
+    expect(openImageOrder()).toEqual(['人物 A/a1.png'])
+    await user.clear(search)
+    expect(openImageOrder()).toEqual(['人物 A/a2.png', '人物 A/a1.png'])
+
+    await user.type(search, '人物 A')
+    expect(screen.queryByRole('button', { name: /^打开 / })).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '训练图片（0 张）' })).toBeInTheDocument()
+    expect(screen.getByText('没有匹配的图片，请修改或清空文件名筛选')).toBeInTheDocument()
+    await user.clear(search)
+    expect(openImageOrder()).toEqual(['人物 A/a2.png', '人物 A/a1.png'])
+  })
+
+  it('clears selection on filename changes, navigates matches and preserves hidden caption drafts', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await ready()
+
+    await user.click(screen.getByRole('button', { name: '选择 cat 图片' }))
+    expect(screen.getByTestId('bulk-selection')).toHaveTextContent('2')
+    const search = screen.getByRole('searchbox', { name: '按文件名筛选图片' })
+    await user.type(search, '1.png')
+    expect(screen.getByTestId('bulk-selection')).toHaveTextContent('0')
+
+    await user.click(screen.getByRole('button', { name: '打开 人物 A/a1.png' }))
+    await user.click(screen.getByRole('button', { name: '下一张' }))
+    expect(screen.getByTestId('preview-image')).toHaveTextContent('b1.png')
+    await user.click(screen.getByRole('button', { name: '修改标签' }))
+    fireEvent.change(search, { target: { value: 'a2' } })
+    expect(screen.queryByTestId('preview-image')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '保存（1）' })).toBeEnabled()
+
+    await user.clear(search)
+    await user.click(screen.getByRole('button', { name: '打开 人物 B/b1.png' }))
+    expect(screen.getByText('当前标签 cat,edited')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '保存（1）' }))
+    await waitFor(() => expect(api.commitCaptions).toHaveBeenCalledWith(7, 11, [{
+      folder: '人物 B', name: 'b1.png', tags: ['cat', 'edited'],
+    }]))
   })
 
   it('persists the sort across projects and repairs an invalid stored value', async () => {

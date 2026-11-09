@@ -38,7 +38,10 @@ def get_data() -> JSONResponse:
     # `keys` 单独下发：JS 对象会把整数型 key（"69"、年份 tag 等）重排到最前，
     # 前端靠这个数组拿到文件原始行序（默认源 = post_count 降序的热度序）。
     return JSONResponse(
-        content={"entries": entries, "keys": list(entries.keys()), "meta": meta},
+        content={
+            "entries": entries, "keys": list(entries.keys()), "meta": meta,
+            "categories": td.get_identity_categories(entries, meta),
+        },
         headers={"Cache-Control": "public, max-age=300"},
     )
 

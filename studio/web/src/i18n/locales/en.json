@@ -601,6 +601,8 @@
     }
   },
   "tagEditor": {
+    "organize": "Organize prompts",
+    "organizeHint": "Sort by meaning: work → character → count → appearance → clothing/accessories → expression/action → composition → scene → quality. Preserve order within groups and leave unknown tags in place. Save to apply. Work/character detection requires the default dictionary.",
     "naturalPlaceholder": "Natural language caption...",
     "modeChip": "Chips",
     "modeText": "Text",
@@ -2164,6 +2166,9 @@
     "subtitle": "Batch edit tags · stage locally · write on save",
     "workspaceLabel": "Resizable image and tag editing workspace",
     "imageListTitle": "Training images",
+    "filenameFilterLabel": "Filter images by filename",
+    "filenameFilterPlaceholder": "Filter filename…",
+    "noFilenameMatches": "No matching images. Change or clear the filename filter.",
     "visibleCount": "{{n}} images",
     "imageListCount": "({{n}} images)",
     "sortLabel": "Image order",

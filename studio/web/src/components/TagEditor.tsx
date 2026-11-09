@@ -15,6 +15,8 @@ import {
   type SortingStrategy,
 } from '@dnd-kit/sortable'
 import { useTranslation } from 'react-i18next'
+import { organizeTags } from '../tagDict/organize'
+import { useTagDict } from '../tagDict/store'
 
 import Button from './Button'
 import { Input, Textarea } from './FormControl'
@@ -273,6 +275,7 @@ export default function TagEditor({
   onReplaceCustomTags,
 }: Props) {
   const { t } = useTranslation()
+  const tagDict = useTagDict()
   const [draft, setDraft] = useState('')
   const selectedTags = useMemo(
     () => tags.filter((tag) => !inactiveTags.has(tag)),
@@ -540,6 +543,22 @@ export default function TagEditor({
     setMode('chip')
   }
 
+  const organize = () => {
+    // Text edits already flow to the parent; use the current buffer as the
+    // source so punctuation / a just-entered token cannot be lost on click.
+    const textTags = mode === 'text' ? parseLine(textBuf) : selectedTags
+    const source = tagsEqual(textTags, selectedTags)
+      ? tags
+      : [...textTags, ...tags.filter((tag) => inactiveTags.has(tag) && !textTags.includes(tag))]
+    const next = organizeTags(source, tagDict.categories)
+    if (mode === 'text') {
+      const active = next.filter((tag) => !inactiveTags.has(tag))
+      setTextBuf(active.join(', '))
+      textTagsRef.current = active
+    }
+    if (!tagsEqual(next, tags)) onChange(next, inactiveTags)
+  }
+
   const customTagPalette = onAddCustomTag && onDeleteCustomTag && onReplaceCustomTags ? (
     <ProjectCustomTags
       tags={customTags}
@@ -583,7 +602,7 @@ export default function TagEditor({
   return (
     <div className="flex flex-col gap-1.5 flex-1 min-h-0">
       {/* mode switch */}
-      <div className="flex items-center gap-related text-xs shrink-0">
+      <div className="flex flex-wrap items-center gap-related text-xs shrink-0">
         <SegmentedControl
           items={[
             { value: 'chip', label: t('tagEditor.modeChip') },
@@ -597,6 +616,14 @@ export default function TagEditor({
           layout="content"
         />
         <span className="flex-1" />
+        <Button
+          size="xs"
+          onClick={organize}
+          disabled={saving || activeTag !== null || tags.length < 2 || tagDict.status === 'loading'}
+          title={t('tagEditor.organizeHint')}
+        >
+          {t('tagEditor.organize')}
+        </Button>
         {showTagCount && (
           <span className="text-fg-tertiary tnum">
             {t('tagEditor.tagCount', { n: selectedTags.length })}

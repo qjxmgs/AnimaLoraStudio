@@ -24,6 +24,7 @@ import os
 import re
 import sqlite3
 import time
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Optional
 
@@ -171,6 +172,42 @@ def get_meta() -> Optional[dict[str, Any]]:
         return None
     _, meta = loaded
     return meta
+
+
+@lru_cache(maxsize=1)
+def _identity_categories(path: str, mtime_ns: int, size: int) -> dict[str, int]:
+    """Read identity metadata from the retained source, including older installs.
+
+    File stat arguments invalidate the cache when the dictionary is replaced.
+    General tags need separate semantic rules; only copyright/character are used.
+    """
+    conn = sqlite3.connect(f"{Path(path).as_uri()}?mode=ro", uri=True)
+    try:
+        rows = conn.execute(
+            "SELECT name, category FROM tags WHERE category IN (3, 4)"
+        ).fetchall()
+    finally:
+        conn.close()
+    return {
+        str(name).strip().replace("_", " "): int(category)
+        for name, category in rows if name
+    }
+
+
+def get_identity_categories(
+    entries: dict[str, list[str]], meta: dict[str, Any],
+) -> dict[str, int]:
+    """Optional metadata; missing/legacy/user dictionaries still support editing."""
+    if meta.get("kind") != "default":
+        return {}
+    try:
+        stat = SOURCE_SQLITE.stat()
+        categories = _identity_categories(
+            str(SOURCE_SQLITE.resolve()), stat.st_mtime_ns, stat.st_size,
+        )
+    except (OSError, sqlite3.Error):
+        return {}
+    return {tag: category for tag, category in categories.items() if tag in entries}
 
 
 def download_default() -> dict[str, Any]:

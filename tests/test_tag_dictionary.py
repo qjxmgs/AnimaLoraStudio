@@ -355,6 +355,40 @@ def test_get_data_endpoint_keys_preserve_file_order(
     assert r.json()["keys"] == ["1girl", "69", "solo"]
 
 
+def test_identity_categories_work_with_existing_dictionary_and_reload(
+    client: TestClient, tag_dict_dir: Path, tmp_path: Path,
+) -> None:
+    td.TAG_DICT_DIR.mkdir(parents=True, exist_ok=True)
+    td.SOURCE_SQLITE.write_bytes(_sqlite_bytes(tmp_path, [
+        ("some_work", 3, "作品", 30),
+        ("some_character", 4, "角色", 20),
+        ("blue_eyes", 0, "蓝眼", 10),
+        ("excluded_character", 4, "未导入", 1),
+    ]))
+    entries = {"some work": ["作品"], "some character": ["角色"], "blue eyes": ["蓝眼"]}
+    # Older active.json has translations only; no re-download is needed.
+    td._write_active(entries, {"kind": "default"})
+    assert client.get("/api/tag-dictionary/data").json()["categories"] == {
+        "some work": 3, "some character": 4,
+    }
+    td.SOURCE_SQLITE.write_bytes(_sqlite_bytes(tmp_path, [("blue_eyes", 4, "角色", 10)]))
+    # Make cache invalidation deterministic even on coarse file systems.
+    import os
+    stat = td.SOURCE_SQLITE.stat()
+    os.utime(td.SOURCE_SQLITE, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000))
+    assert client.get("/api/tag-dictionary/data").json()["categories"] == {"blue eyes": 4}
+
+
+def test_identity_categories_are_optional(client: TestClient, tag_dict_dir: Path) -> None:
+    td.TAG_DICT_DIR.mkdir(parents=True, exist_ok=True)
+    td._write_active({"solo": []}, {"kind": "default"})
+    assert client.get("/api/tag-dictionary/data").json()["categories"] == {}
+    td.SOURCE_SQLITE.write_bytes(b"invalid database")
+    assert client.get("/api/tag-dictionary/data").json()["categories"] == {}
+    td.apply_uploaded(b"my_tag,translation", "custom.csv")
+    assert client.get("/api/tag-dictionary/data").json()["categories"] == {}
+
+
 def test_upload_endpoint_400_on_bad_file(client: TestClient) -> None:
     files = {"file": ("empty.csv", b"# comments only\n", "text/csv")}
     r = client.post("/api/tag-dictionary/upload", files=files)
