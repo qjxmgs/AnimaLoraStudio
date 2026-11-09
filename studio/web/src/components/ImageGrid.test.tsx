@@ -96,6 +96,34 @@ describe('applySelection (PP3 — checkbox semantics)', () => {
 })
 
 describe('ImageGrid (PP3)', () => {
+  it('locates a selected image at the top and cycles selected images with Tab', () => {
+    const onActivate = vi.fn(), onSelect = vi.fn()
+    gridMocks.omitIndex = 2
+    render(<ImageGrid items={items} selected={new Set(['a.png', 'c.png'])}
+      locateRequest={{ name: 'a.png', revision: 1 }} tabThroughSelection
+      onSelect={onSelect} onActivate={onActivate} />)
+    const grid = screen.getByRole('grid')
+    expect(grid).toHaveFocus()
+    expect(gridMocks.scrollToIndex).toHaveBeenLastCalledWith({ index: 0, align: 'start', behavior: 'auto' })
+    fireEvent.keyDown(grid, { key: 'Tab' })
+    expect(gridMocks.scrollToIndex).toHaveBeenLastCalledWith({ index: 2, align: 'start', behavior: 'auto' })
+    fireEvent.keyDown(grid, { key: 'Tab' })
+    expect(gridMocks.scrollToIndex).toHaveBeenLastCalledWith({ index: 0, align: 'start', behavior: 'auto' })
+    fireEvent.keyDown(grid, { key: 'Tab', shiftKey: true })
+    expect(gridMocks.scrollToIndex).toHaveBeenLastCalledWith({ index: 2, align: 'start', behavior: 'auto' })
+    expect(onActivate).not.toHaveBeenCalled()
+    expect(onSelect).not.toHaveBeenCalled()
+  })
+
+  it('keeps ordinary Tab behavior without selected images and replays explicit locate requests', () => {
+    const props = { items, selected: new Set<string>(), onSelect: vi.fn(), tabThroughSelection: true }
+    const { rerender } = render(<ImageGrid {...props} />)
+    expect(fireEvent.keyDown(screen.getByRole('grid'), { key: 'Tab' })).toBe(true)
+    expect(gridMocks.scrollToIndex).not.toHaveBeenCalled()
+    rerender(<ImageGrid {...props} locateRequest={{ name: 'c.png', revision: 1 }} />)
+    rerender(<ImageGrid {...props} locateRequest={{ name: 'c.png', revision: 2 }} />)
+    expect(gridMocks.scrollToIndex).toHaveBeenCalledTimes(2)
+  })
   it('reveals the right-clicked image without changing multi-selection or active image', async () => {
     const onSelect = vi.fn()
     const onActivate = vi.fn()

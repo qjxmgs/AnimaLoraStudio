@@ -1,4 +1,5 @@
-import { memo, useEffect, useRef, useState, type SyntheticEvent } from 'react'
+import { memo, useEffect, useMemo, useRef, useState, type SyntheticEvent } from 'react'
+import { useGridMarquee } from './useGridMarquee'
 import { useTranslation } from 'react-i18next'
 import { VirtuosoGrid, type VirtuosoGridHandle } from 'react-virtuoso'
 import ImageSelectionFrame from './ImageSelectionFrame'
@@ -24,6 +25,11 @@ export interface ImageGridProps {
   contentClassName?: string
   /** 单击 = checkbox 切换；shift+click = 区间选；详见 applySelection。 */
   onSelect: (name: string, e: React.MouseEvent) => void
+  /** Enables mouse rectangle selection; modifiers add to the existing selection. */
+  onMarqueeSelect?: (selected: Set<string>) => void
+  /** Explicit navigation without activating the single-image editor. */
+  locateRequest?: { name: string; revision: number }
+  tabThroughSelection?: boolean
   /** 鼠标悬停时回调：用于驱动外部「大图预览面板」。 */
   onHover?: (name: string) => void
   /** 全屏 modal 预览，由 cell 上的放大镜按钮触发（可选）。 */
@@ -127,6 +133,9 @@ export default function ImageGrid({
   items,
   selected,
   onSelect,
+  onMarqueeSelect,
+  locateRequest,
+  tabThroughSelection = false,
   onHover,
   onPreview,
   onReveal,
@@ -143,11 +152,26 @@ export default function ImageGrid({
   const { t } = useTranslation()
   const contextMenu = useImageContextMenu(onReveal, items)
   const rootRef = useRef<HTMLDivElement>(null)
+  const names = useMemo(() => items.map((item) => item.name), [items])
+  const marquee = useGridMarquee(rootRef, names, selected, onMarqueeSelect)
+  const visibleSelection = marquee.preview ?? selected
   const virtuosoRef = useRef<VirtuosoGridHandle>(null)
+  const navigationName = useRef<string | null>(null)
+  const handledLocateRequest = useRef<typeof locateRequest>()
   const lastColumnCountRef = useRef(0)
   const activeIndex = activeName == null
     ? -1
     : items.findIndex((item) => item.name === activeName)
+
+  useEffect(() => {
+    if (!locateRequest || handledLocateRequest.current === locateRequest) return
+    const index = items.findIndex((item) => item.name === locateRequest.name)
+    if (index < 0) return
+    handledLocateRequest.current = locateRequest
+    navigationName.current = locateRequest.name
+    virtuosoRef.current?.scrollToIndex({ index, align: 'start', behavior: 'auto' })
+    rootRef.current?.focus({ preventScroll: true })
+  }, [locateRequest, items])
 
   useEffect(() => {
     if (!onColumnCountChange || items.length === 0) return
@@ -204,7 +228,7 @@ export default function ImageGrid({
   const decoupled = activeName !== undefined
   const hasDistinctActiveFrame =
     activeIndex >= 0 && activeName != null && !selected.has(activeName)
-  const framedSelectionCount = selected.size + (hasDistinctActiveFrame ? 1 : 0)
+  const framedSelectionCount = visibleSelection.size + (hasDistinctActiveFrame ? 1 : 0)
   const animateSelectionFrame = framedSelectionCount <= 1
 
   // role="grid" + aria-label 放在外层 wrapper：VirtuosoGrid 内部 List/Item 包多
@@ -216,17 +240,38 @@ export default function ImageGrid({
       ref={rootRef}
       role="grid"
       aria-label={ariaLabel}
-      className={`h-full min-h-0 ${className}`.trim()}
+      tabIndex={tabThroughSelection ? 0 : undefined}
+      onMouseDownCapture={tabThroughSelection ? (event) => {
+        const target = (event.target as Element).closest<HTMLElement>('[data-index]')
+        if (target) navigationName.current = items[Number(target.dataset.index)]?.name ?? null
+      } : undefined}
+      onKeyDown={tabThroughSelection ? (event) => {
+        if (event.key !== 'Tab' || event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey
+          || event.nativeEvent.isComposing
+          || (event.target as Element).closest('input, textarea, select, [contenteditable="true"]')) return
+        const selectedItems = items.filter((item) => selected.has(item.name))
+        if (!selectedItems.length) return
+        const current = selectedItems.findIndex((item) => item.name === navigationName.current)
+        const next = current < 0 ? (event.shiftKey ? selectedItems.length - 1 : 0)
+          : (current + (event.shiftKey ? -1 : 1) + selectedItems.length) % selectedItems.length
+        const name = selectedItems[next].name
+        navigationName.current = name
+        event.preventDefault()
+        virtuosoRef.current?.scrollToIndex({ index: items.findIndex((item) => item.name === name), align: 'start', behavior: 'auto' })
+        rootRef.current?.focus({ preventScroll: true })
+      } : undefined}
+      className={`relative h-full min-h-0 ${className}`.trim()}
     >
       <VirtuosoGrid
-        ref={activeName !== undefined ? virtuosoRef : undefined}
+        scrollerRef={(node) => { marquee.scrollerRef.current = node }}
+        ref={virtuosoRef}
         style={{ height: '100%' }}
         totalCount={items.length}
         overscan={OVERSCAN_PX}
         listClassName={`${GRID_LIST_MARKER} grid ${columnsClass} gap-1 ${contentClassName}`.trim()}
         itemContent={(index) => {
           const it = items[index]
-          const isSel = selected.has(it.name)
+          const isSel = visibleSelection.has(it.name)
           const isActive = decoupled && it.name === activeName
           // border = 旧行为时跟 selected 走；解耦时跟 activeName 走
           const borderHighlight = decoupled ? isActive : isSel
@@ -247,6 +292,9 @@ export default function ImageGrid({
           )
         }}
       />
+      {marquee.box && (
+        <div data-image-marquee aria-hidden="true" className="absolute pointer-events-none z-30 border border-accent bg-accent/15" style={marquee.box} />
+      )}
       {contextMenu.menu}
     </div>
   )

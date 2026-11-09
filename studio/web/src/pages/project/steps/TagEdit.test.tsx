@@ -98,6 +98,7 @@ vi.mock('../../../components/ImageGrid', async () => {
     clickMode,
     ariaLabel,
     emptyHint,
+    locateRequest,
   }: {
     items: Array<{ name: string; label?: string; badge?: string }>
     selected: Set<string>
@@ -107,10 +108,11 @@ vi.mock('../../../components/ImageGrid', async () => {
     clickMode?: 'select' | 'activate'
     ariaLabel?: string
     emptyHint?: string
+    locateRequest?: { name: string; revision: number }
   }) {
     useEffect(() => { onColumnCountChange?.(mocks.gridColumns) }, [onColumnCountChange])
     return (
-      <div role="grid" aria-label={ariaLabel}>
+      <div role="grid" aria-label={ariaLabel} data-locate={locateRequest?.name} data-locate-revision={locateRequest?.revision}>
         {items.length === 0 ? <span>{emptyHint}</span> : items.map((item) => {
           const label = item.label ?? item.name
           return (
@@ -346,6 +348,45 @@ beforeEach(() => {
 })
 
 describe('TagEdit workspace', () => {
+  it('locates the first tag match without opening the single-image editor', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    const grid = await ready()
+    await user.click(screen.getByRole('button', { name: '选择 cat 图片' }))
+    expect(grid).toHaveAttribute('data-locate', '人物 A/a1.png')
+    expect(screen.queryByTestId('preview-image')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '选择 cat 图片' }))
+    expect(grid).toHaveAttribute('data-locate-revision', '2')
+  })
+  it('clears image selection with Escape without saving or discarding edits', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await ready()
+    await user.click(screen.getByRole('button', { name: '选择 人物 A/a1.png' }))
+    await user.click(screen.getByRole('button', { name: '选择 人物 A/a2.png' }))
+    expect(screen.getByTestId('bulk-selection')).toHaveTextContent('2')
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(screen.getByTestId('bulk-selection')).toHaveTextContent('0')
+    expect(api.commitCaptions).not.toHaveBeenCalled()
+  })
+
+  it('leaves selection alone when Escape belongs to a modal or text input', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await ready()
+    await user.click(screen.getByRole('button', { name: '选择 人物 A/a1.png' }))
+    const modal = document.createElement('div')
+    modal.setAttribute('aria-modal', 'true')
+    document.body.appendChild(modal)
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(screen.getByTestId('bulk-selection')).toHaveTextContent('1')
+    modal.remove()
+    const input = document.createElement('input')
+    document.body.appendChild(input)
+    fireEvent.keyDown(input, { key: 'Escape' })
+    expect(screen.getByTestId('bulk-selection')).toHaveTextContent('1')
+    input.remove()
+  })
   it('organizes the current image with the real editor and commits only its sorted caption', async () => {
     mocks.realTagEditor = true
     const original = ['my_trigger', 'indoors', 'smile', 'blue eyes', '1girl']

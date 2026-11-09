@@ -42,6 +42,34 @@ const confirmInModal = async (user: UserEvent) => {
 }
 
 describe('BulkActionBar (with confirm modal)', () => {
+  it('organizes selected captions immediately and only reports changed images', async () => {
+    const user = userEvent.setup()
+    const source = new Map([
+      ['a.png', ['indoors', 'long hair', 'blue eyes', 'green hair', 'hair', '1girl']],
+      ['b.png', ['1girl', 'hair']],
+      ['c.png', ['indoors', 'solo']],
+    ])
+    const { onApply } = renderBar({ cache: source })
+    await user.click(screen.getByRole('button', { name: '整理提示词' }))
+    expect(onApply).toHaveBeenCalledWith(new Map([
+      ['a.png', ['1girl', 'hair', 'long hair', 'green hair', 'blue eyes', 'indoors']],
+    ]))
+    expect(source.get('a.png')?.[0]).toBe('indoors')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('does not dirty already organized captions and disables sorting without selection', async () => {
+    const user = userEvent.setup()
+    const { onApply } = renderBar({ cache: new Map([['a.png', ['1girl', 'hair']]]), selectedKeys: ['a.png'] })
+    await user.click(screen.getByRole('button', { name: '整理提示词' }))
+    expect(onApply).not.toHaveBeenCalled()
+  })
+
+  it('disables organizing when no images are selected and advertises Escape', () => {
+    renderBar({ selectedKeys: [] })
+    expect(screen.getByRole('button', { name: '整理提示词' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '取消选择' })).toHaveAttribute('aria-keyshortcuts', 'Escape')
+  })
   it('add at front (default position) prepends after confirm', async () => {
     const user = userEvent.setup()
     const { onApply } = renderBar()

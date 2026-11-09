@@ -218,6 +218,7 @@ export default function TagEditPage() {
   const [inpaintDirty, setInpaintDirty] = useState(false)
   const [removingKey, setRemovingKey] = useState('')
   const [sel, setSel] = useState<Set<string>>(new Set())
+  const [gridLocateRequest, setGridLocateRequest] = useState<{ name: string; revision: number }>()
   const [anchor, setAnchor] = useState<string | null>(null)
   const [gridColumnCount, setGridColumnCount] = useState(1)
   // '' = 全部；否则限定到该 folder（1_data / 2_data ...）。命名特意区分于下面
@@ -585,6 +586,13 @@ export default function TagEditPage() {
         return
       }
 
+      if (event.key === 'Escape' && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
+        event.preventDefault()
+        setSel(new Set())
+        setAnchor(null)
+        return
+      }
+
       if (!activeKey || event.ctrlKey || event.metaKey) return
 
       const directionByCode: Partial<Record<string, GridDirection>> = {
@@ -620,6 +628,8 @@ export default function TagEditPage() {
         if ((cache.get(k) ?? []).includes(tag)) matched.add(k)
       }
       setSel(matched); setAnchor(null)
+      const first = matched.values().next().value
+      if (first) setGridLocateRequest((previous) => ({ name: first, revision: (previous?.revision ?? 0) + 1 }))
       toast(t('tagEdit.selectedContaining', { tag, n: matched.size }), 'success')
     },
     [orderedKeys, cache, toast, t]
@@ -1248,6 +1258,9 @@ export default function TagEditPage() {
             activeName={activeKey || undefined}
             onColumnCountChange={setGridColumnCount}
             onSelect={handleClick}
+            locateRequest={gridLocateRequest}
+            tabThroughSelection
+            onMarqueeSelect={(next) => { setSel(next); setAnchor(null); setActiveKey('') }}
             onActivate={setActiveKey}
             clickMode={sel.size > 0 ? 'select' : 'activate'}
             ariaLabel={t('tagEdit.gridLabel')}
@@ -1447,7 +1460,7 @@ export default function TagEditPage() {
                 selectedKeys={selectedKeys}
                 onApply={applyBulkUpdates}
                 tagSuggestions={tagSuggestions}
-                onClearSelection={() => setSel(new Set())}
+                onClearSelection={() => { setSel(new Set()); setAnchor(null) }}
                 onSelectAll={() => setSel(new Set(orderedKeys))}
                 totalCount={orderedKeys.length}
               />

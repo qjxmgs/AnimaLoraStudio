@@ -13,11 +13,39 @@ describe('semantic prompt organization', () => {
       'hair between eyes', 'white thighhighs', 'shiny skin', 'blush', 'ring', 'parted lips']
     expect(organizeTags(tags, categories)).toEqual([
       'wuthering waves', 'cantarella (wuthering waves)', '1girl', 'solo',
-      'ass', 'long hair', 'purple hair', 'mark under eye', 'blue eyes', 'thighs',
-      'very long hair', 'ring light reflection', 'facial mark', 'hair between eyes', 'shiny skin',
-      'jewelry', 'thighhighs', 'hair flower', 'hair ornament', 'earrings', 'white thighhighs', 'ring',
+      'ass', 'long hair', 'purple hair', 'very long hair', 'hair between eyes',
+      'mark under eye', 'blue eyes', 'ring light reflection', 'thighs', 'facial mark', 'shiny skin',
+      'jewelry', 'thighhighs', 'white thighhighs', 'hair flower', 'hair ornament', 'earrings', 'ring',
       'looking at viewer', 'smile', 'blush', 'parted lips', 'flower', 'blue flower', 'indoors',
     ])
+  })
+
+  it('groups related subjects at their first occurrence, with the base tag first', () => {
+    const tags = ['long hair', 'blue eyes', 'green hair', 'shiny skin', 'hair', 'eyes', 'red eyes', 'skin']
+    const sorted = organizeTags(tags, categories)
+    expect(sorted).toEqual(['hair', 'long hair', 'green hair', 'eyes', 'blue eyes', 'red eyes', 'skin', 'shiny skin'])
+    expect(organizeTags(sorted, categories)).toBe(sorted)
+  })
+
+  it('groups modifiers even without a base tag and supports underscores without rewriting them', () => {
+    expect(organizeTags(['blue_eyes', 'LONG_HAIR', 'green eyes', 'green_hair', 'ponytail'], categories))
+      .toEqual(['blue_eyes', 'green eyes', 'LONG_HAIR', 'green_hair', 'ponytail'])
+  })
+
+  it('groups clothing and scene subjects without crossing category boundaries or trigger slots', () => {
+    const tags = ['long hair', 'hair flower', 'blue shirt', 'skirt', 'white shirt',
+      'custom_trigger', 'green hair', 'holding hair', 'blue sky', 'clouds', 'night sky', 'shirt']
+    const sorted = organizeTags(tags, categories)
+    expect(sorted).toEqual(['long hair', 'green hair', 'hair flower', 'shirt', 'blue shirt',
+      'custom_trigger', 'white shirt', 'skirt', 'holding hair', 'blue sky', 'night sky', 'clouds'])
+    expect(organizeTags(sorted, categories)).toBe(sorted)
+    expect(tags[0]).toBe('long hair')
+  })
+
+  it('does not group identity labels by their apparent subject words', () => {
+    const identities = new Map([['long hair', 4], ['hero', 4], ['green hair', 4]])
+    const tags = ['long hair', 'hero', 'green hair']
+    expect(organizeTags(tags, identities)).toBe(tags)
   })
 
   it('preserves unknown trigger slots, exact spelling, duplicates, and input', () => {

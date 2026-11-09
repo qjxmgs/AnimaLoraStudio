@@ -28,10 +28,45 @@ export function semanticTagRank(tag: string, categories: ReadonlyMap<string, num
   return RULES.find(([, pattern]) => pattern.test(key))?.[0]
 }
 
+/** Group only inside an existing semantic category. Compound accessory/action
+ * tags must never be pulled into appearance just because they mention hair.
+ * The broad category rules expose their matched subject (shirt, sky, etc.),
+ * allowing modifiers to cluster without enumerating colors or lengths.
+ */
+function tagTopic(tag: string, rank: number | undefined): string {
+  const key = normalize(tag)
+  if (rank === 3) {
+    if (/\b(?:hair|bangs|ahoge|ponytail|twintails|braids?|buns?)\b/.test(key)) return 'hair'
+    if (/\b(?:eyes|pupils|eyelashes|eyebrows|heterochromia)\b/.test(key)
+      || key === 'ring light reflection') return 'eyes'
+  }
+  if (rank === 4 && /\b(?:hair (?:flower|ornament|ribbon|bow|clip|scrunchie|band)|hairclip|hairband|hairpin)\b/.test(key)) {
+    return 'hair accessories'
+  }
+  if (rank === 3 || rank === 4 || rank === 7) {
+    const subjectRule = RULES.find(([category, pattern]) => category === rank && pattern.test(key))
+    // Prefer the final subject in modifier phrases such as "night sky".
+    return subjectRule ? key.match(new RegExp(subjectRule[1].source, 'g'))?.pop() ?? key : key
+  }
+  return key
+}
+
 export function organizeTags(tags: string[], categories: ReadonlyMap<string, number>): string[] {
-  const ranked = tags.map((tag, index) => ({ tag, index, rank: semanticTagRank(tag, categories) }))
+  const firstInTopic = new Map<string, number>()
+  const ranked = tags.map((tag, index) => {
+    const rank = semanticTagRank(tag, categories)
+    const topic = tagTopic(tag, rank)
+    const groupKey = `${rank}:${topic}`
+    if (!firstInTopic.has(groupKey)) firstInTopic.set(groupKey, index)
+    return {
+      tag, index, rank,
+      groupIndex: firstInTopic.get(groupKey)!,
+      base: normalize(tag) === topic,
+    }
+  })
   const sorted = ranked.filter((item) => item.rank !== undefined)
-    .sort((a, b) => a.rank! - b.rank! || a.index - b.index)
+    .sort((a, b) => a.rank! - b.rank! || a.groupIndex - b.groupIndex
+      || Number(b.base) - Number(a.base) || a.index - b.index)
   let cursor = 0
   const next = ranked.map((item) => item.rank === undefined ? item.tag : sorted[cursor++].tag)
   return next.every((tag, index) => tag === tags[index]) ? tags : next

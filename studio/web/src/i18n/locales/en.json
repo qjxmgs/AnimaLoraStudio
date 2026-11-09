@@ -602,7 +602,7 @@
   },
   "tagEditor": {
     "organize": "Organize prompts",
-    "organizeHint": "Sort by meaning: work → character → count → appearance → clothing/accessories → expression/action → composition → scene → quality. Preserve order within groups and leave unknown tags in place. Save to apply. Work/character detection requires the default dictionary.",
+    "organizeHint": "Sort by meaning: work → character → count → appearance → clothing/accessories → expression/action → composition → scene → quality. Cluster related subjects within each category, put base tags first, and preserve modifier order. Leave unknown tags in place. Save to apply. Work/character detection requires the default dictionary.",
     "naturalPlaceholder": "Natural language caption...",
     "modeChip": "Chips",
     "modeText": "Text",

@@ -6,6 +6,8 @@ import { SegmentedControl } from './SelectionGroup'
 import { useDialog } from './Dialog'
 import { useToast } from './Toast'
 import { TranslatedTag } from './tagDisplay/TranslatedTag'
+import { organizeTags } from '../tagDict/organize'
+import { useTagDict } from '../tagDict/store'
 import {
   buildTagSearchIndex,
   findTagMatches,
@@ -51,6 +53,7 @@ export default function BulkActionBar({
   const { t } = useTranslation()
   const { toast } = useToast()
   const { confirm } = useDialog()
+  const tagDict = useTagDict()
   const [addInput, setAddInput] = useState('')
   const [removeInput, setRemoveInput] = useState('')
   const [oldTag, setOldTag] = useState('')
@@ -153,6 +156,19 @@ export default function BulkActionBar({
   }
 
   const noneSelected = selectedKeys.length === 0
+  const organizeSelected = () => {
+    const updates = new Map<string, string[]>()
+    for (const key of selectedKeys) {
+      const current = cache.get(key)
+      if (!current) continue
+      const next = organizeTags(current, tagDict.categories)
+      if (next !== current) updates.set(key, next)
+    }
+    if (updates.size) onApply(updates)
+    toast(t(updates.size ? 'bulkAction.applyDone' : 'bulkAction.noChanges', {
+      op: t('tagEditor.organize'), n: updates.size,
+    }), 'success')
+  }
   const opDisabled = noneSelected
 
   return (
@@ -166,6 +182,13 @@ export default function BulkActionBar({
         <Button
           variant="ghost"
           size="sm"
+          onClick={organizeSelected}
+          disabled={noneSelected || tagDict.status === 'loading'}
+          title={t('tagEditor.organizeHint')}
+        >{t('tagEditor.organize')}</Button>
+        <Button
+          variant="ghost"
+          size="sm"
           onClick={onSelectAll}
           disabled={totalCount === 0}
           title={t('bulkAction.selectAllImagesHint')}
@@ -175,6 +198,8 @@ export default function BulkActionBar({
           size="sm"
           onClick={onClearSelection}
           disabled={noneSelected}
+          aria-keyshortcuts="Escape"
+          title={`${t('common.deselect')} (Esc)`}
         >{t('common.deselect')}</Button>
       </div>
 
