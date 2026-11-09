@@ -1,5 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import Button from '../../components/Button'
+import Card from '../../components/Card'
+import Badge from '../../components/Badge'
+import Drawer from '../../components/Drawer'
+import Modal from '../../components/Modal'
+import Alert from '../../components/Alert'
+import { useDialog } from '../../components/Dialog'
+import { tagChipStyle, TAG_TONES } from '../../components/tagDisplay/tagChipStyle'
+import './TagTopics.css'
 import PageHeader from '../../components/PageHeader'
 import { Input, Select, Textarea } from '../../components/FormControl'
 import { useTagDict } from '../../tagDict/store'
@@ -12,9 +20,17 @@ const relations: Record<string, string> = { base: '基础词', variant: '词形�
 interface Result extends TopicMatch { zh: string; entry?: TopicEntry }
 interface Transfer { format: 1; topics: Topic[]; entries: TopicEntry[] }
 interface ImportPreview { conflicts: { type: string; key: string; local: unknown; incoming: unknown }[]; changes: { type: string; key: string }[]; applied: boolean }
+const PAGE_SIZE = 12
+const normalizedTag = (tag: string) => tag.trim().toLowerCase().replace(/_/g, ' ').replace(/\s+/g, ' ')
+const toneIndex = (tag: string) => Array.from(normalizedTag(tag)).reduce((hash, char) => (Math.imul(hash, 31) + char.charCodeAt(0)) >>> 0, 0) % TAG_TONES.length
 const emptyEntry = (): TopicEntry => ({ tag: '', topic: '', base: false, excluded: false, relation: 'related', note: '' })
 
 export default function TagTopicsPage() {
+  const { confirm } = useDialog()
+  const [selectedTag, setSelectedTag] = useState<string | null>(null)
+  const [baseline, setBaseline] = useState('')
+  const [queryError, setQueryError] = useState('')
+  const closePending = useRef(false)
   const fileInput = useRef<HTMLInputElement>(null)
   const semantic = useTagTopics()
   const dict = useTagDict()
@@ -57,13 +73,18 @@ export default function TagTopicsPage() {
   const chooseTopic = (id: string) => { setTopic(id); setQ(''); setOffset(0) }
   useEffect(() => {
     const controller = new AbortController()
+    setLoading(true)
+    setQueryError('')
     const timer = window.setTimeout(() => {
-      setLoading(true)
-      const params = new URLSearchParams({ q, topic, source, status, offset: String(offset), limit: '50' })
+      const params = new URLSearchParams({ q, topic, source, status, offset: String(offset), limit: String(PAGE_SIZE) })
       if (rank) params.set('rank', rank)
       topicRequest<{ items: Result[]; total: number }>(`/entries?${params}`, { signal: controller.signal })
-        .then((value) => { if (!controller.signal.aborted) setResult(value) })
-        .catch((e: unknown) => { if (!controller.signal.aborted) setError(String(e)) })
+        .then((value) => { if (!controller.signal.aborted) {
+          setResult(value)
+          setSelectedTag((current) => value.items.some((item) => item.tag === current) ? current : null)
+          if (offset >= value.total && offset > 0) setOffset(Math.max(0, Math.ceil(value.total / PAGE_SIZE) - 1) * PAGE_SIZE)
+        } })
+        .catch((e: unknown) => { if (!controller.signal.aborted) setQueryError(String(e)) })
         .finally(() => { if (!controller.signal.aborted) setLoading(false) })
     }, 180)
     return () => { clearTimeout(timer); controller.abort() }
@@ -88,10 +109,39 @@ export default function TagTopicsPage() {
     const link = document.createElement('a'); link.href = url; link.download = 'tag-topic-overrides.json'; link.click()
     window.setTimeout(() => URL.revokeObjectURL(url), 1000)
   }
-  const newTopic = () => setCustomTopic({ id: 'user:', name: '', zh: '', rank: rank ? Number(rank) : 3, parent: null, group: '', kind: 'topic' })
+  const selected = result.items.find((item) => item.tag === selectedTag)
+  const selectedMatch = selected ? explainTag(selected.tag, dict.categories, snapshot) : null
+  const draft = entry ?? customTopic
+  const dirty = draft !== null && JSON.stringify(draft) !== baseline
+  const mayDiscard = async () => !dirty || await confirm('当前表单有未保存的修改，是否放弃？', { title: '放弃未保存修改', okText: '放弃修改', cancelText: '继续编辑', tone: 'warn' })
+  const closeEditor = async () => {
+    if (busy || closePending.current) return
+    closePending.current = true
+    try { if (await mayDiscard()) { setEntry(null); setCustomTopic(null); setError('') } }
+    finally { closePending.current = false }
+  }
+  const openEntry = async (value: TopicEntry) => {
+    if (busy || !await mayDiscard()) return
+    setCustomTopic(null); setEntry({ ...value }); setBaseline(JSON.stringify(value)); setError(''); setNotice('')
+  }
+  const openTopic = async (value: Topic) => {
+    if (busy || !await mayDiscard()) return
+    setEntry(null); setCustomTopic({ ...value }); setBaseline(JSON.stringify(value)); setError(''); setNotice('')
+  }
+  const newTopic = () => void openTopic({ id: 'user:', name: '', zh: '', rank: rank ? Number(rank) : 3, parent: null, group: '', kind: 'topic' })
+  const editResult = (item: Result) => {
+    setSelectedTag(item.tag)
+    void openEntry(item.entry ?? { ...emptyEntry(), tag: item.tag, topic: item.topic ?? '' })
+  }
+  const restore = (tag: string) => void run(async () => {
+    if (!await mayDiscard()) return
+    await topicRequest(`/entries?tag=${encodeURIComponent(tag)}`, { method: 'DELETE' })
+    await refresh(); setEntry(null); setCustomTopic(null); setNotice('已恢复内置归类')
+  })
+
 
   return <div className="min-w-0">
-    <PageHeader title="本地主题词库" subtitle="查询、修正提示词归类。修改影响下次整理，不会自动改写训练标签。" actions={<>
+    <PageHeader title="本地主题词库" subtitle={`${leaves.length} 个主题 · ${Object.keys(snapshot?.entries ?? {}).length} 条映射 · 仅影响下次整理`} actions={<>
       <Button onClick={() => void run(exportData)} disabled={busy}>导出修正</Button>
       <Button disabled={busy} onClick={() => fileInput.current?.click()}>导入修正</Button>
       <input ref={fileInput} type="file" aria-label="导入修正文件" accept=".json,application/json" disabled={busy} className="hidden" onChange={(event) => {
@@ -106,10 +156,10 @@ export default function TagTopicsPage() {
       }} />
     </>} />
     <div className="px-page py-section flex flex-col gap-4 min-w-0">
-    <p className="text-xs text-fg-tertiary">{leaves.length} 个具体主题 · {Object.keys(snapshot?.entries ?? {}).length} 条映射 · 修订 {snapshot?.revision ?? '—'} · 内置版本 {snapshot?.version ?? '—'}</p>
+
     {(error || semantic.error) && <div role="alert" className="text-warn">{error || semantic.error} {semantic.error && (snapshot ? '使用上次词库' : '整理预览暂用原有规则')} <Button size="sm" onClick={() => void run(refresh)}>重试</Button></div>}
-    {notice && <p role="status" className="text-accent">{notice}</p>}
-    {importPreview && transfer && <section className="border border-subtle rounded p-3 flex flex-col gap-2" aria-label="导入预览">
+    {notice && !draft && <p role="status" className="text-accent">{notice}</p>}
+    {importPreview && transfer && <Modal title="导入预览" size="lg" onClose={() => { if (!busy) { setImportPreview(null); setTransfer(null) } }}><div className="flex flex-col gap-3">
       <h2>导入预览：新增 {importPreview.changes.length} 项，冲突 {importPreview.conflicts.length} 项</h2>
       <div className="max-h-48 overflow-auto text-xs">
         {importPreview.changes.map((item) => <p key={`${item.type}:${item.key}`}>新增 {item.type}：{item.key}</p>)}
@@ -120,73 +170,108 @@ export default function TagTopicsPage() {
         await topicRequest(`/import?apply=true&overwrite=${overwrite}`, { method: 'POST', body: JSON.stringify(transfer) })
         await refresh(); setImportPreview(null); setTransfer(null); setNotice('导入完成')
       })}>确认导入</Button><Button onClick={() => { setImportPreview(null); setTransfer(null) }}>取消导入</Button></div>
-    </section>}
-    <div className="flex flex-col lg:flex-row gap-4 min-w-0">
-      <aside className="lg:w-56 shrink-0 border border-subtle rounded p-2 max-h-[70vh] overflow-auto" aria-label="主题树">
-        <Button size="sm" onClick={() => chooseTopic('')}>全部主题</Button>
+    </div></Modal>}
+    <div className="topic-workspace">
+      <aside className="topic-navigation" aria-label="主题树">
+        <h2 className="type-section-title px-2 mb-3">主题导航</h2>
+        <Button size="sm" variant={topic ? 'ghost' : 'secondary'} onClick={() => chooseTopic('')}>全部主题</Button>
         {categories.slice(2).map((label, index) => <details key={label} open><summary className="font-semibold text-sm py-1">{label}</summary>
           {topics.filter((item) => item.rank === index + 2 && item.kind === 'family').map((family) => <details key={family.id} className="ml-2">
-            <summary className="text-sm cursor-pointer">{family.zh}</summary>
-            <button className="block text-xs text-accent py-1" onClick={() => chooseTopic(family.id)}>查看此主题族</button>
+            <summary className="text-sm cursor-pointer">{family.zh === label ? '主题分类' : family.zh}</summary>
+            <button aria-pressed={topic === family.id} className={`block w-full text-left rounded text-xs text-accent px-2 py-1 ${topic === family.id ? 'bg-accent-soft' : 'hover:bg-overlay'}`} onClick={() => chooseTopic(family.id)}>全部{family.zh}</button>
             {leaves.filter((item) => item.parent === family.id).map((item) => <button key={item.id} onClick={() => chooseTopic(item.id)} aria-pressed={topic === item.id}
               className={`block w-full text-left text-sm px-2 py-1 rounded ${topic === item.id ? 'bg-accent-soft text-accent' : 'hover:bg-overlay'}`}>{item.zh}</button>)}
           </details>)}
-          {leaves.filter((item) => item.rank === index + 2 && !item.parent).map((item) => <button key={item.id} className="block text-sm ml-2 py-1 text-accent" onClick={() => chooseTopic(item.id)}>{item.zh}</button>)}
+          {leaves.filter((item) => item.rank === index + 2 && !item.parent).map((item) => <button key={item.id} aria-pressed={topic === item.id} className={`block w-full text-left rounded text-sm px-2 py-1 ${topic === item.id ? 'bg-accent-soft text-accent' : 'hover:bg-overlay'}`} onClick={() => chooseTopic(item.id)}>{item.zh}</button>)}
         </details>)}
       </aside>
-      <section className="flex-1 min-w-0 flex flex-col gap-3" aria-label="词条查询">
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-2">
+      <section className="topic-results flex flex-col gap-4" aria-label="词条查询">
+        <div className="topic-filters">
           <Input aria-label="搜索主题词库" placeholder="英文、中文或主题名称…" value={q} onChange={(e) => { setQ(e.target.value); setOffset(0) }} />
           <Select aria-label="大类" value={rank} onChange={(e) => { setRank(e.target.value); setTopic(''); setOffset(0) }}><option value="">全部大类</option>{categories.map((label, i) => <option key={label} value={i}>{label}</option>)}</Select>
           <Select aria-label="来源" value={source} onChange={(e) => { setSource(e.target.value); setOffset(0) }}><option value="">全部来源</option>{Object.entries(sources).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</Select>
           <Select aria-label="归类状态" value={status} onChange={(e) => { setStatus(e.target.value); setOffset(0) }}><option value="">全部状态</option><option value="mapped">已明确归类</option><option value="unmapped">未明确归类／候选</option></Select>
         </div>
-        <div className="flex gap-2">
-          <Button onClick={() => setEntry(emptyEntry())}>新增词条</Button><Button onClick={newTopic}>新建主题</Button>
+        <div className="topic-section-heading">
+          <div><div className="text-xs text-accent mb-1">{topic ? path(topic) : '主题词库 / 全部词条'}</div>
+            <h2 className="text-xl font-semibold">{selectedTopic?.zh ?? '全部词条'} <span className="ml-2 text-xs font-normal text-fg-tertiary">{result.total} 个相关词条</span></h2></div>
+          <div className="flex flex-wrap gap-2">
+            {topic && <Button size="sm" variant="ghost" onClick={() => chooseTopic('')}>清除主题筛选</Button>}
+            {selectedTopic?.source === 'user' && <Button size="sm" onClick={() => void openTopic(selectedTopic)}>编辑主题</Button>}
+            <Button variant="primary" onClick={() => void openEntry(emptyEntry())}>新增词条</Button><Button onClick={newTopic}>新建主题</Button>
+          </div>
         </div>
-        {topic && <div className="flex gap-2 items-center text-sm"><span>{path(topic)}</span><Button size="sm" onClick={() => chooseTopic('')}>清除主题筛选</Button>{selectedTopic?.source === 'user' && <Button size="sm" onClick={() => setCustomTopic(selectedTopic)}>编辑主题</Button>}</div>}
-        <p role="status" className="text-xs text-fg-tertiary">{loading ? '查询中…' : `共 ${result.total} 条；候选仅供查询，不自动转为主题映射。`}</p>
-        <div className="overflow-x-auto border border-subtle rounded">
-          <table className="w-full text-sm"><thead><tr className="bg-overlay text-left"><th className="p-2">标签／翻译</th><th>主题路径</th><th>关系／来源</th><th>操作</th></tr></thead>
-            <tbody>{result.items.map((item) => <tr key={item.tag} className="border-t border-subtle">
-              <td className="p-2 break-words">{item.tag}<div className="text-xs text-fg-tertiary">{item.zh || dict.entries.get(item.tag)?.join(' ') || '—'}</div></td>
-              <td className="p-2">{path(item.topic)}</td><td className="p-2">{relations[item.reason] ?? item.reason}<div className="text-xs text-fg-tertiary">{sources[item.source]}</div></td>
-              <td className="p-2"><Button size="sm" onClick={() => setEntry(item.entry ?? { ...emptyEntry(), tag: item.tag, topic: item.topic ?? '' })}>查看／修正</Button></td>
-            </tr>)}</tbody></table>
+        {queryError ? <Alert role="alert" tone="danger" action={<Button onClick={() => setGeneration((n) => n + 1)}>重试查询</Button>}>{queryError}</Alert>
+          : loading && result.items.length === 0 ? <div role="status" className="topic-empty">正在查询词条…</div>
+          : result.items.length === 0 ? <Card padding="lg" className="topic-empty"><h3>没有匹配的词条</h3><p className="text-sm text-fg-tertiary mt-2">尝试其他关键词或调整筛选，也可以新增自定义词条。</p></Card>
+          : <div className="topic-card-grid" aria-label="词条卡片" aria-busy={loading}>
+            {result.items.map((item) => <Card as="article" key={item.tag} className={`topic-card ${selectedTag === item.tag ? 'is-selected' : ''}`}
+              data-topic-card={item.tag} style={{ ...tagChipStyle(toneIndex(item.tag), false), backgroundColor: 'color-mix(in srgb, var(--tag-tone) 9%, var(--bg-surface))' }}>
+              <button type="button" className="topic-card-select" disabled={loading} aria-label={`选择词条 ${item.tag}`} aria-pressed={selectedTag === item.tag} onClick={() => setSelectedTag(item.tag)}>
+                <span className="topic-card-top"><span className="topic-tag-icon" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="M13 3H5a2 2 0 0 0-2 2v8l8 8 10-10z" /><circle cx="7.5" cy="7.5" r="1.5" /></svg></span><span className="min-w-0"><span className="topic-card-name">{item.tag}</span>
+                  <span className="topic-card-translation">{item.zh || dict.entries.get(item.tag)?.join(' ') || '暂无翻译'}</span></span></span>
+                <span className="flex flex-wrap gap-2"><Badge tone="neutral">{relations[item.reason] ?? (item.source === 'rule' ? '组合规则' : item.reason)}</Badge><Badge tone="neutral">来源：{sources[item.source]}</Badge></span>
+                {selectedTag === item.tag && <span className="topic-card-selected-mark">✓ 已选中</span>}
+              </button>
+              <Button iconOnly size="sm" variant="ghost" className="topic-card-edit" disabled={loading} aria-label={`编辑词条 ${item.tag}`} title="编辑归类" onClick={() => editResult(item)}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d="m15 5 4 4M4 20l5-1L20 8a2.8 2.8 0 0 0-4-4L5 15z" /></svg>
+              </Button>
+            </Card>)}
+          </div>}
+        <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-fg-tertiary"><span>每页 {PAGE_SIZE} 条 · 候选词不会自动加入正式归类</span>
+          <div className="flex items-center gap-2"><Button size="sm" disabled={offset === 0 || loading} onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}>上一页</Button><span>{Math.floor(offset / PAGE_SIZE) + 1} / {Math.max(1, Math.ceil(result.total / PAGE_SIZE))}</span><Button size="sm" disabled={offset + PAGE_SIZE >= result.total || loading} onClick={() => setOffset(offset + PAGE_SIZE)}>下一页</Button></div>
         </div>
-        <div className="flex items-center gap-2"><Button disabled={offset === 0 || loading} onClick={() => setOffset(Math.max(0, offset - 50))}>上一页</Button><span>{Math.floor(offset / 50) + 1} / {Math.max(1, Math.ceil(result.total / 50))}</span><Button disabled={offset + 50 >= result.total || loading} onClick={() => setOffset(offset + 50)}>下一页</Button></div>
-        {entry && <section aria-label="词条详情" className="border border-subtle rounded p-3 flex flex-col gap-2">
-          <h2 className="font-semibold">词条详情与修正</h2>
-          <Input aria-label="英文标签" value={entry.tag} onChange={(e) => setEntry({ ...entry, tag: e.target.value })} />
-          <p className="text-xs">当前生效：{detail && `${sources[detail.source]} · ${relations[detail.reason] ?? detail.reason} · ${path(detail.topic)}`}</p>
-          {detailRule && <p className="text-xs">组合规则：{detailRule.modifiers.join(' / ')} ＋ {detailRule.heads.join(' / ')}</p>}
-          <Select aria-label="词条主题" value={entry.topic ?? ''} onChange={(e) => setEntry({ ...entry, topic: e.target.value })}><option value="">选择主题</option>{leaves.map((item) => <option key={item.id} value={item.id}>{path(item.id)}</option>)}</Select>
-          <Select aria-label="关系类型" value={entry.relation} onChange={(e) => setEntry({ ...entry, relation: e.target.value as TopicEntry['relation'] })}>{['base','variant','related','modifier','exception'].map((key) => <option key={key} value={key}>{relations[key]}</option>)}</Select>
-          <label><input type="checkbox" checked={Boolean(entry.base)} onChange={(e) => setEntry({ ...entry, base: e.target.checked })} /> 基础词优先</label>
-          <label><input type="checkbox" checked={Boolean(entry.excluded)} onChange={(e) => setEntry({ ...entry, excluded: e.target.checked })} /> 排除自动归类，保持原位（作品／角色仍受身份保护）</label>
-          <Input aria-label="来源或修正说明" placeholder="来源或修正说明" value={entry.note} onChange={(e) => setEntry({ ...entry, note: e.target.value })} />
-          <div className="flex flex-wrap gap-2"><Button disabled={busy || !entry.tag.trim() || (!entry.excluded && !entry.topic)} onClick={() => void run(async () => { await topicRequest('/entries', { method: 'PUT', body: JSON.stringify(entry) }); await refresh(); setNotice('已保存修正，下次整理生效') })}>保存修正</Button>
-            <Button disabled={busy} onClick={() => void run(async () => { await topicRequest(`/entries?tag=${encodeURIComponent(entry.tag)}`, { method: 'DELETE' }); await refresh(); setEntry(null); setNotice('已恢复内置归类') })}>恢复内置</Button><Button onClick={() => setEntry(null)}>关闭详情</Button></div>
-          {detailTopic && <><p className="text-xs">同主题词（包括例外）：</p><div className="flex flex-wrap gap-2">{sameTopic.map((item) => <button key={item.tag} className="text-xs text-accent underline" onClick={() => setEntry(item)}>{item.tag}{item.relation === 'exception' ? '（例外）' : ''}</button>)}</div>
-            <p className="text-xs">相关主题：</p><div className="flex flex-wrap gap-2">{leaves.filter((item) => item.id !== detailTopic.id && (item.parent === detailTopic.parent || item.group === detailTopic.group)).map((item) => <button key={item.id} className="text-xs text-accent underline" onClick={() => chooseTopic(item.id)}>{item.zh}</button>)}</div></>}
-        </section>}
-        {customTopic && <section aria-label="自定义主题" className="border border-subtle rounded p-3 flex flex-col gap-2"><h2>自定义主题</h2>
-          <Input aria-label="主题 ID" value={customTopic.id} onChange={(e) => setCustomTopic({ ...customTopic, id: e.target.value })} placeholder="user:my-topic" />
-          <Input aria-label="主题英文名称" value={customTopic.name} onChange={(e) => setCustomTopic({ ...customTopic, name: e.target.value })} />
-          <Input aria-label="主题中文名称" value={customTopic.zh} onChange={(e) => setCustomTopic({ ...customTopic, zh: e.target.value })} />
-          <Select aria-label="主题大类" value={customTopic.rank} onChange={(e) => setCustomTopic({ ...customTopic, rank: Number(e.target.value), parent: null, group: '' })}>{categories.slice(2).map((label, i) => <option key={label} value={i + 2}>{label}</option>)}</Select>
-          <Select aria-label="父主题族" value={customTopic.parent ?? ''} onChange={(e) => setCustomTopic({ ...customTopic, parent: e.target.value || null })}><option value="">无父主题</option>{topics.filter((item) => item.kind === 'family' && item.rank === customTopic.rank).map((item) => <option key={item.id} value={item.id}>{item.zh}</option>)}</Select>
-          <Select aria-label="排序聚合组" value={customTopic.group} onChange={(e) => setCustomTopic({ ...customTopic, group: e.target.value })}><option value="">独立成组</option>{[...new Set(leaves.filter((item) => item.rank === customTopic.rank).map((item) => item.group))].map((group) => <option key={group} value={group}>{group}</option>)}</Select>
-          <div className="flex gap-2"><Button disabled={busy} onClick={() => void run(async () => { await topicRequest('/topics', { method: 'PUT', body: JSON.stringify({ ...customTopic, group: customTopic.group || customTopic.id }) }); await refresh(); setCustomTopic(null); setNotice('已保存主题') })}>保存主题</Button><Button onClick={() => setCustomTopic(null)}>取消</Button></div>
-        </section>}
+        {selected && selectedMatch && !queryError && <Card as="section" padding="md" className="topic-detail-strip" aria-label="选中词条详情">
+          <div className="min-w-0"><strong className="break-words">{selected.tag}</strong><p className="text-xs text-fg-tertiary mt-1">{selected.zh || dict.entries.get(selected.tag)?.join(' ') || '暂无翻译'}</p></div>
+          <div className="min-w-0 text-sm"><p>当前归属：{path(selectedMatch.topic)}</p><p className="text-xs text-fg-tertiary mt-1">匹配说明：{sources[selectedMatch.source]} · {relations[selectedMatch.reason] ?? selectedMatch.reason}</p></div>
+          <div className="flex gap-2"><Button size="sm" disabled={loading} onClick={() => editResult(selected)}>编辑归类</Button><Button size="sm" disabled={busy || loading} onClick={() => restore(selected.tag)}>恢复内置</Button></div>
+        </Card>}
+
+    <Card as="section" padding="md" aria-label="整理预览" className="topic-preview">
+      <div className="flex flex-wrap items-center gap-2 mb-4"><h2 className="type-section-title">整理预览</h2><span className="text-xs text-fg-tertiary">仅预览，不修改训练数据</span></div>
+      <div className="topic-preview-columns">
+        <div className="min-w-0"><label htmlFor="topic-preview-input" className="block text-xs text-fg-tertiary mb-2">原始提示词</label><Textarea id="topic-preview-input" aria-label="预览提示词" rows={4} value={raw} onChange={(e) => setRaw(e.target.value)} placeholder="long hair, ponytail, high ponytail, blue eyes" /></div>
+        <div className="min-w-0"><h3 className="text-xs text-fg-tertiary mb-2">整理后的提示词</h3><div className="flex flex-wrap content-start gap-2" data-testid="organized-preview">
+          {preview.after.length ? preview.after.map((tag, i) => <span key={i} className="topic-preview-tag" style={tagChipStyle(toneIndex(tag), false)}>{tag}</span>) : <p className="text-sm text-fg-tertiary py-3">输入提示词以查看归组结果</p>}
+        </div></div>
+      </div>
+      {preview.matches.length > 0 && <details className="mt-3 text-xs"><summary className="cursor-pointer text-accent">查看逐词归类说明（{preview.matches.length}）</summary><div className="pt-2">{preview.matches.map((item, i) => <p key={i} className="py-1 break-words">{item.tag} → {item.topic ? path(item.topic) : item.rank !== undefined ? categories[item.rank] : '保持原位'} · {sources[item.source]} · {relations[item.reason] ?? item.reason}</p>)}</div></details>}
+    </Card>
       </section>
     </div>
-    <section aria-label="整理预览" className="border border-subtle rounded p-3 flex flex-col gap-2">
-      <h2 className="font-semibold">整理预览（不修改训练数据）</h2>
-      <Textarea aria-label="预览提示词" rows={3} value={raw} onChange={(e) => setRaw(e.target.value)} placeholder="large breasts, blue eyes, flat chest, breast, chest, long hair" />
-      <p className="text-sm break-words">整理前：{preview.before.join(', ')}</p><p className="text-sm break-words" data-testid="organized-preview">整理后：{preview.after.join(', ')}</p>
-      <div className="max-h-64 overflow-auto">{preview.matches.map((item, i) => <p key={i} className="text-xs py-1">{item.tag} → {item.topic ? path(item.topic) : item.rank !== undefined ? categories[item.rank] : '保持原位'} · {sources[item.source]} · {relations[item.reason] ?? item.reason}</p>)}</div>
-    </section>
+    <Drawer open={Boolean(entry || customTopic)} title={entry ? '词条详情与修正' : '自定义主题'} onClose={() => void closeEditor()} size="md" testId="topic-editor-drawer">
+      <div className="flex items-center justify-between gap-2 px-page py-2 border-b border-subtle"><span className="text-xs text-fg-tertiary">{dirty ? '有未保存修改' : '修改后点击保存'}</span><Button size="sm" disabled={busy} onClick={() => void closeEditor()} aria-label="关闭编辑抽屉">关闭</Button></div>
+      <div className="overflow-y-auto min-h-0 flex-1 px-page py-section">
+        {error && <Alert role="alert" tone="danger" className="mb-3">{error}</Alert>}
+        {notice && <p role="status" className="text-accent text-sm mb-3">{notice}</p>}
+        <fieldset disabled={busy} className="min-w-0">
+        {entry && <section aria-label="词条详情" className="flex flex-col gap-4">
+          <p className="text-sm text-fg-tertiary">保存后仅影响下次整理，原始训练标签保持不变。</p>
+          <label className="flex flex-col gap-1.5 text-sm">英文标签<Input aria-label="英文标签" value={entry.tag} onChange={(e) => setEntry({ ...entry, tag: e.target.value })} /></label>
+          <p className="text-xs">当前生效：{detail && `${sources[detail.source]} · ${relations[detail.reason] ?? detail.reason} · ${path(detail.topic)}`}</p>
+          {detailRule && <p className="text-xs">组合规则：{detailRule.modifiers.join(' / ')} ＋ {detailRule.heads.join(' / ')}</p>}
+          <label className="flex flex-col gap-1.5 text-sm">词条主题<Select aria-label="词条主题" value={entry.topic ?? ''} onChange={(e) => setEntry({ ...entry, topic: e.target.value })}><option value="">选择主题</option>{leaves.map((item) => <option key={item.id} value={item.id}>{path(item.id)}</option>)}</Select></label>
+          <label className="flex flex-col gap-1.5 text-sm">关系类型<Select aria-label="关系类型" value={entry.relation} onChange={(e) => setEntry({ ...entry, relation: e.target.value as TopicEntry['relation'] })}>{['base','variant','related','modifier','exception'].map((key) => <option key={key} value={key}>{relations[key]}</option>)}</Select></label>
+          <label><input type="checkbox" checked={Boolean(entry.base)} onChange={(e) => setEntry({ ...entry, base: e.target.checked })} /> 基础词优先</label>
+          <label><input type="checkbox" checked={Boolean(entry.excluded)} onChange={(e) => setEntry({ ...entry, excluded: e.target.checked })} /> 排除自动归类，保持原位（作品／角色仍受身份保护）</label>
+          <label className="flex flex-col gap-1.5 text-sm">来源或修正说明<Input aria-label="来源或修正说明" placeholder="来源或修正说明" value={entry.note} onChange={(e) => setEntry({ ...entry, note: e.target.value })} /></label>
+          <div className="flex flex-wrap gap-2"><Button variant="primary" disabled={busy || !entry.tag.trim() || (!entry.excluded && !entry.topic)} onClick={() => void run(async () => { await topicRequest('/entries', { method: 'PUT', body: JSON.stringify(entry) }); setBaseline(JSON.stringify(entry)); await refresh(); setNotice('已保存修正，下次整理生效') })}>保存修正</Button>
+            <Button disabled={busy} onClick={() => restore(entry.tag)}>恢复内置</Button><Button onClick={() => void closeEditor()}>关闭详情</Button></div>
+          {detailTopic && <><p className="text-xs">同主题词（包括例外）：</p><div className="flex flex-wrap gap-2">{sameTopic.map((item) => <button key={item.tag} className="text-xs text-accent underline" onClick={() => void openEntry(item)}>{item.tag}{item.relation === 'exception' ? '（例外）' : ''}</button>)}</div>
+            <p className="text-xs">相关主题：</p><div className="flex flex-wrap gap-2">{leaves.filter((item) => item.id !== detailTopic.id && (item.parent === detailTopic.parent || item.group === detailTopic.group)).map((item) => <button key={item.id} className="text-xs text-accent underline" onClick={() => chooseTopic(item.id)}>{item.zh}</button>)}</div></>}
+        </section>}
+        {customTopic && <section aria-label="自定义主题" className="flex flex-col gap-4"><h2>自定义主题</h2>
+          <label className="flex flex-col gap-1.5 text-sm">主题 ID<Input aria-label="主题 ID" value={customTopic.id} onChange={(e) => setCustomTopic({ ...customTopic, id: e.target.value })} placeholder="user:my-topic" /></label>
+          <label className="flex flex-col gap-1.5 text-sm">主题英文名称<Input aria-label="主题英文名称" value={customTopic.name} onChange={(e) => setCustomTopic({ ...customTopic, name: e.target.value })} /></label>
+          <label className="flex flex-col gap-1.5 text-sm">主题中文名称<Input aria-label="主题中文名称" value={customTopic.zh} onChange={(e) => setCustomTopic({ ...customTopic, zh: e.target.value })} /></label>
+          <label className="flex flex-col gap-1.5 text-sm">主题大类<Select aria-label="主题大类" value={customTopic.rank} onChange={(e) => setCustomTopic({ ...customTopic, rank: Number(e.target.value), parent: null, group: '' })}>{categories.slice(2).map((label, i) => <option key={label} value={i + 2}>{label}</option>)}</Select></label>
+          <label className="flex flex-col gap-1.5 text-sm">父主题族<Select aria-label="父主题族" value={customTopic.parent ?? ''} onChange={(e) => setCustomTopic({ ...customTopic, parent: e.target.value || null })}><option value="">无父主题</option>{topics.filter((item) => item.kind === 'family' && item.rank === customTopic.rank).map((item) => <option key={item.id} value={item.id}>{item.zh}</option>)}</Select></label>
+          <label className="flex flex-col gap-1.5 text-sm">排序聚合组<Select aria-label="排序聚合组" value={customTopic.group} onChange={(e) => setCustomTopic({ ...customTopic, group: e.target.value })}><option value="">独立成组</option>{[...new Set(leaves.filter((item) => item.rank === customTopic.rank).map((item) => item.group))].map((group) => <option key={group} value={group}>{group}</option>)}</Select></label>
+          <div className="flex gap-2"><Button disabled={busy} onClick={() => void run(async () => { await topicRequest('/topics', { method: 'PUT', body: JSON.stringify({ ...customTopic, group: customTopic.group || customTopic.id }) }); setBaseline(JSON.stringify(customTopic)); await refresh(); setNotice('已保存主题') })}>保存主题</Button><Button onClick={() => void closeEditor()}>取消</Button></div>
+        </section>}
+        </fieldset>
+      </div>
+    </Drawer>
     </div>
   </div>
 }
