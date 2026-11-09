@@ -1,4 +1,5 @@
-import { act, render, screen, waitFor, within } from '@testing-library/react'
+import { installSaveShortcut } from '../../../lib/saveShortcut'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Outlet, Route, Routes } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -80,7 +81,7 @@ describe('Preprocess crop contracts', () => {
     expect(filter).not.toHaveClass('ui-selection-content')
   })
 
-  it('demotes the optional note and preserves the current-image crop payload', async () => {
+  it.each(['button', 'Control+S', 'Meta+S'])('demotes the optional note and preserves the current-image crop payload via %s', async (trigger) => {
     const user = userEvent.setup()
     renderPage()
     await screen.findByRole('button', { name: '编辑 1_data/a.png 的裁剪框' })
@@ -92,7 +93,18 @@ describe('Preprocess crop contracts', () => {
     expect(note).toHaveAccessibleDescription('不会影响输出文件名；输出仍按 _c0、_c1… 编号。')
     expect(screen.getByText('500×480 px')).toBeInTheDocument()
 
-    await user.click(screen.getByRole('button', { name: '裁剪当前图' }))
+    if (trigger === 'button') {
+      await user.click(screen.getByRole('button', { name: '裁剪当前图' }))
+    } else {
+      const removeShortcut = installSaveShortcut()
+      try {
+        await act(async () => {
+          expect(fireEvent.keyDown(window, { key: 's', ctrlKey: trigger === 'Control+S', metaKey: trigger === 'Meta+S' })).toBe(false)
+        })
+      } finally {
+        removeShortcut()
+      }
+    }
     expect(api.startPreprocessCropTrain).toHaveBeenCalledWith(1, 2, {
       '1_data/a.png': [{ x: 0.1, y: 0.2, w: 0.5, h: 0.6, label: '裁剪 1' }],
     })

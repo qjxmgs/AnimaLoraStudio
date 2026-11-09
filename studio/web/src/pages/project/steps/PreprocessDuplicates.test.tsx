@@ -1,4 +1,5 @@
-import { act, render, screen, waitFor, within } from '@testing-library/react'
+import { installSaveShortcut } from '../../../lib/saveShortcut'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Outlet, Route, Routes } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -103,7 +104,7 @@ describe('Preprocess duplicate review contracts', () => {
     expect(remove).toHaveAttribute('aria-pressed', 'true')
   })
 
-  it('does not present Apply as another scan and preserves the apply payload', async () => {
+  it.each(['button', 'Control+S', 'Meta+S'])('does not present Apply as another scan and preserves the apply payload via %s', async (trigger) => {
     let resolveApply!: (value: DuplicateApplyResult) => void
     vi.mocked(api.applyDuplicateActionTrain).mockReturnValue(new Promise((resolve) => { resolveApply = resolve }))
     const user = userEvent.setup()
@@ -111,7 +112,18 @@ describe('Preprocess duplicate review contracts', () => {
     await user.click(screen.getByRole('button', { name: '扫描重复' }))
     await screen.findByRole('button', { name: '去除 1_data/remove.png' })
 
-    await user.click(screen.getByRole('button', { name: '确认去除 1' }))
+    if (trigger === 'button') {
+      await user.click(screen.getByRole('button', { name: '确认去除 1' }))
+    } else {
+      const removeShortcut = installSaveShortcut()
+      try {
+        await act(async () => {
+          expect(fireEvent.keyDown(window, { key: 's', ctrlKey: trigger === 'Control+S', metaKey: trigger === 'Meta+S' })).toBe(false)
+        })
+      } finally {
+        removeShortcut()
+      }
+    }
     await waitFor(() => expect(api.applyDuplicateActionTrain).toHaveBeenCalledWith(1, 2, { names: ['1_data/remove.png'] }))
 
     const scan = screen.getByRole('button', { name: '扫描重复' })

@@ -428,6 +428,7 @@ function StageWorkspace() {
           }
           primary={
             <Button variant="primary" size="sm"
+              aria-keyshortcuts="Control+S Meta+S"
               onClick={() => void startPreprocess('selected', selectedTargets.names)}
               disabled={upscaleBusy || !modelReady || selectedTargets.count === 0}
               title={selectedTargets.count === 0 ? t('preprocess.upscaleSelectedHint') : undefined}

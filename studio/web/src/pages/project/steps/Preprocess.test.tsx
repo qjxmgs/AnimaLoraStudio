@@ -1,4 +1,5 @@
-import { act, render, screen, waitFor, within } from '@testing-library/react'
+import { installSaveShortcut } from '../../../lib/saveShortcut'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Outlet, Route, Routes } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -101,7 +102,7 @@ describe('Preprocess upscale controls', () => {
     for (const select of within(screen.getByRole('region', { name: '放大设置' })).getAllByRole('combobox')) expect(select).toBeDisabled()
   })
 
-  it('keeps model, custom area, tile, device and selected rel paths in the submission', async () => {
+  it.each(['button', 'Control+S', 'Meta+S'])('keeps model, custom area, tile, device and selected rel paths in the submission via %s', async (trigger) => {
     const user = userEvent.setup()
     renderPage()
     await ready()
@@ -114,7 +115,18 @@ describe('Preprocess upscale controls', () => {
     await user.selectOptions(screen.getByRole('combobox', { name: 'tile' }), '192')
     await user.selectOptions(screen.getByRole('combobox', { name: '设备' }), 'cpu')
     await user.click(screen.getByRole('button', { name: '全选' }))
-    await user.click(screen.getByRole('button', { name: '放大选中 2' }))
+    if (trigger === 'button') {
+      await user.click(screen.getByRole('button', { name: '放大选中 2' }))
+    } else {
+      const removeShortcut = installSaveShortcut()
+      try {
+        await act(async () => {
+          expect(fireEvent.keyDown(window, { key: 's', ctrlKey: trigger === 'Control+S', metaKey: trigger === 'Meta+S' })).toBe(false)
+        })
+      } finally {
+        removeShortcut()
+      }
+    }
     expect(api.startPreprocessTrain).toHaveBeenCalledWith(1, 2, {
       mode: 'selected', names: expect.arrayContaining(images.map(image => image.name)), model: 'Other', tile_size: 192, device: 'cpu', target_area: 1280 ** 2,
     })

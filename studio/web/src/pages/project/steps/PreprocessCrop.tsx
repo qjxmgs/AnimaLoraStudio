@@ -424,6 +424,7 @@ function StageWorkspace() {
             <Button
               variant="primary"
               size="sm"
+              aria-keyshortcuts="Control+S Meta+S"
               onClick={() => void submitCrop(true)}
               disabled={busy || activeCrops.length === 0}
             >

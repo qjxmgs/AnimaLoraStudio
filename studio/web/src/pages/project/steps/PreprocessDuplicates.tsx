@@ -178,6 +178,7 @@ export default function PreprocessDuplicatesPage() {
             <Button
               variant="primary"
               size="sm"
+              aria-keyshortcuts="Control+S Meta+S"
               onClick={() => void apply()}
               disabled={busy || selected.size === 0}
             >
