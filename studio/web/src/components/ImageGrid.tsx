@@ -34,6 +34,7 @@ export interface ImageGridProps {
   navigationDisabled?: boolean
   selectionFrameMode?: 'selected' | 'active'
   checkboxPosition?: 'top-left' | 'top-right'
+  selectionMarker?: boolean
   /** 鼠标悬停时回调：用于驱动外部「大图预览面板」。 */
   onHover?: (name: string) => void
   /** 全屏 modal 预览，由 cell 上的放大镜按钮触发（可选）。 */
@@ -144,6 +145,7 @@ export default function ImageGrid({
   navigationDisabled = false,
   selectionFrameMode = 'selected',
   checkboxPosition = 'top-left',
+  selectionMarker = false,
   onHover,
   onPreview,
   onReveal,
@@ -300,6 +302,7 @@ export default function ImageGrid({
               borderHighlight={borderHighlight}
               showFrame={selectionFrameMode === 'active' ? isActive : isSel || borderHighlight}
               checkboxPosition={checkboxPosition}
+              selectionMarker={selectionMarker}
               animateSelectionFrame={animateSelectionFrame}
               onSelect={onSelect}
               onHover={onHover}
@@ -333,6 +336,7 @@ const Cell = memo(function Cell({
   borderHighlight,
   showFrame,
   checkboxPosition,
+  selectionMarker,
   animateSelectionFrame,
   onSelect,
   onHover,
@@ -347,6 +351,7 @@ const Cell = memo(function Cell({
   borderHighlight: boolean
   showFrame: boolean
   checkboxPosition: 'top-left' | 'top-right'
+  selectionMarker: boolean
   animateSelectionFrame: boolean
   onSelect: (name: string, e: React.MouseEvent) => void
   onHover?: (name: string) => void
@@ -440,6 +445,7 @@ const Cell = memo(function Cell({
           (loaded ? 'opacity-100' : 'opacity-0')
         }
       />
+      {selectionMarker && selected && <span className="ui-image-selection-marker" aria-hidden="true" />}
       {showFrame && (
         <ImageSelectionFrame animated={animateSelectionFrame} />
       )}
@@ -448,14 +454,21 @@ const Cell = memo(function Cell({
         onClick={handleSelectionClick}
         aria-label={`${selected ? t('common.deselect') : t('common.select')} ${item.name}`}
         className={
-          'absolute w-5 h-5 rounded-sm flex items-center justify-center text-[12px] font-bold transition-opacity ' +
-          (checkboxPosition === 'top-right' ? 'top-2 right-2 ' : 'top-1 left-1 ') +
+          'absolute z-[3] rounded-sm flex items-center justify-center font-bold transition-opacity ' +
+          (selectionMarker ? 'w-[24px] h-[24px] p-0 leading-none ' : 'w-5 h-5 text-[12px] ') +
+          (checkboxPosition === 'top-right'
+            ? (selectionMarker ? 'top-[8px] right-[8px] ' : 'top-2 right-2 ')
+            : 'top-1 left-1 ') +
           (selected
-            ? 'bg-accent text-accent-fg opacity-100'
+            ? `bg-accent text-accent-fg opacity-100${selectionMarker ? ' border border-white/70' : ''}`
             : 'bg-black/50 border border-subtle text-transparent opacity-0 group-hover:opacity-100 focus-visible:opacity-100')
         }
       >
-        ✓
+        {selectionMarker ? (
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="block shrink-0" aria-hidden="true">
+            <path d="M5 12l5 5L19 7" />
+          </svg>
+        ) : '✓'}
       </button>
       {/* 放大镜：悬停时出现，点击触发 modal 全屏预览（不影响选择状态） */}
       {onPreview && (
@@ -466,7 +479,7 @@ const Cell = memo(function Cell({
             onPreview(item.name)
           }}
           aria-label={`${t('common.preview')} ${item.name}`}
-          className={`absolute ${checkboxPosition === 'top-right' ? 'top-2 left-2' : 'top-1 right-1'} w-5 h-5 rounded-sm bg-black/60 text-white text-[11px] opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:bg-black/80`}
+          className={`absolute z-[3] ${checkboxPosition === 'top-right' ? 'top-2 left-2' : 'top-1 right-1'} w-5 h-5 rounded-sm bg-black/60 text-white text-[11px] opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:bg-black/80`}
         >
           ⤢
         </button>
@@ -474,7 +487,7 @@ const Cell = memo(function Cell({
       {item.badge && (
         <div
           className={
-            'absolute bottom-1 right-1 pointer-events-none ' +
+            'absolute z-[3] bottom-1 right-1 pointer-events-none ' +
             (item.badgeTone === 'warning'
               ? 'badge badge-warn badge-sm'
               : 'px-1.5 py-0.5 rounded-sm bg-accent text-accent-fg text-[10px] font-medium')

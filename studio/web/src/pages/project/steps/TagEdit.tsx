@@ -1291,6 +1291,7 @@ export default function TagEditPage() {
             activeName={activeKey}
             selectionFrameMode="active"
             checkboxPosition="top-right"
+            selectionMarker
             onColumnCountChange={setGridColumnCount}
             onSelect={handleClick}
             locateRequest={gridLocateRequest}

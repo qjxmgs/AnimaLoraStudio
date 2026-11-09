@@ -1,3 +1,16 @@
+/* Selected thumbnails keep their original pixels. The solid bottom marker
+ * sits below the RGB location frame and controls without affecting layout. */
+.ui-image-selection-marker {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 4px;
+  z-index: 1;
+  pointer-events: none;
+  background: var(--accent);
+}
+
 /*
  * Selected-image frame.
  *
