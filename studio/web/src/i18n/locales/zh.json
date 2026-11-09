@@ -277,6 +277,14 @@
     "confirmDeletePoint": "删除还原点 {{id}}？此操作不可撤销。"
   },
   "tagStats": {
+    "viewMode": "标签显示方式",
+    "listView": "切换列表显示",
+    "gridView": "切换网格显示",
+    "headerName": "名称",
+    "enableTag": "开启「{{tag}}」",
+    "disableTag": "关闭「{{tag}}」",
+    "partiallyEnabled": "「{{tag}}」部分开启，点击全部关闭",
+    "imageCount": "{{n}} / {{total}} 张图片",
     "title": "标签分布",
     "selected": "选中 {{n}}",
     "tagCount": "{{n}} tag",

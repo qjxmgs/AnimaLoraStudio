@@ -715,6 +715,39 @@ export default function TagEditPage() {
     })
   }
 
+  const toggleSelectedTag = (tag: string) => {
+    const disable = selectedKeys.some((key) => cache.get(key)?.includes(tag))
+    const updates = new Map<string, { order: string[]; inactive: string[] }>()
+    for (const key of selectedKeys) {
+      const current = cache.get(key) ?? []
+      const draft = pendingTagDrafts.get(key)
+      if (disable ? !current.includes(tag) : !draft?.inactive.includes(tag)) continue
+      const order = [...(draft?.order ?? current)]
+      const inactive = new Set(draft?.inactive ?? [])
+      if (disable) inactive.add(tag)
+      else inactive.delete(tag)
+      updates.set(key, { order, inactive: [...inactive] })
+    }
+    if (updates.size === 0) return
+    markKeysEdited(updates.keys())
+    setCache((prev) => {
+      const next = new Map(prev)
+      for (const [key, draft] of updates) {
+        const inactive = new Set(draft.inactive)
+        next.set(key, draft.order.filter((value) => !inactive.has(value)))
+      }
+      return next
+    })
+    setPendingTagDrafts((prev) => {
+      const next = new Map(prev)
+      for (const [key, draft] of updates) {
+        if (draft.inactive.length) next.set(key, draft)
+        else next.delete(key)
+      }
+      return next
+    })
+  }
+
   const persistCustomTags = async (nextTags: string[]) => {
     if (customTagsSaveInFlightRef.current) return
     customTagsSaveInFlightRef.current = true
@@ -1519,6 +1552,8 @@ export default function TagEditPage() {
               />
               <TagStatsPanel
                 cache={cache}
+                inactiveDrafts={pendingTagDrafts}
+                onToggleTag={toggleSelectedTag}
                 selectedKeys={selectedKeys}
                 onPickTag={handlePickTag}
                 onRemoveTag={removeTagFromSelected}

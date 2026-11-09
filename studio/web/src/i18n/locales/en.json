@@ -277,6 +277,14 @@
     "confirmDeletePoint": "Delete restore point {{id}}? This cannot be undone."
   },
   "tagStats": {
+    "viewMode": "Tag display mode",
+    "listView": "Switch to list view",
+    "gridView": "Switch to grid view",
+    "headerName": "Name",
+    "enableTag": "Enable “{{tag}}”",
+    "disableTag": "Disable “{{tag}}”",
+    "partiallyEnabled": "“{{tag}}” is partially enabled; click to disable all",
+    "imageCount": "{{n}} / {{total}} images",
     "title": "Tag Distribution",
     "selected": "Selected {{n}}",
     "tagCount": "{{n}} tags",

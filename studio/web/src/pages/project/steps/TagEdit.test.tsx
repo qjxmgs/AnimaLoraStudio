@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   onEvent: undefined as undefined | ((event: Record<string, unknown>) => void),
   gridColumns: 2,
   realTagEditor: false,
+  realTagStats: false,
   inpaintProps: [] as Array<Record<string, unknown>>,
 }))
 
@@ -258,14 +259,19 @@ vi.mock('../../../components/BulkActionBar', () => ({
     <div data-testid="bulk-selection">{selectedKeys.length}</div>
   ),
 }))
-vi.mock('../../../components/TagStatsPanel', () => ({
-  default: ({ selectedKeys, onPickTag }: { selectedKeys: string[]; onPickTag: (tag: string) => void }) => (
+vi.mock('../../../components/TagStatsPanel', async (importOriginal) => {
+  const { default: RealTagStats } = await importOriginal<typeof import('../../../components/TagStatsPanel')>()
+  return { default: (props: React.ComponentProps<typeof RealTagStats>) => {
+    if (mocks.realTagStats) return <RealTagStats {...props} />
+    const { selectedKeys, onPickTag } = props
+    return (
     <div>
       <span data-testid="stats-selection">{selectedKeys.join('|')}</span>
       <button type="button" onClick={() => onPickTag('cat')}>选择 cat 图片</button>
     </div>
-  ),
-}))
+    )
+  } }
+})
 
 const captions = {
   folder: null,
@@ -326,6 +332,7 @@ beforeEach(() => {
   mocks.onEvent = undefined
   mocks.gridColumns = 2
   mocks.realTagEditor = false
+  mocks.realTagStats = false
   mocks.inpaintProps.length = 0
   vi.spyOn(api, 'listCaptionsFull').mockResolvedValue(captions)
   vi.spyOn(api, 'listCropWorkspaceTrain').mockResolvedValue(cropWorkspace)
@@ -348,6 +355,77 @@ beforeEach(() => {
 })
 
 describe('TagEdit workspace', () => {
+  it('remembers the tag distribution view when entering another project', async () => {
+    mocks.realTagStats = true
+    const user = userEvent.setup()
+    const first = renderPage()
+    await ready()
+    await user.click(screen.getByRole('button', { name: '切换网格显示' }))
+    first.unmount()
+    renderPage({ id: 8 })
+    await ready()
+    expect(screen.getByRole('button', { name: '切换网格显示' })).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('bulk toggles restore only original members, preserve order, and sync with single drafts', async () => {
+    mocks.realTagStats = true
+    const user = userEvent.setup()
+    vi.mocked(api.listCaptionsFull).mockResolvedValue({ ...captions, items: captions.items.map((item, index) => (
+      index === 0 ? { ...item, tags: ['before', 'cat', 'after'] } : item
+    )) })
+    renderPage()
+    await ready()
+    await user.click(screen.getByRole('button', { name: '全选' }))
+    await user.click(screen.getByRole('button', { name: '切换网格显示' }))
+    await user.click(screen.getByRole('button', { name: '关闭「cat」' }))
+    expect(screen.getByRole('button', { name: '开启「cat」' })).toHaveTextContent('0/2')
+    expect(mocks.confirm).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: '选择 人物 B/b1.png' }))
+    await user.click(screen.getByRole('button', { name: '开启「cat」' }))
+    await user.click(screen.getByRole('button', { name: '选择 人物 B/b1.png' }))
+    expect(screen.getByRole('button', { name: '关闭「cat」' })).toHaveAttribute('aria-pressed', 'mixed')
+    await user.click(screen.getByRole('button', { name: '关闭「cat」' }))
+    await user.click(screen.getByRole('button', { name: '打开 人物 A/a1.png' }))
+    await user.click(screen.getByRole('radio', { name: '单图编辑' }))
+    expect(screen.getByRole('button', { name: '切换标签 cat' })).toHaveAttribute('aria-pressed', 'false')
+    await user.click(screen.getByRole('button', { name: '切换标签 cat' }))
+    await user.click(screen.getByRole('radio', { name: '批量操作' }))
+    expect(screen.getByRole('button', { name: '关闭「cat」' })).toHaveAttribute('aria-pressed', 'mixed')
+    await user.click(screen.getByRole('button', { name: '关闭「cat」' }))
+    expect(screen.getByRole('button', { name: '保存（2）' })).toBeEnabled()
+    await user.click(screen.getByRole('radio', { name: '批量操作' }))
+    await user.click(screen.getByRole('button', { name: '开启「cat」' }))
+    expect(screen.getByRole('button', { name: '已保存' })).toBeDisabled()
+    await user.click(screen.getByRole('button', { name: '关闭「after」' }))
+    await user.click(screen.getByRole('button', { name: '保存（1）' }))
+    await waitFor(() => expect(api.commitCaptions).toHaveBeenCalledWith(7, 11, [
+      { folder: '人物 A', name: 'a1.png', tags: ['before', 'cat'] },
+    ]))
+    await waitFor(() => expect(screen.queryByRole('button', { name: '开启「after」' })).not.toBeInTheDocument())
+  })
+
+  it('keeps bulk-disabled drafts after save failure and edits made during save', async () => {
+    mocks.realTagStats = true
+    const user = userEvent.setup()
+    renderPage()
+    await ready()
+    await user.click(screen.getByRole('button', { name: '全选' }))
+    await user.click(screen.getByRole('button', { name: '切换网格显示' }))
+    await user.click(screen.getByRole('button', { name: '关闭「cat」' }))
+    vi.mocked(api.commitCaptions).mockRejectedValueOnce(new Error('save failed'))
+    await user.click(screen.getByRole('button', { name: '保存（2）' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: '保存（2）' })).toBeEnabled())
+    expect(screen.getByRole('button', { name: '开启「cat」' })).toHaveTextContent('0/2')
+    let resolve!: (value: Awaited<ReturnType<typeof api.commitCaptions>>) => void
+    vi.mocked(api.commitCaptions).mockReturnValueOnce(new Promise((done) => { resolve = done }))
+    await user.click(screen.getByRole('button', { name: '保存（2）' }))
+    await user.click(screen.getByRole('button', { name: '开启「cat」' }))
+    await user.click(screen.getByRole('button', { name: '关闭「cat」' }))
+    await act(async () => resolve({ written: 2, skipped: [], snapshot: { id: 'snap', created_at: 1, size: 1, file_count: 2 }, items: [] }))
+    expect(screen.getByRole('button', { name: '开启「cat」' })).toHaveTextContent('0/2')
+    expect(screen.getByRole('button', { name: '保存（2）' })).toBeEnabled()
+  })
+
   it('switches sidebar modes with Q/E while preserving the active image and selection', async () => {
     const user = userEvent.setup()
     renderPage()

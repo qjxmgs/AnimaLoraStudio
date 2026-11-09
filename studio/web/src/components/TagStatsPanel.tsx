@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { useLocalStorageState } from '../lib/useLocalStorageState'
+import { TAG_CHIP_CLASS, tagChipStyle } from './tagDisplay/tagChipStyle'
 import Button from './Button'
 import { Input } from './FormControl'
 import { TranslatedTag } from './tagDisplay/TranslatedTag'
@@ -10,6 +12,8 @@ import { useTagSuggest } from './tagSuggest/useTagSuggest'
 type Sort = 'count_desc' | 'count_asc' | 'name_asc' | 'name_desc'
 
 interface Props {
+  inactiveDrafts?: ReadonlyMap<string, { order: string[]; inactive: string[] }>
+  onToggleTag?: (tag: string) => void
   cache: Map<string, string[]>
   selectedKeys: string[]
   /** 点 tag 文字 = 选中所有含该 tag 的图（保留旧行为，仍是 tag 浏览的主路径）。 */
@@ -22,12 +26,16 @@ interface Props {
 
 export default function TagStatsPanel({
   cache,
+  inactiveDrafts,
+  onToggleTag,
   selectedKeys,
   onPickTag,
   onRemoveTag,
   onReplaceTag,
 }: Props) {
   const { t } = useTranslation()
+  const [storedView, setView] = useLocalStorageState<string>('studio:tag-stats:view', 'list')
+  const view = storedView === 'grid' ? 'grid' : 'list'
   const [filter, setFilter] = useState('')
   const [sort, setSort] = useState<Sort>('count_desc')
   // inline replace state：editingTag = 正在 inline 改名的 tag；editValue 是
@@ -38,16 +46,24 @@ export default function TagStatsPanel({
 
   const usingSelection = selectedKeys.length > 0
 
-  const items = useMemo(() => {
-    const counter = new Map<string, number>()
-    // 仅按选中图统计 —— 跟"操作 = 给选中图做"语义一致。未选时下面会显示
-    // hint 而不是空列表，所以这里 selectedKeys 为空也不需要 fallback。
-    for (const k of selectedKeys) {
-      const tags = cache.get(k) ?? []
-      for (const tag of tags) counter.set(tag, (counter.get(tag) ?? 0) + 1)
+  const counts = useMemo(() => {
+    const active = new Map<string, number>()
+    const total = new Map<string, number>()
+    for (const key of selectedKeys) {
+      const tags = new Set(cache.get(key) ?? [])
+      for (const tag of tags) active.set(tag, (active.get(tag) ?? 0) + 1)
+      const all = new Set([...tags, ...(inactiveDrafts?.get(key)?.inactive ?? [])])
+      for (const tag of all) total.set(tag, (total.get(tag) ?? 0) + 1)
     }
-    return Array.from(counter.entries())
-  }, [cache, selectedKeys])
+    return { active, total }
+  }, [cache, selectedKeys, inactiveDrafts])
+  const items = useMemo(() => Array.from(
+    view === 'grid' ? counts.total.keys() : counts.active.keys(),
+    (tag): [string, number] => [tag, counts.active.get(tag) ?? 0],
+  ), [counts, view])
+  const toneIndexes = useMemo(() => new Map(
+    [...counts.total.keys()].sort().map((tag, index) => [tag, index]),
+  ), [counts])
 
   const sorted = useMemo(() => {
     const out = [...items]
@@ -64,7 +80,7 @@ export default function TagStatsPanel({
     return sorted.filter(([tag]) => tag.toLowerCase().includes(f))
   }, [sorted, filter])
 
-  const maxCount = filtered.length > 0 ? filtered[0][1] : 1
+  const maxCount = Math.max(1, ...filtered.map(([, count]) => count))
 
   // 进入 edit mode 时 focus + select 输入框
   useEffect(() => {
@@ -109,7 +125,6 @@ export default function TagStatsPanel({
         {usingSelection && (
           <span className="text-fg-tertiary">{t('tagStats.tagCount', { n: items.length })}</span>
         )}
-        <span className="flex-1" />
         {usingSelection && (
           <Input
             value={filter}
@@ -120,6 +135,19 @@ export default function TagStatsPanel({
             className="w-[120px]"
           />
         )}
+        <span className="flex-1" />
+        <div className="ml-auto flex shrink-0 gap-1" role="group" aria-label={t('tagStats.viewMode')}>
+          {(['list', 'grid'] as const).map((mode) => (
+            <Button key={mode} variant={view === mode ? 'secondary' : 'ghost'} size="sm" iconOnly
+              aria-pressed={view === mode} aria-label={t(`tagStats.${mode}View`)}
+              title={t(`tagStats.${mode}View`)} onClick={() => { cancelEdit(); setView(mode) }}>
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+                {mode === 'list' ? <path d="M5 3h9M5 8h9M5 13h9M1 3h1M1 8h1M1 13h1" />
+                  : <path d="M1 1h5v5H1zM10 1h5v5h-5zM1 10h5v5H1zM10 10h5v5h-5z" />}
+              </svg>
+            </Button>
+          ))}
+        </div>
       </div>
 
       {/* table header：仅选中时显示。点击 header 切换该列排序方向 —— 类比
@@ -132,7 +160,7 @@ export default function TagStatsPanel({
             onClick={toggleNameSort}
             className="flex-1 min-w-0 text-left bg-transparent border-none cursor-pointer p-0 hover:text-fg-primary"
           >
-            {t('tagStats.headerTag')}{nameArrow}
+            {t(view === 'grid' ? 'tagStats.headerName' : 'tagStats.headerTag')}{nameArrow}
           </button>
           <button
             type="button"
@@ -142,7 +170,7 @@ export default function TagStatsPanel({
             {t('tagStats.headerCount')}{countArrow}
           </button>
           {/* 占位给 ✎ × 按钮列，让 header 跟下面行的列对齐（即使按钮 hover 才显示） */}
-          {(onReplaceTag || onRemoveTag) && (
+          {view === 'list' && (onReplaceTag || onRemoveTag) && (
             <span className="shrink-0" style={{ width: (onReplaceTag ? 16 : 0) + (onRemoveTag ? 16 : 0) }} />
           )}
         </div>
@@ -159,6 +187,34 @@ export default function TagStatsPanel({
           <p className="px-2.5 py-2 text-xs text-fg-tertiary m-0">
             {filter.trim() ? t('tagStats.noMatch') : t('tagStats.noTagsSelected')}
           </p>
+        ) : view === 'grid' ? (
+          <div className="p-2 flex flex-wrap items-start content-start gap-2" data-testid="tag-stats-grid">
+            {filtered.map(([tag, count]) => {
+              const total = counts.total.get(tag) ?? count
+              const inactive = count === 0
+              const mixed = count > 0 && count < total
+              return (
+                <button key={tag} type="button" data-stats-tag={tag}
+                  aria-pressed={mixed ? 'mixed' : !inactive}
+                  aria-label={t(inactive ? 'tagStats.enableTag' : 'tagStats.disableTag', { tag })}
+                  title={t(mixed ? 'tagStats.partiallyEnabled' : inactive ? 'tagStats.enableTag' : 'tagStats.disableTag', { tag })}
+                  disabled={!onToggleTag} onClick={() => onToggleTag?.(tag)}
+                  style={tagChipStyle(toneIndexes.get(tag) ?? 0, inactive)}
+                  data-tag-inactive={inactive ? 'true' : 'false'}
+                  className={`${TAG_CHIP_CLASS} max-w-full whitespace-normal text-left cursor-pointer ${mixed ? 'border-dashed' : ''}`}>
+                  <span className={`min-w-0 break-words ${inactive ? 'line-through' : ''}`}>
+                    <TranslatedTag tag={tag} layout="stacked" missingTranslation="-"
+                      translationClassName="tag-chip-translation text-current opacity-70" />
+                  </span>
+                  <span className="self-start flex h-[1.15em] shrink-0 items-center text-sm">
+                    <span className="rounded-sm px-1 text-xs leading-none font-mono bg-black/10" aria-label={t('tagStats.imageCount', { n: count, total })}>
+                      {count < total ? `${count}/${total}` : count}
+                    </span>
+                  </span>
+                </button>
+              )
+            })}
+          </div>
         ) : (
           <div className="p-1.5 flex flex-col gap-px">
             {filtered.map(([tag, c]) => {
