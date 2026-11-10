@@ -211,7 +211,7 @@ def test_attention_gqa_preserves_shape() -> None:
     assert attention(x, mask=mask).shape == x.shape
 
 
-def test_modeling_layer_only_imports_torch_einops_and_stdlib() -> None:
+def test_modeling_layer_only_imports_modeling_torch_einops_and_stdlib() -> None:
     tree = ast.parse(inspect.getsource(krea2_modeling))
     roots = set()
     for node in ast.walk(tree):
@@ -219,4 +219,4 @@ def test_modeling_layer_only_imports_torch_einops_and_stdlib() -> None:
             roots.update(alias.name.split(".", 1)[0] for alias in node.names)
         elif isinstance(node, ast.ImportFrom) and node.module:
             roots.add(node.module.split(".", 1)[0])
-    assert roots <= {"__future__", "dataclasses", "einops", "math", "torch"}
+    assert roots <= {"__future__", "dataclasses", "einops", "math", "torch", "modeling"}

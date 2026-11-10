@@ -23,6 +23,11 @@ import torch.nn.functional as F
 from einops import rearrange
 from torch import Tensor, nn
 
+from modeling.attention import (
+    ATTENTION_BACKENDS, SDPA, XFORMERS, AttentionPacking,
+    attention_bshd, attention_padded_bshd,
+)
+
 
 def _rope(pos: Tensor, dim: int, theta: float) -> Tensor:
     scale = torch.arange(0, dim, 2, dtype=torch.float64, device=pos.device) / dim
@@ -163,12 +168,13 @@ class Attention(nn.Module):
         self.gate = nn.Linear(dim, dim, bias=bias)
         self.qknorm = QKNorm(self.headdim)
         self.wo = nn.Linear(dim, dim, bias=bias)
+        self.attention_backend = SDPA
 
     def forward(
         self,
         x: Tensor,
         freqs: Tensor | None = None,
-        mask: Tensor | None = None,
+        mask: Tensor | AttentionPacking | None = None,
     ) -> Tensor:
         q = rearrange(self.wq(x), "b l (h d) -> b h l d", h=self.heads)
         k = rearrange(self.wk(x), "b l (h d) -> b h l d", h=self.kvheads)
@@ -178,6 +184,16 @@ class Attention(nn.Module):
         q, k = self.qknorm(q, k)
         if freqs is not None:
             q, k = _apply_rope(q, k, freqs)
+        if self.attention_backend != SDPA:
+            q, k, v = (t.transpose(1, 2) for t in (q, k, v))
+            if mask is not None:
+                packing = (mask if isinstance(mask, AttentionPacking)
+                           else AttentionPacking.from_mask(mask[:, 0, 0, :]))
+                out = attention_padded_bshd(q, k, v, packing, self.attention_backend,
+                                           stage="krea2")
+            else:
+                out = attention_bshd(q, k, v, self.attention_backend, stage="krea2")
+            return self.wo(out.flatten(2) * torch.sigmoid(gate))
         if self.kvheads != self.heads:
             repeat = self.heads // self.kvheads
             k = k.repeat_interleave(repeat, dim=1)
@@ -241,7 +257,7 @@ class TextFusionBlock(nn.Module):
         self.attn = Attention(features, heads, kvheads=kvheads, bias=bias)
         self.mlp = SwiGLU(features, multiplier, bias)
 
-    def forward(self, x: Tensor, mask: Tensor | None = None) -> Tensor:
+    def forward(self, x: Tensor, mask: Tensor | AttentionPacking | None = None) -> Tensor:
         x = x + self.attn(self.prenorm(x), mask=mask)
         return x + self.mlp(self.postnorm(x))
 
@@ -271,7 +287,7 @@ class TextFusionTransformer(nn.Module):
             ]
         )
 
-    def forward(self, x: Tensor, mask: Tensor | None = None) -> Tensor:
+    def forward(self, x: Tensor, mask: Tensor | AttentionPacking | None = None) -> Tensor:
         batch, seq_len, num_layers, dim = x.shape
         x = x.reshape(batch * seq_len, num_layers, dim)
         for block in self.layerwise_blocks:
@@ -304,7 +320,7 @@ class SingleStreamBlock(nn.Module):
         x: Tensor,
         vec: Tensor,
         freqs: Tensor,
-        mask: Tensor | None = None,
+        mask: Tensor | AttentionPacking | None = None,
     ) -> Tensor:
         prescale, preshift, pregate, postscale, postshift, postgate = self.mod(vec)
         attn_in = (1 + prescale) * self.prenorm(x) + preshift
@@ -383,6 +399,20 @@ class SingleStreamDiT(nn.Module):
             nn.Linear(config.features, config.features * 6),
         )
         self.gradient_checkpointing = False
+        self.attention_backend = SDPA
+
+    def set_attention_backend(self, backend: str) -> None:
+        """Select a backend on this instance, including text-fusion attention."""
+        if backend not in ATTENTION_BACKENDS:
+            raise ValueError(f"未知的 attention backend: {backend!r}")
+        self.attention_backend = backend
+        for module in self.modules():
+            if isinstance(module, Attention):
+                module.attention_backend = backend
+
+    def enable_xformers_memory_efficient_attention(self) -> None:
+        """Hook used by both training and the inference daemon."""
+        self.set_attention_backend(XFORMERS)
 
     def enable_gradient_checkpointing(self) -> None:
         self.gradient_checkpointing = True
@@ -479,7 +509,12 @@ class SingleStreamDiT(nn.Module):
                 dtype=torch.bool,
             )
             combined_mask = torch.cat((attention_mask, image_mask), dim=1)
-            combined_mask = combined_mask[:, None, None, :]
+            if self.attention_backend == SDPA:
+                combined_mask = combined_mask[:, None, None, :]
+            else:
+                # Build indices/lengths once, not once per block or recomputation.
+                text_mask = AttentionPacking.from_mask(attention_mask)
+                combined_mask = AttentionPacking.from_mask(combined_mask)
 
         text = self.txtfusion(context, mask=text_mask)
         text = self.txtmlp(text)

@@ -146,12 +146,13 @@ class Krea2Family:
                  attention_backend: str = "flash_attn", repo_root=None,
                  purpose: str = "train", blocks_to_swap: int = 0):
         from training.families.krea2.loader import load_krea2_model
+        from training.model_loading import apply_attention_backend
 
-        if attention_backend != "none":
-            logger.info(msg("train.krea2_sdpa_only", backend=attention_backend))
-        return load_krea2_model(
+        model = load_krea2_model(
             path, device, dtype, purpose=purpose, blocks_to_swap=blocks_to_swap,
         )
+        apply_attention_backend(model, attention_backend)
+        return model
 
     def dit_blocks(self, model):
         """DiT 的同构层序列（block swap 按它换出末尾 N 层）。"""

@@ -329,10 +329,6 @@ MESSAGES: dict[str, dict[str, str]] = {
         "zh": "文本编码器加载完成",
         "en": "Text encoder loaded",
     },
-    "train.krea2_sdpa_only": {
-        "zh": "Krea2 固定使用 PyTorch SDPA: 已忽略 attention_backend={backend}",
-        "en": "Krea2 always uses PyTorch SDPA: attention_backend={backend} ignored",
-    },
     "train.int8_base_detected": {
         "zh": "检测到 int8 底模（{format}）: 权重以 int8 常驻显存，前向时逐层反量化计算，LoRA 增量单独计算",
         "en": "int8 base model detected ({format}): weights stay in int8 in VRAM, each layer is dequantized for the forward pass, LoRA deltas are computed separately",

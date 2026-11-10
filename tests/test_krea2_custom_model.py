@@ -43,6 +43,19 @@ def test_krea2_custom_endpoint_registers_dedupes_and_resets_selected(
     monkeypatch.setattr(
         secrets, "save", lambda value: state.update(settings=value),
     )
+    # The endpoint now writes via update(), which delegates directly to the
+    # split stores rather than the patched save(). Keep that path in memory too.
+    def update(partial):
+        from studio.infrastructure.config_store import _strip_compat_computed
+
+        values = state["settings"].model_dump()
+        _strip_compat_computed(values)
+        state["settings"] = secrets.Secrets.model_validate(
+            secrets._deep_merge(values, partial)
+        )
+        return state["settings"]
+
+    monkeypatch.setattr(secrets, "update", update)
     request = ModelSourceCandidateRequest(kind="local", path=str(custom))
 
     catalog = add_model_source("krea2", request)

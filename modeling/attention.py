@@ -15,6 +15,7 @@ SDPA 自动落到 EFFICIENT 内核，单层 fwd+bwd 比 flash-attn 包 / xformer
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from functools import cache
 
 import torch
@@ -37,6 +38,15 @@ def _flash_attn_func():
     except Exception:  # noqa: BLE001  未装 / 与 torch ABI 不匹配都按不可用
         return None
     return flash_attn_func
+
+
+@cache
+def _flash_attn_varlen_func():
+    try:
+        from flash_attn import flash_attn_varlen_func
+    except Exception:  # noqa: BLE001
+        return None
+    return flash_attn_varlen_func
 
 
 @cache
@@ -67,14 +77,103 @@ def attention_bshd(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
 
     选中的包不可用或调用失败（如 fp32 输入）时退回 SDPA，同一 (backend, stage) 只警告一次。
     """
+    # FlashAttention supports native GQA. xformers' 5D GQA path has no
+    # backward, so use ordinary 4D MHA with contiguous groups of repeated KV.
+    if backend != FLASH_ATTN:
+        k, v = _expand_kv_heads(q, k, v)
     fn = _backend_fn(backend)
     if fn is not None:
         try:
             return fn(q, k, v)
         except Exception as exc:  # noqa: BLE001  fast path 失败一律退回 SDPA
             _warn_fallback(backend, stage, tuple(q.shape), q.dtype, exc)
+    k, v = _expand_kv_heads(q, k, v)
     out = F.scaled_dot_product_attention(q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2))
     return out.transpose(1, 2)
+
+
+def _expand_kv_heads(q, k, v):
+    if q.shape[-2] != k.shape[-2]:
+        if q.shape[-2] % k.shape[-2] or k.shape[-2] != v.shape[-2]:
+            raise ValueError("GQA requires query heads divisible by equal key/value heads")
+        repeat = q.shape[-2] // k.shape[-2]
+        k = k.repeat_interleave(repeat, dim=-2)
+        v = v.repeat_interleave(repeat, dim=-2)
+    return k, v
+
+
+@dataclass(frozen=True)
+class AttentionPacking:
+    """Reusable self-attention padding metadata; no per-layer CUDA .item().
+
+    Only valid queries are returned. Padded outputs are zero, so callers must
+    continue masking these tokens in subsequent layers (or discard them).
+    Empty samples are omitted from the packed batch, preserving their zeros.
+    """
+
+    indices: torch.Tensor
+    seqlens: tuple[int, ...]
+    cu_seqlens: torch.Tensor
+    batch: int
+    padded_length: int
+
+    @classmethod
+    def from_mask(cls, mask: torch.Tensor) -> AttentionPacking:
+        if mask.ndim != 2 or mask.dtype != torch.bool:
+            raise ValueError("AttentionPacking requires a boolean [B, S] mask")
+        lengths = tuple(int(n) for n in mask.sum(1).tolist() if n)
+        cu = torch.tensor((0, *lengths), device=mask.device, dtype=torch.int32).cumsum(0, dtype=torch.int32)
+        return cls(mask.flatten().nonzero().flatten(), lengths, cu, *mask.shape)
+
+
+def attention_padded_bshd(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
+                          packing: AttentionPacking, backend: str = SDPA, *,
+                          stage: str = "attention") -> torch.Tensor:
+    """Unpad self-attention, run dense/varlen GQA, restore [B,S,H,D].
+
+    FlashAttention uses native GQA; xformers uses 4D repeated KV and a block
+    diagonal bias. Fallback remains per-sample, never mixing batch members.
+    Metadata should be constructed once per model forward and reused by all
+    layers, including gradient-checkpoint recomputation.
+    """
+    if any(t.shape[:2] != (packing.batch, packing.padded_length) for t in (q, k, v)):
+        raise ValueError("Attention packing does not match Q/K/V batch and sequence")
+    if not packing.seqlens:
+        return q * 0 + (k.sum() + v.sum()) * 0
+    qp, kp, vp = (t.flatten(0, 1).index_select(0, packing.indices) for t in (q, k, v))
+    if len(packing.seqlens) == 1:
+        out = attention_bshd(qp[None], kp[None], vp[None], backend, stage=stage)[0]
+    else:
+        out = None
+        if backend == FLASH_ATTN:
+            fn = _flash_attn_varlen_func()
+            if fn is not None:
+                try:
+                    maximum = max(packing.seqlens)
+                    out = fn(qp, kp, vp, packing.cu_seqlens, packing.cu_seqlens,
+                             maximum, maximum)
+                except Exception as exc:  # noqa: BLE001
+                    _warn_fallback(backend, stage, tuple(q.shape), q.dtype, exc)
+            else:
+                _warn_fallback(backend, stage, tuple(q.shape), q.dtype,
+                               RuntimeError("flash_attn_varlen_func unavailable"))
+        elif backend == XFORMERS:
+            fn = _xformers_attention()
+            if fn is not None:
+                try:
+                    kp, vp = _expand_kv_heads(qp, kp, vp)
+                    out = fn(qp[None], kp[None], vp[None],
+                             attn_bias=_block_diagonal_mask(packing.seqlens))[0]
+                except Exception as exc:  # noqa: BLE001
+                    _warn_fallback(backend, stage, tuple(q.shape), q.dtype, exc)
+        if out is None:
+            out = torch.cat([
+                attention_bshd(qs[None], ks[None], vs[None], SDPA, stage=stage)[0]
+                for qs, ks, vs in zip(qp.split(packing.seqlens), kp.split(packing.seqlens),
+                                      vp.split(packing.seqlens))
+            ])
+    restored = out.new_zeros((packing.batch * packing.padded_length, *out.shape[1:]))
+    return restored.index_copy(0, packing.indices, out).reshape_as(q)
 
 
 @cache

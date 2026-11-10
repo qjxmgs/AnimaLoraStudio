@@ -297,11 +297,28 @@ LoRA 参数全精度——kohya / musubi 生态的 `fp8_base` 语义）：
 | `sample_sampler_name` / `sample_scheduler` | `euler` / `simple` | 与 ComfyUI 里挂 Krea 2 模型时选的 **euler + simple** 逐字对应 |
 | `sample_infer_steps` / `sample_cfg_scale` | 28 / 4.5 | Raw 官方口径 |
 | `text_encoder_cache` | `true` | 训练开始先预编码 caption 后释放 Qwen3-VL；bf16 TE 权重约 9 GB，fp8 不同，权重体积不等于编码峰值；关闭则在线编码 |
-| `attention_backend` | SDPA（配置值为 `none`） | Krea 2 加载器固定 SDPA |
+| `attention_backend` | SDPA（配置值为 `none`） | 可显式选择 `flash_attn` / `xformers`；需要环境中对应的可用包 |
 | `shuffle_caption` / `keep_tokens` / `tag_dropout` | 关闭 | tag 生态操作对自然语言 caption 不适用 |
 
 **能力差异**：SRA、LeapAlign、compile_blocks 为仅 Anima 功能，NaViT 打包支持 Anima 与 MOSS-Image（Krea 2 下均自动隐藏）；
 masked loss、正则集、flip augment、各优化器 / loss / lr scheduler 跨族通用。
+
+### Krea 2 注意力后端
+
+在训练配置的「系统与性能 → 注意力后端」选择 FlashAttention 或 xformers，
+对下一次启动的训练生效。已有任务使用创建时的配置快照，运行中的模型不会热切换。
+默认仍为 SDPA，不自动改写已有版本的配置。
+
+- FlashAttention 使用独立 `flash-attn` 包，不依赖 PyTorch 是否内置 FlashAttention。
+- padding 文本先去除，批量输入按样本隔离；FlashAttention 使用原生 GQA，
+  xformers 使用支持反向传播的 4D KV 展开路径。文本缓存格式、LoRA 权重键不变。
+- 缺包时加载器会记录回退 SDPA；内核调用失败时也会警告并回退。
+  内核反向传播本身报错时任务仍会失败，不承诺所有驱动与包版本均可用。
+- FP8 底模仍需开启梯度检查点。注意力后端不会把逐层 BF16 计算改为原生 FP8 计算。
+- GPU 空闲时可运行 `python tools/benchmark_krea2_attention.py --output <报告.json>`。
+  此工具拒绝与已检测到的其他计算进程共用 GPU，并比较旧 masked SDPA、去 padding
+  SDPA、FlashAttention、xformers 的前向与反向；结果仅代表注意力算子，不是整轮训练提速。
+  运行前确保队列没有待自动启动任务；工具的进程检查不是 GPU 独占锁。
 
 ### caption 建议
 
@@ -372,7 +389,7 @@ WDDM 预留量决定是否执行同样的顺序化。32 GB 显卡通常会顺序
 - **优化器**：AdamW / Lion / Automagic / CAME / Prodigy / Prodigy+ScheduleFree / SOAP / Schedule-Free SOAP（起步参数 / 切换换算见 [optimizers.md](optimizers.md)）。
 - **Adapter**：LoRA / LoHa / LoKr（走 [lycoris-lora](https://github.com/KohakuBlueleaf/LyCORIS) v4 eager 基线），以及 OrthoLoRA / T-LoRA；DoRA、rs-LoRA 与 dropout 的可用性按 adapter 和模型族过滤。
 - **分层 rank**：`lora_rank_rules` 按层名正则配不同 rank，便于按模块重要性差异化分配参数预算。
-- **Attention backend**：xformers / flash_attn / PyTorch SDPA（Krea 2 固定 SDPA）。
+- **Attention backend**：xformers / flash_attn / PyTorch SDPA（Krea 2 也支持显式选择，默认仍为 SDPA）。
 
 ---
 
