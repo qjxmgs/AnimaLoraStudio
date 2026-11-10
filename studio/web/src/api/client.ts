@@ -462,7 +462,7 @@ export interface EnvSummary {
 }
 
 /** PR-S2 — PyTorch 安装状态 + 驱动检测 + 推荐 cu tag。 */
-export type TorchCuTag = 'cu128' | 'cu126' | 'cu124' | 'cu118' | 'cpu'
+export type TorchCuTag = 'cu132' | 'cu128' | 'cu126' | 'cu124' | 'cu118' | 'cpu'
 export interface TorchStatus {
   installed: boolean
   version: string | null              // "2.5.0+cu128"
@@ -1890,6 +1890,8 @@ export interface DaemonStatus {
 export interface XformersStatus {
   installed: boolean
   version: string | null
+  supported?: boolean
+  unsupported_reason?: string | null
 }
 
 export interface XformersInstallResult {

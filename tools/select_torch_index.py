@@ -11,7 +11,7 @@ Stdlib only —— 在 venv 刚装好（只有 pip + setuptools）时也能跑�
 - 没装 nvidia-smi / 解析失败 / 驱动太旧 → 静默无输出（caller 用 PyPI 默认）
 - 永远 exit 0，不让 bootstrap 因这一项 fail
 
-驱动→cu wheel 映射：与 studio/services/torch_setup.py:_DRIVER_TO_BEST_CU 同步。
+驱动→cu wheel 映射：与 studio/services/runtime/torch.py:_DRIVER_TO_BEST_CU 同步。
 单独 duplicate 是为了 bootstrap 阶段不依赖 studio.services 子模块加载链。
 """
 from __future__ import annotations
@@ -20,8 +20,9 @@ import re
 import subprocess
 import sys
 
-# 注：维护此表时同步更新 studio/services/torch_setup.py:_DRIVER_TO_BEST_CU
+# 注：维护此表时同步更新 studio/services/runtime/torch.py:_DRIVER_TO_BEST_CU
 _DRIVER_TO_CU: list[tuple[int, str]] = [
+    (596, "cu132"),
     (555, "cu128"),
     (550, "cu126"),
     (545, "cu124"),

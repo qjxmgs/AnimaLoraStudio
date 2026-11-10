@@ -721,6 +721,27 @@ describe('SettingsPage (PP0)', () => {
     expect(within(envSection).getByText('3.13.2')).toBeInTheDocument()
   })
 
+  it('uses cu132 recommendation and hides unsupported xformers installation', async () => {
+    const base = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url.includes('/api/xformers/status')) {
+        return new Response(JSON.stringify({ installed: false, version: null, supported: false }), { status: 200 })
+      }
+      const response = await base(url, init)
+      if (url.includes('/api/torch/status')) {
+        const status = await response.json()
+        return new Response(JSON.stringify({ ...status, version: '2.15.0+cu132', cuda_build: 'cu132', recommended_cu_tag: 'cu132' }), { status: 200 })
+      }
+      return response
+    })
+    const user = userEvent.setup()
+    renderPage()
+    await user.click(await screen.findByRole('button', { name: '系统' }))
+    await screen.findByText('2.15.0+cu132')
+    expect(await screen.findByRole('button', { name: /自动 cu132/ })).toBeInTheDocument()
+    await waitFor(() => expect(document.getElementById('xformers')).toBeNull())
+  })
+
   it('changes LoRA merge precision independently from VAE precision', async () => {
     const user = userEvent.setup()
     renderPage()

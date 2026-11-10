@@ -9,12 +9,21 @@ import pytest
 from studio.services.runtime import torch as ts
 
 
+@pytest.fixture(autouse=True)
+def isolated_package_directory(monkeypatch, tmp_path):
+    """重装测试只能清理测试目录，不能接触真实 venv 的 pip 遗留目录。"""
+    monkeypatch.setattr(ts.sysconfig, "get_path", lambda _: str(tmp_path))
+
+
 # ---------------------------------------------------------------------------
 # recommend_cu_tag: 驱动版本 → cu wheel
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("driver,expected", [
+    ("617.42", "cu132"),
+    ("596.0", "cu132"),
+    ("595.99", "cu128"),  # auto 的保守门槛以下继续使用旧索引
     ("570.15", "cu128"),  # >= 555 → cu128
     ("555.86", "cu128"),  # 边界
     ("550.10", "cu126"),  # 边界
@@ -181,6 +190,18 @@ def test_reinstall_auto_picks_recommended(monkeypatch: pytest.MonkeyPatch) -> No
     assert pip_calls[1][0] == "install"
     assert "--index-url" in pip_calls[1]
     assert "https://download.pytorch.org/whl/cu128" in pip_calls[1]
+
+
+@pytest.mark.parametrize("target", ["auto", "cu132"])
+def test_reinstall_uses_cu132_without_touching_real_packages(monkeypatch, target):
+    monkeypatch.setattr(ts.onnxruntime_setup, "detect_cuda", lambda: {"driver_version": "617.42"})
+    monkeypatch.setattr(ts, "_cleanup_zombie_dirs", lambda: [])
+    monkeypatch.setattr(ts, "_pkg_version", lambda _: "2.15.0+cu132")
+    calls = []
+    monkeypatch.setattr(ts, "_pip", lambda args, **kwargs: (calls.append(args) or (0, "ok")))
+    result = ts.reinstall(target)
+    assert result["tag"] == "cu132"
+    assert calls[-1] == ["install", "torch", "torchvision", "--index-url", "https://download.pytorch.org/whl/cu132"]
 
 
 def test_reinstall_explicit_tag(monkeypatch: pytest.MonkeyPatch) -> None:

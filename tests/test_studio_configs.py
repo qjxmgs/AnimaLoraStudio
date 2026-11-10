@@ -96,6 +96,17 @@ def test_schema_endpoint_returns_groups(client: TestClient) -> None:
     }
 
 
+@pytest.mark.parametrize("unsupported", [None, "No official cu132 wheel"])
+def test_schema_filters_runtime_unsupported_xformers(client, monkeypatch, unsupported):
+    from studio.services.runtime import xformers
+    monkeypatch.setattr(xformers, "unsupported_reason", lambda: unsupported)
+    backend = client.get("/api/schema").json()["schema"]["properties"]["attention_backend"]
+    assert ("xformers" in backend["enum"]) == (unsupported is None)
+    assert {"none", "flash_attn"} <= set(backend["enum"])
+    # 保留旧配置/CLI 兼容，不改变持久化 schema。
+    assert "xformers" in TrainingConfig.model_json_schema()["properties"]["attention_backend"]["enum"]
+
+
 def test_schema_carries_ui_metadata(client: TestClient) -> None:
     resp = client.get("/api/schema")
     props = resp.json()["schema"]["properties"]

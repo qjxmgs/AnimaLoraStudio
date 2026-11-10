@@ -14,7 +14,7 @@ class WD14InstallRequest(BaseModel):
 
 
 class TorchReinstallRequest(BaseModel):
-    target: str = "auto"  # "auto" | "cu128" | "cu126" | "cu124" | "cu118" | "cpu"
+    target: str = "auto"  # "auto" | "cu132" | "cu128" | "cu126" | "cu124" | "cu118" | "cpu"
 
 
 class FlashAttnInstallRequest(BaseModel):

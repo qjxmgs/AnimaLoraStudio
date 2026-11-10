@@ -35,6 +35,7 @@ from ..schemas.presets import (
     PresetImportFromPathBody,
 )
 from ...services.presets import io as presets_io
+from ...services.runtime import xformers as xformers_setup
 from ...paths import DATA_EXPORTS
 from ...schema import GROUP_ORDER, TrainingConfig
 
@@ -46,6 +47,9 @@ def get_schema() -> dict[str, Any]:
     """返回 TrainingConfig 的 JSON Schema + 分组顺序，前端据此渲染表单。"""
     schema = TrainingConfig.model_json_schema()
     _apply_feature_flags(schema)
+    if xformers_setup.unsupported_reason():
+        backend = schema["properties"]["attention_backend"]
+        backend["enum"] = [value for value in backend["enum"] if value != "xformers"]
     return {
         "schema": schema,
         "groups": [

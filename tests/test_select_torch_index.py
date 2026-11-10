@@ -32,7 +32,9 @@ def helper_module():
 
 
 @pytest.mark.parametrize("major,expected_tag", [
-    (596, "cu128"),  # 用户实测驱动
+    (617, "cu132"),  # 用户当前驱动
+    (596, "cu132"),
+    (595, "cu128"),
     (570, "cu128"),
     (555, "cu128"),  # 边界
     (554, "cu126"),  # 边界下方

@@ -15,6 +15,11 @@ import pytest
 from studio.services.runtime import xformers as xs
 
 
+@pytest.fixture(autouse=True)
+def supported_torch_environment(monkeypatch):
+    _patch_torch(monkeypatch, "2.11.0+cu128")
+
+
 # ---------------------------------------------------------------------------
 # current_status
 # ---------------------------------------------------------------------------
@@ -27,13 +32,13 @@ def test_current_status_not_installed(monkeypatch: pytest.MonkeyPatch) -> None:
         raise md.PackageNotFoundError(name)
     monkeypatch.setattr(xs.importlib.metadata, "version", boom)
     s = xs.current_status()
-    assert s == {"installed": False, "version": None}
+    assert s == {"installed": False, "version": None, "supported": True, "unsupported_reason": None}
 
 
 def test_current_status_installed(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(xs.importlib.metadata, "version", lambda _: "0.0.28")
     s = xs.current_status()
-    assert s == {"installed": True, "version": "0.0.28"}
+    assert s == {"installed": True, "version": "0.0.28", "supported": True, "unsupported_reason": None}
 
 
 # ---------------------------------------------------------------------------
@@ -154,3 +159,30 @@ def test_install_timeout_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(xs.subprocess, "run", boom)
     with pytest.raises(RuntimeError, match="超时"):
         xs.install()
+
+
+def test_cu132_reports_unsupported_and_refuses_pip(monkeypatch):
+    _patch_torch(monkeypatch, "2.15.0+cu132")
+    def missing(name):
+        raise xs.importlib.metadata.PackageNotFoundError(name)
+    monkeypatch.setattr(xs.importlib.metadata, "version", missing)
+    status = xs.current_status()
+    assert not status["supported"]
+    assert "cu132" in status["unsupported_reason"]
+    pip = MagicMock()
+    monkeypatch.setattr(xs.subprocess, "run", pip)
+    with pytest.raises(RuntimeError, match="cu132"):
+        xs.install()
+    pip.assert_not_called()
+
+
+def test_cu132_auto_backend_does_not_pick_xformers(monkeypatch):
+    _patch_torch(monkeypatch, "2.15.0+cu132")
+    def version(name):
+        if name == "flash_attn":
+            raise xs.importlib.metadata.PackageNotFoundError(name)
+        return "0.0.35"
+    monkeypatch.setattr(xs.importlib.metadata, "version", version)
+    assert xs.detect_attention_backend() == "none"
+    monkeypatch.setattr(xs.importlib.metadata, "version", lambda _: "2.8.3+cu132torch2.15")
+    assert xs.detect_attention_backend() == "flash_attn"

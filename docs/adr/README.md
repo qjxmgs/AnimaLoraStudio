@@ -30,6 +30,7 @@
 | 0020 | [在任务边界解析随机种子并冻结比较组](0020-task-scoped-random-seeds.md) | Accepted | 2026-09-12 |
 | 0021 | [将 Caption 覆盖率与训练样本入选解耦](0021-decouple-caption-coverage-from-training.md) | Accepted | 2026-10-03 |
 | Local 0021 | [独立保存主题风格与明暗模式](0021-independent-theme-presets.md) | Accepted | 2026-09-19 |
+| 0023 | [将新驱动的 PyTorch 自动安装目标更新为 cu132](0023-cu132-auto-install.md) | Accepted | 2026-11-10 |
 
 ## 状态值
 

@@ -1141,7 +1141,7 @@ export function PyTorchSection() {
         children: (
           <DepVariantList
             busy={busy}
-            variants={(['cu128', 'cu126', 'cu124', 'cu118', 'cpu'] as const).map((tag) => ({
+            variants={(['cu132', 'cu128', 'cu126', 'cu124', 'cu118', 'cpu'] as const).map((tag) => ({
               key: tag,
               label: tag,
               note: tag === 'cpu'
@@ -1383,6 +1383,8 @@ export function XformersSection() {
       : status.installed
         ? `v${status.version ?? '?'}`
         : t('settings.notInstalledShort')
+
+  if (status?.supported === false) return null
 
   return (
     <DepSection

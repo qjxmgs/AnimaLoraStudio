@@ -31,12 +31,15 @@ logger = logging.getLogger(__name__)
 
 # PyTorch 公布的 wheel index URLs。https://download.pytorch.org/whl/<tag>
 # 顺序：从新到老，auto 选第一个驱动支持的。新 cu 加进来时插在列首。
-SUPPORTED_INDEX_TAGS: tuple[str, ...] = ("cu128", "cu126", "cu124", "cu118", "cpu")
+SUPPORTED_INDEX_TAGS: tuple[str, ...] = ("cu132", "cu128", "cu126", "cu124", "cu118", "cpu")
 
 # 驱动版本 -> 该驱动能跑的 PyTorch CUDA wheel tag。NVIDIA 驱动向下兼容（新驱动跑老 cu）。
 # 阈值取 NVIDIA 官方 CUDA Toolkit Release Notes 的「Driver Required」。
 # 来源：https://docs.nvidia.com/cuda/cuda-toolkit-release-notes/index.html#id5
 _DRIVER_TO_BEST_CU: tuple[tuple[float, str], ...] = (
+    # CUDA 13.2 GA 对应 595.45.04；auto 保守取下一主分支，避免依赖小版本兼容。
+    # https://docs.nvidia.com/cuda/archive/13.2.0/cuda-toolkit-release-notes/index.html
+    (596.0, "cu132"),
     (555.0, "cu128"),  # CUDA 12.8 → driver R555+
     (550.0, "cu126"),  # CUDA 12.6 → driver R550+ (12.6 ≈ 同档)
     (545.0, "cu124"),  # CUDA 12.4 → driver R545+
@@ -71,7 +74,7 @@ def detect_torch() -> dict[str, Any]:
     """读 dist-info + import 后探针，返回当前 torch 状态。
 
     `cuda_build`：
-    - 'cu128' / 'cu126' / 'cu124' / 'cu118' —— PyTorch CUDA wheel
+    - 'cu132' / 'cu128' / 'cu126' / 'cu124' / 'cu118' —— PyTorch CUDA wheel
     - 'cpu' —— CPU-only wheel（torch.version.cuda is None）
     - None —— torch 未装
 
@@ -187,7 +190,7 @@ def _pip(args: list[str], timeout: int = 1800, stream: bool = False) -> tuple[in
 
 
 def _decide_target_tag(target: str) -> str:
-    """auto / cu128 / cu126 / cu124 / cu118 / cpu → 实际 cu tag。
+    """auto / cu132 / cu128 / cu126 / cu124 / cu118 / cpu → 实际 cu tag。
 
     'auto' → 用 nvidia-smi 推荐；其它直传。非法值抛 ValueError。
     """
@@ -237,7 +240,7 @@ def _cleanup_zombie_dirs() -> list[str]:
 def reinstall(target: str = "auto", stream: bool = False) -> dict[str, Any]:
     """卸装 torch + torchvision，按 target 重装。
 
-    target: "auto" | "cu128" | "cu126" | "cu124" | "cu118" | "cpu"
+    target: "auto" | "cu132" | "cu128" | "cu126" | "cu124" | "cu118" | "cpu"
     返回 `{"target", "tag", "index_url", "version", "stdout_tail",
             "restart_required": True, "cleaned_zombies": [...]}`。
     失败抛 RuntimeError。

@@ -25,12 +25,27 @@ from typing import Any, Optional
 
 
 def current_status() -> dict[str, Any]:
-    """xformers 当前安装状态：{installed: bool, version: str|None}。"""
+    """安装状态和当前运行时是否有官方安装支持（不在请求中联网）。"""
     try:
         version = importlib.metadata.version("xformers")
-        return {"installed": True, "version": version}
     except importlib.metadata.PackageNotFoundError:
-        return {"installed": False, "version": None}
+        version = None
+    reason = unsupported_reason()
+    return {
+        "installed": version is not None, "version": version,
+        "supported": reason is None, "unsupported_reason": reason,
+    }
+
+
+def unsupported_reason() -> Optional[str]:
+    """2026-11-10 官方 README / cu132 index 尚无配套 xformers wheel。
+
+    限制 Studio 的安装和可见选项，不声称源码无法编译，也不删除旧环境支持。
+    来源：https://github.com/facebookresearch/xformers#installing-xformers
+    """
+    if _torch_cuda_index() == "https://download.pytorch.org/whl/cu132":
+        return "当前 cu132 环境尚无官方 xformers 预编译包，请使用 FlashAttention 或 SDPA。"
+    return None
 
 
 def detect_attention_backend() -> str:
@@ -43,11 +58,12 @@ def detect_attention_backend() -> str:
         return "flash_attn"
     except importlib.metadata.PackageNotFoundError:
         pass
-    try:
-        importlib.metadata.version("xformers")
-        return "xformers"
-    except importlib.metadata.PackageNotFoundError:
-        pass
+    if unsupported_reason() is None:
+        try:
+            importlib.metadata.version("xformers")
+            return "xformers"
+        except importlib.metadata.PackageNotFoundError:
+            pass
     return "none"
 
 
@@ -104,6 +120,9 @@ def install() -> dict[str, Any]:
     `restart_required=True` 因为 xformers 是 C extension —— 装好后必须重启
     Studio 进程才能 import（与 flash_attn 同）。
     """
+    reason = unsupported_reason()
+    if reason:
+        raise RuntimeError(reason)
     cmd = [sys.executable, "-m", "pip", "install", "xformers"]
     index = _torch_cuda_index()
     if index:
