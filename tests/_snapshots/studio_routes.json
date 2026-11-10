@@ -1,7 +1,7 @@
 {
   "version": 1,
   "generated_from": "studio.server.app",
-  "count": 252,
+  "count": 261,
   "routes": [
     {
       "path": "/",
@@ -1871,6 +1871,78 @@
         "POST"
       ],
       "name": "upload",
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/tag-topics/entries",
+      "methods": [
+        "DELETE"
+      ],
+      "name": "restore",
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/tag-topics/entries",
+      "methods": [
+        "GET"
+      ],
+      "name": "entries",
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/tag-topics/entries",
+      "methods": [
+        "PUT"
+      ],
+      "name": "save_entry",
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/tag-topics/explain",
+      "methods": [
+        "POST"
+      ],
+      "name": "explain",
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/tag-topics/export",
+      "methods": [
+        "GET"
+      ],
+      "name": "export",
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/tag-topics/import",
+      "methods": [
+        "POST"
+      ],
+      "name": "import_users",
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/tag-topics/snapshot",
+      "methods": [
+        "GET"
+      ],
+      "name": "snapshot",
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/tag-topics/topics",
+      "methods": [
+        "GET"
+      ],
+      "name": "topics",
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/tag-topics/topics",
+      "methods": [
+        "PUT"
+      ],
+      "name": "save_topic",
       "type": "APIRoute"
     },
     {
