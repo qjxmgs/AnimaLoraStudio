@@ -143,6 +143,26 @@ def test_poller_second_publish_only_new_entries(tmp_path: Path) -> None:
     assert "config" not in d2
 
 
+def test_poller_publishes_mask_counts_before_first_step(tmp_path: Path) -> None:
+    sf = tmp_path / "state.json"
+    state = {"step": 0, "config": {"masked_loss_enabled": True, "mask_status_ready": False}}
+    _write_state(sf, state)
+    deltas: list[dict] = []
+    poller = MonitorStatePoller(sf, deltas.append, poll_interval=0.05, min_publish_interval=0.0)
+    poller.start()
+    try:
+        _wait_for(1, deltas)
+        state["config"].update(mask_status_ready=True, mask_used_images=15, mask_total_images=15)
+        _write_state(sf, state)
+        _wait_for(2, deltas)
+    finally:
+        poller.stop()
+    assert len(deltas) == 2
+    assert deltas[1]["step"] == 0
+    assert deltas[1]["config"]["mask_status_ready"] is True
+    assert deltas[1]["config"]["mask_used_images"] == 15
+
+
 def test_poller_min_publish_interval_throttles(tmp_path: Path) -> None:
     """同一秒内连续 2 次 mtime 变化只发 1 次 (min_publish_interval=1s)。"""
     sf = tmp_path / "state.json"

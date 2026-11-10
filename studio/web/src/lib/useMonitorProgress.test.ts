@@ -2,6 +2,12 @@ import { describe, expect, it } from 'vitest'
 import { _mergeDeltaForTest as mergeDelta } from './useMonitorProgress'
 
 describe('mergeDelta (PR #37 增量协议)', () => {
+  it('updates mask counts before steps change and retains them across later deltas', () => {
+    const config = { masked_loss_enabled: true, mask_status_ready: true, mask_used_images: 15, mask_total_images: 15 }
+    const ready = mergeDelta({ step: 0, config: { masked_loss_enabled: true, mask_status_ready: false } }, { step: 0, config })
+    expect(ready.config).toEqual(config)
+    expect(mergeDelta(ready, { step: 1 }).config).toEqual(config)
+  })
   it('initial merge populates state from null prev', () => {
     const out = mergeDelta(null, {
       step: 5, total_steps: 100, epoch: 1,

@@ -255,6 +255,8 @@ def run(ctx: TrainingContext) -> None:
                 "lr": args.learning_rate,
                 "resolution": args.resolution,
                 "data_dir": str(args.data_dir),
+                "masked_loss_enabled": bool(getattr(args, "masked_loss", False)),
+                "mask_status_ready": False,
             },
         )
         logger.debug("monitor: state file path=%s", state_path)

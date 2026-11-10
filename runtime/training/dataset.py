@@ -1527,6 +1527,41 @@ class CachedLatentDataset(Dataset):
         }
 
 
+def summarize_mask_usage(dataset, *, enabled: bool) -> dict:
+    """统计主训练集的有效遮罩；在缓存校验/重建后、合并正则集前调用。
+
+    按原图路径去重，不把 repeat 或多分辨率展开计成多张图。
+    缓存路径读训练实际消费的 mask 键，非缓存路径复用尺寸/解码校验。
+    """
+    from PIL import Image
+
+    usage: dict[str, bool] = {}
+    checked: set[tuple[str, object]] = set()
+    for sample in dataset.samples:
+        path = str(sample["image"])
+        usage.setdefault(path, False)
+        if not enabled:
+            continue
+        resolution = sample.get("target_reso") if isinstance(dataset, CachedLatentDataset) else None
+        key = (path, resolution)
+        if key in checked:
+            continue
+        checked.add(key)
+        if isinstance(dataset, CachedLatentDataset):
+            with dataset.np.load(dataset._get_npz_path(path, resolution)) as data:
+                valid = dataset.load_masks and "mask" in data.files
+        else:
+            with Image.open(path) as image:
+                valid = dataset.load_masks and dataset._load_mask_image(path, image.size) is not None
+        usage[path] = usage[path] or bool(valid)
+    return {
+        "masked_loss_enabled": enabled,
+        "mask_status_ready": True,
+        "mask_used_images": sum(usage.values()),
+        "mask_total_images": len(usage),
+    }
+
+
 def _stack_masks(batch, h, w):
     """masked loss：批内任一样本有 mask 才输出（无 mask 时零开销）。
 

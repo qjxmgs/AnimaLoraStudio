@@ -5,11 +5,13 @@
  * 走 useMonitorProgress hook 做 delta merge（PR #37 增量协议）。
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { api } from '../api/client'
+import { api, type MonitorState } from '../api/client'
 import { getMonitorElapsedSeconds, type MonitorTaskTiming } from '../lib/monitorElapsed'
 import { useMonitorProgress } from '../lib/useMonitorProgress'
 import ImagePreviewModal from './ImagePreviewModal'
 import { SeriesChart } from './SeriesChart'
+import Badge from './Badge'
+import { InfoButton } from './InfoButton'
 
 // ── helpers ────────────────────────────────────────────────────────────────
 
@@ -49,6 +51,36 @@ function StatCard({ label, value, sub, tone }: {
 }
 
 // ── SmoothControl ──────────────────────────────────────────────────────────
+export function TrainingMaskStatus({ config }: { config?: MonitorState['config'] }) {
+  const enabled = config?.masked_loss_enabled
+  const known = typeof enabled === 'boolean'
+  const ready = config?.mask_status_ready === true
+  const used = config?.mask_used_images
+  const total = config?.mask_total_images
+  const counted = ready && typeof used === 'number' && typeof total === 'number'
+  const error = config?.mask_status_error === true
+  const noMasks = enabled === true && counted && used === 0
+  const label = !known ? '未记录' : enabled ? (noMasks ? '已启用 · 未生效' : '已启用') : '未启用'
+  const detail = !known ? '该任务未记录遮罩用量'
+    : error ? '遮罩数量统计失败'
+    : counted ? `实际使用 ${used.toLocaleString()} / ${total.toLocaleString()} 张`
+    : '等待数据检查'
+  return (
+    <div className="flex shrink-0 flex-wrap items-center gap-field text-sm" role="status" aria-label="训练遮罩">
+      <span className="inline-flex items-center gap-related type-data-label">
+        训练遮罩
+        <InfoButton ariaLabel="训练遮罩：说明">
+          <p>按本次主训练集原图去重统计，不包含正则集、重复次数和多分辨率展开。</p>
+          <p>数量来自训练加载器校验后的有效遮罩；无有效遮罩的图片按整图学习。黑色区域不计入直接 loss，白色区域正常学习。</p>
+          <p>旧任务未保存这项统计时显示“未记录”，不会根据当前目录推算历史结果。</p>
+        </InfoButton>
+      </span>
+      <Badge tone={error || noMasks ? 'warning' : enabled && counted ? 'success' : 'neutral'}>{label}</Badge>
+      <span className="tabular-nums text-fg-secondary">{detail}</span>
+    </div>
+  )
+}
+
 // EMA slider；alpha = 1 表示"不平滑"（SeriesChart 内部据此跳过 EMA）。
 
 function SmoothControl({ alpha, setAlpha, min, max, step }: {
@@ -401,6 +433,8 @@ export default function MonitorDashboard({ taskId, task }: {
         />
         <StatCard label="eta" value={eta} sub={speed ? `${speed.toFixed(2)} it/s` : undefined} />
       </div>
+
+      <TrainingMaskStatus config={state?.config} />
 
       {/* 左：采样图（竖） / 右：loss → LR
           gridTemplateRows: '1fr' → row 跟随 flex-1 撑满，避免 row 默认 auto 在大屏留空白；

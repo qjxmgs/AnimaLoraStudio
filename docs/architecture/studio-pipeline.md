@@ -233,7 +233,7 @@ Pydantic 兼容模型仍在 `studio/infrastructure/secrets.py`（`studio/secrets
 | type | 字段 | 触发 |
 |---|---|---|
 | `task_state_changed` | `task_id`, `status`, `project_id?`, `version_id?` | 训练任务状态变 |
-| `monitor_progress` | `task_id`, `delta` | monitor poller 推送新增 loss / lr / samples 与最新进度；首次快照走 GET `/api/state` |
+| `monitor_progress` | `task_id`, `delta`（曲线增量及 `config`） | monitor poller 推送新增 loss / lr / samples 与最新进度；首次快照走 GET `/api/state`。`config.masked_loss_enabled` / `mask_status_ready` / `mask_used_images` / `mask_total_images` / `mask_status_error` 描述本次训练遮罩状态，数据集缓存校验后发布；数量按主训练集原图去重，旧任务缺字段时为未知 |
 | `project_state_changed` | `project_id` | 项目元数据变化，通知客户端重新读取 |
 | `version_state_changed` | `project_id`, `version_id`, `status`, `phase` | 版本状态或元数据变化 |
 | `job_state_changed` | `job_id`, `project_id`, `version_id?`, `kind`, `status` | download / tag / reg_build / generate / preprocess job |

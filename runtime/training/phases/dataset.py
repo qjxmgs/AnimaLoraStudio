@@ -25,10 +25,28 @@ from training.dataset import (
     collate_fn_cached,
     collate_fn_navit_pack,
     dataset_captions,
+    summarize_mask_usage,
 )
 
 
 logger = logging.getLogger(__name__)
+
+
+def _publish_mask_usage(ctx: TrainingContext) -> None:
+    """只补充监控元数据；统计失败不改变训练配置或中断训练。"""
+    if not ctx.monitor_server:
+        return
+    from train_monitor import get_state, update_monitor
+
+    config = dict(get_state().get("config") or {})
+    enabled = bool(getattr(ctx.args, "masked_loss", False))
+    try:
+        config.update(summarize_mask_usage(ctx.dataset, enabled=enabled))
+        config["mask_status_error"] = False
+    except Exception:
+        logger.warning("Could not summarize training mask usage", exc_info=True)
+        config.update(masked_loss_enabled=enabled, mask_status_ready=False, mask_status_error=True)
+    update_monitor(config=config)
 
 
 def _as_resolutions(value) -> list[int]:
@@ -252,6 +270,7 @@ def run(ctx: TrainingContext) -> None:
             latent_spec=latent_spec,
             label="train.label_training_set",
         )
+    _publish_mask_usage(ctx)
     if ctx.reg_dataset is not None and ctx.use_cached:
         ctx.reg_dataset = CachedLatentDataset(
             ctx.reg_dataset, ctx.vae, ctx.device, ctx.vae_dtype,

@@ -23,6 +23,7 @@ from runtime.training.dataset import (  # noqa: E402
     ImageDataset,
     collate_fn,
     collate_fn_cached,
+    summarize_mask_usage,
 )
 from runtime.training.loop import _masked_mean, _masked_mean_per_sample  # noqa: E402
 
@@ -131,6 +132,51 @@ def test_mask_missing_is_none(tmp_path: Path) -> None:
     _write_img(img_path)
     ds = _square_dataset(tmp_path, load_masks=True)
     assert ds.get_with_flip(0, flip=False)["mask"] is None
+
+
+@pytest.mark.parametrize("cached", [False, True])
+def test_mask_usage_counts_loaded_masks_not_files(tmp_path, cached):
+    for name in ("good", "missing", "wrong_size", "broken"):
+        _write_img(tmp_path / f"{name}.png")
+    _write_mask(tmp_path / "good.png", _half_mask)
+    _write_mask(tmp_path / "wrong_size.png", lambda: Image.new("L", (20, 20), 0))
+    (tmp_path / "broken.mask").write_bytes(b"invalid PNG")
+    ds = _square_dataset(tmp_path, load_masks=True, flip_augment=True)
+    if cached:
+        ds = CachedLatentDataset(ds, _FakeVAE(), device="cpu", dtype=torch.float32)
+    # repeat / repeated resolutions must not inflate image counts.
+    ds.samples = ds.samples + ds.samples
+    summary = summarize_mask_usage(ds, enabled=True)
+    assert summary == {
+        "masked_loss_enabled": True, "mask_status_ready": True,
+        "mask_used_images": 1, "mask_total_images": 4,
+    }
+    assert summarize_mask_usage(ds, enabled=False)["mask_used_images"] == 0
+
+
+def test_mask_usage_publishes_to_monitor_without_overwriting_other_config(tmp_path):
+    from types import SimpleNamespace
+    import train_monitor
+    from training.phases.dataset import _publish_mask_usage
+
+    _write_img(tmp_path / "good.png")
+    _write_mask(tmp_path / "good.png", _half_mask)
+    ds = _square_dataset(tmp_path, load_masks=True)
+    train_monitor.reset_state()
+    train_monitor.set_state_file(tmp_path / "monitor.json")
+    try:
+        train_monitor.update_monitor(config={"rank": 32, "masked_loss_enabled": True, "mask_status_ready": False})
+        ctx = SimpleNamespace(monitor_server=True, dataset=ds, args=SimpleNamespace(masked_loss=True))
+        _publish_mask_usage(ctx)
+        import json
+        config = json.loads((tmp_path / "monitor.json").read_text())["config"]
+        assert config["rank"] == 32
+        assert config["mask_status_ready"] is True
+        assert config["mask_used_images"] == config["mask_total_images"] == 1
+        assert config["mask_status_error"] is False
+    finally:
+        train_monitor.reset_state()
+        train_monitor.set_state_file(None)
 
 
 def test_gray_mask_partial_weight(tmp_path: Path) -> None:
