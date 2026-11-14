@@ -2062,6 +2062,13 @@
       "accessibleLabel": "项目版本"
     },
     "banner": {
+      "noteLabel": "版本备注",
+      "notePlaceholder": "记录本次版本要调整的内容、训练目标等备注…",
+      "noteHint": "离开输入框自动保存 · Ctrl+S 保存",
+      "noteSaving": "正在保存…",
+      "noteSaved": "已保存",
+      "noteError": "保存失败，请重试",
+      "noteRetry": "重试",
       "skippableHint": "可跳过",
       "canceledReasonDefault": "用户中止",
       "failedReasonDefault": "未知错误",
@@ -2253,6 +2260,9 @@
     "customTagsSaveFailed": "常驻标签保存失败：{{error}}"
   },
   "download": {
+    "dropHint": "将图片或 ZIP 拖入此窗口，松手即可导入",
+    "dropToImport": "松手即可导入到当前数据集",
+    "dropUnsupported": "仅支持 PNG、JPG、WEBP、BMP、GIF 图片和 ZIP；其他文件已忽略。",
     "modeBooru": "Booru 抓取",
     "modeUpload": "文件导入",
     "filesLoadError": "无法读取已下载图片，请重试。",

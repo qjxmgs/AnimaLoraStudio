@@ -351,8 +351,7 @@ def test_png_passthrough_speed_smoke(tmp_path: Path) -> None:
     会跑几秒）。如果该测试 flaky 把上限调到 3s 也行；只是 sanity check
     没人不小心把直通拆了。"""
     import time
-    src = _png_bytes(size=(64, 64), color=(7, 7, 7))
-    files = [(f"img{i}.png", io.BytesIO(src)) for i in range(100)]
+    files = [(f"img{i}.png", io.BytesIO(_png_bytes(size=(64, 64), color=(i, 7, 7)))) for i in range(100)]
     t0 = time.monotonic()
     out = uploads.accept_many(files, tmp_path, convert_to_png=True)
     elapsed = time.monotonic() - t0
@@ -370,7 +369,7 @@ def test_accept_many_emits_start_and_done_log(tmp_path: Path) -> None:
     lines: list[str] = []
     src = _png_bytes(color=(0, 0, 0))
     out = uploads.accept_many(
-        [("a.png", io.BytesIO(src)), ("b.png", io.BytesIO(src))],
+        [("a.png", io.BytesIO(src)), ("b.png", io.BytesIO(_png_bytes(color=(1, 1, 1))))],
         tmp_path, convert_to_png=True, on_log=lines.append,
     )
     assert out.added == ["a.png", "b.png"]
@@ -409,3 +408,34 @@ def test_accept_one_image_does_not_log_per_image(tmp_path: Path) -> None:
     )
     assert out.added == ["x.png"]
     assert lines == []  # 单张图无需日志噪声
+
+
+@pytest.mark.parametrize("convert", [False, True])
+def test_content_duplicates_across_names_batches_and_zip(tmp_path: Path, convert: bool) -> None:
+    raw = _png_bytes()
+    first = uploads.accept_many(
+        [("a.png", io.BytesIO(raw)), ("renamed.png", io.BytesIO(raw)),
+         ("pack.zip", io.BytesIO(_zip_bytes({"nested/again.png": raw})))],
+        tmp_path, convert_to_png=convert,
+    )
+    assert first.added == ["a.png"]
+    assert len(first.skipped) == 2
+    again = uploads.accept_one("another.png", io.BytesIO(raw), tmp_path, convert_to_png=convert)
+    assert not again.added
+    assert len(again.skipped) == 1
+    assert len(list(tmp_path.iterdir())) == 1
+
+
+@pytest.mark.parametrize("name,raw,alpha", [
+    ("photo.jpg", _jpg_bytes(), False),
+    ("alpha.png", _rgba_png_bytes(), True),
+])
+def test_repeated_converted_upload_is_skipped(tmp_path: Path, name: str, raw: bytes, alpha: bool) -> None:
+    first = uploads.accept_one(name, io.BytesIO(raw), tmp_path,
+                               convert_to_png=True, remove_alpha_channel=alpha)
+    again = uploads.accept_one("renamed-" + name, io.BytesIO(raw), tmp_path,
+                               convert_to_png=True, remove_alpha_channel=alpha)
+    assert len(first.added) == 1
+    assert again.added == []
+    assert len(again.skipped) == 1
+    assert len(list(tmp_path.iterdir())) == 1

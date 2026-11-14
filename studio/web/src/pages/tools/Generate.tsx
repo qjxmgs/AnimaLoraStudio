@@ -433,7 +433,7 @@ export default function GeneratePage() {
     }
     if (mode !== 'xy') setAxisDrawerOpen(false)
   }, [mode, sidebarTab, setSidebarTab])
-  const [logOpen, setLogOpen] = useState(false)
+  const [logOpen, setLogOpen] = useLocalStorageState('studio:daemon-log:expanded', false)
   // 训练 / reg-ai / 打标等 GPU 任务在跑时，禁用生成防 VRAM 竞争（driver 抢
   // 3D / Copy engine 触发图像渲染卡顿，甚至训练进程 OOM）。listQueue 默认
   // 不含 generate 任务自身，所以自己生成时不会自锁。

@@ -1,6 +1,6 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import TaskLogDrawer, { type LogSource } from './TaskLogDrawer'
 
 function makeSource(overrides: Partial<LogSource> = {}): LogSource {
@@ -15,21 +15,35 @@ function makeSource(overrides: Partial<LogSource> = {}): LogSource {
   }
 }
 
+beforeEach(() => localStorage.clear())
+
 describe('TaskLogDrawer (issue #251)', () => {
   it('无 source 时整体隐藏', () => {
     const { container } = render(<TaskLogDrawer sources={[null, false, undefined]} />)
     expect(container).toBeEmptyDOMElement()
   })
 
-  it('挂载即 running（回放场景）→ 自动展开，日志面板升起且显示尾部', () => {
+  it('挂载即 running 也保持底部收起，不自动展开', () => {
     render(<TaskLogDrawer sources={[makeSource()]} />)
-    expect(screen.getByRole('button', { name: /打标任务/ })).toHaveAttribute(
-      'aria-expanded',
-      'true',
-    )
-    expect(screen.getByTestId('log-drawer-body')).toHaveStyle({ height: '40vh' })
-    expect(screen.getByText("line a")).toBeInTheDocument()
-    expect(screen.getAllByText("line b").length).toBeGreaterThan(0)
+    expect(screen.getByRole('button', { name: /打标任务/ })).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.getByTestId('log-drawer-body')).toHaveStyle({ height: '0px' })
+  })
+
+  it.each([false, true])('任务状态、日志更新、切换来源和重新挂载保留用户选择 %s', (expanded) => {
+    const view = render(<TaskLogDrawer sources={[makeSource()]} />)
+    const strip = () => screen.getByRole('button', { expanded })
+    fireEvent.click(screen.getByRole('button', { expanded: false }))
+    if (!expanded) fireEvent.click(screen.getByRole('button', { expanded: true }))
+    for (const status of ['done', 'pending', 'running', 'failed', 'canceled'] as const) {
+      view.rerender(<TaskLogDrawer sources={[makeSource({ status, lines: ['new log'] })]} />)
+      expect(strip()).toBeInTheDocument()
+    }
+    view.rerender(<TaskLogDrawer sources={[]} />)
+    view.rerender(<TaskLogDrawer sources={[makeSource({ key: 'upload', label: '上传任务' })]} />)
+    expect(strip()).toBeInTheDocument()
+    view.unmount()
+    render(<TaskLogDrawer sources={[makeSource({ key: 'other-page' })]} />)
+    expect(strip()).toBeInTheDocument()
   })
 
   it('挂载即 done（历史回放）→ 默认收起（body 高度 0），条上显示最后一行', () => {
@@ -45,8 +59,9 @@ describe('TaskLogDrawer (issue #251)', () => {
     expect(screen.getByText('line b')).toBeInTheDocument()
   })
 
-  it('任务结束不自动收起（done / failed 都保持展开，收起只靠手动或切页卸载）', () => {
+  it('任务结束不自动收起（done / failed 都保持展开，收起只靠手动）', () => {
     const { rerender } = render(<TaskLogDrawer sources={[makeSource()]} />)
+    fireEvent.click(screen.getByRole('button', { expanded: false }))
     const strip = () => screen.getByRole('button', { name: /打标任务/ })
     expect(strip()).toHaveAttribute('aria-expanded', 'true')
 
@@ -63,9 +78,9 @@ describe('TaskLogDrawer (issue #251)', () => {
     render(<TaskLogDrawer sources={[makeSource()]} />)
     const strip = screen.getByRole('button', { name: /打标任务/ })
     await user.click(strip)
-    expect(strip).toHaveAttribute('aria-expanded', 'false')
-    await user.click(strip)
     expect(strip).toHaveAttribute('aria-expanded', 'true')
+    await user.click(strip)
+    expect(strip).toHaveAttribute('aria-expanded', 'false')
   })
 
   it('多 source 单显：活着的优先于更晚启动的终态任务', () => {
@@ -104,10 +119,10 @@ describe('TaskLogDrawer (issue #251)', () => {
     const user = userEvent.setup()
     render(<TaskLogDrawer sources={[makeSource({ onCancel })]} />)
     const strip = screen.getByRole('button', { name: /打标任务/ })
-    expect(strip).toHaveAttribute('aria-expanded', 'true')
+    expect(strip).toHaveAttribute('aria-expanded', 'false')
     await user.click(screen.getByRole('button', { name: '取消' }))
     expect(onCancel).toHaveBeenCalledOnce()
-    expect(strip).toHaveAttribute('aria-expanded', 'true')
+    expect(strip).toHaveAttribute('aria-expanded', 'false')
   })
 
   it('终态不显示取消按钮', () => {

@@ -2062,6 +2062,13 @@
       "accessibleLabel": "Project versions"
     },
     "banner": {
+      "noteLabel": "Version notes",
+      "notePlaceholder": "Record planned changes, training goals, or other notes for this version…",
+      "noteHint": "Saves on blur · Ctrl+S to save",
+      "noteSaving": "Saving…",
+      "noteSaved": "Saved",
+      "noteError": "Could not save. Please retry.",
+      "noteRetry": "Retry",
       "skippableHint": "skippable",
       "canceledReasonDefault": "Canceled by user",
       "failedReasonDefault": "Unknown error",
@@ -2253,6 +2260,9 @@
     "customTagsSaveFailed": "Could not save project quick tags: {{error}}"
   },
   "download": {
+    "dropHint": "Drop images or ZIP files anywhere in this window to import automatically",
+    "dropToImport": "Drop to import into this dataset",
+    "dropUnsupported": "Only PNG, JPG, WEBP, BMP, GIF and ZIP files are supported; other files were ignored.",
     "modeBooru": "Booru search",
     "modeUpload": "File import",
     "filesLoadError": "Could not load source images. Try again.",

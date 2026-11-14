@@ -236,3 +236,38 @@ describe('ProjectOverview 评估 tab', () => {
     expect(api.listEvalSessions).not.toHaveBeenCalled()
   })
 })
+
+
+describe('版本备注', () => {
+  it('显示已有备注，失焦保存多行内容，并允许清空', async () => {
+    vi.spyOn(api, 'listQueue').mockResolvedValue([])
+    const update = vi.spyOn(api, 'updateVersion').mockResolvedValue(makeVersion())
+    renderOverview(makeProject({ versions: [makeVersion({ note: '原备注' })] }))
+    const input = screen.getByRole('textbox', { name: '版本备注' })
+    expect(input).toHaveValue('原备注')
+    fireEvent.change(input, { target: { value: '修改数据集\n降低学习率' } })
+    fireEvent.blur(input)
+    await waitFor(() => expect(screen.getByText('已保存')).toBeInTheDocument())
+    expect(update).toHaveBeenCalledWith(3, 7, { note: '修改数据集\n降低学习率' })
+    fireEvent.change(input, { target: { value: '' } })
+    fireEvent.blur(input)
+    await waitFor(() => expect(update).toHaveBeenLastCalledWith(3, 7, { note: '' }))
+  })
+
+  it('保存失败保留输入并支持重试，切换版本显示独立备注', async () => {
+    vi.spyOn(api, 'listQueue').mockResolvedValue([])
+    const update = vi.spyOn(api, 'updateVersion')
+      .mockRejectedValueOnce(new Error('offline')).mockResolvedValue(makeVersion())
+    renderOverview(makeProject({ versions: [makeVersion(), makeVersion({ id: 8, label: 'v2', note: '第二版' })] }))
+    const input = screen.getByRole('textbox', { name: '版本备注' })
+    fireEvent.change(input, { target: { value: '待调整' } })
+    fireEvent.blur(input)
+    await waitFor(() => expect(screen.getByText('保存失败，请重试')).toBeInTheDocument())
+    expect(input).toHaveValue('待调整')
+    fireEvent.click(screen.getByRole('button', { name: '重试' }))
+    await waitFor(() => expect(screen.getByText('已保存')).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('radio', { name: 'v2 训练中' }))
+    expect(screen.getByRole('textbox', { name: '版本备注' })).toHaveValue('第二版')
+    expect(update).toHaveBeenLastCalledWith(3, 7, { note: '待调整' })
+  })
+})

@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+import './Download.css'
 import { useTranslation } from 'react-i18next'
 import { useOutletContext } from 'react-router-dom'
 import {
@@ -19,7 +21,6 @@ import ImagePreviewModal from '../../../components/ImagePreviewModal'
 import PathPicker from '../../../components/PathPicker'
 import StepShell from '../../../components/StepShell'
 import UploadProgressBar from '../../../components/UploadProgressBar'
-import { useDialog } from '../../../components/Dialog'
 import { useToast } from '../../../components/Toast'
 import { compareImageName } from '../../../lib/imageSort'
 import { useEventStream } from '../../../lib/useEventStream'
@@ -48,7 +49,6 @@ export default function DownloadPage() {
   const { t } = useTranslation()
   const { project, reload } = useOutletContext<Ctx>()
   const { toast } = useToast()
-  const { confirm } = useDialog()
   const [job, setJob] = useState<Job | null>(null)
   const [logs, setLogs] = useState<string[]>([])
   const [files, setFiles] = useState<DownloadFile[]>([])
@@ -67,6 +67,7 @@ export default function DownloadPage() {
   const [count, setCount] = useState('20')
   const [booruAction, setBooruAction] = useState<'estimate' | 'start' | null>(null)
   const [lastUpload, setLastUpload] = useState<UploadResult | null>(null)
+  const dismissUpload = useCallback(() => setLastUpload(null), [])
   // 上传任务在 TaskLogDrawer 里独立成 LogSource —— server 端 on_log 推 SSE
   // `project_upload_log` / `project_upload_state`，前端 accumulate 成 lines + status。
   // 不同于 download 走 job 系统（log file 持久化 + 跨刷新可回放），upload 是
@@ -297,7 +298,7 @@ export default function DownloadPage() {
       {lastUpload && (
         <UploadResultStrip
           result={lastUpload}
-          onDismiss={() => setLastUpload(null)}
+          onDismiss={dismissUpload}
         />
       )}
 
@@ -343,6 +344,10 @@ export default function DownloadPage() {
           setSelected(result.next)
           setAnchor(result.anchor)
         }}
+        onMarqueeSelect={(next) => {
+          setSelected(next)
+          setAnchor(null)
+        }}
         onPreview={(name) => {
           const index = files.findIndex((file) => file.name === name)
           if (index >= 0) setPreviewIdx(index)
@@ -353,11 +358,7 @@ export default function DownloadPage() {
           setAnchor(null)
         }}
         onDelete={async () => {
-          if (selected.size === 0) return
-          if (!(await confirm(
-            t('download.confirmDelete', { n: selected.size }),
-            { tone: 'danger', okText: t('common.delete') },
-          ))) return
+          if (selected.size === 0 || deleting) return
           setDeleting(true)
           try {
             const result = await api.deleteProjectFiles(project.id, Array.from(selected))
@@ -412,6 +413,7 @@ function DownloadedGrid({
   anchor,
   deleting,
   onSelect,
+  onMarqueeSelect,
   onPreview,
   onSelectAll,
   onClear,
@@ -426,6 +428,7 @@ function DownloadedGrid({
   anchor: string | null
   deleting: boolean
   onSelect: (name: string, e: React.MouseEvent) => void
+  onMarqueeSelect: (selected: Set<string>) => void
   onPreview: (name: string) => void
   onSelectAll: () => void
   onClear: () => void
@@ -502,6 +505,7 @@ function DownloadedGrid({
         items={items}
         selected={selected}
         onSelect={onSelect}
+        onMarqueeSelect={deleting ? undefined : onMarqueeSelect}
         onActivate={onPreview}
         onPreview={onPreview}
         clickMode="activate"
@@ -683,6 +687,8 @@ function UploadPanel({
   const [picked, setPicked] = useState<File[]>([])
   const [serverPath, setServerPath] = useState('')
   const [uploading, setUploading] = useState(false)
+  const uploadingRef = useRef(false)
+  const resetTimer = useRef<number | undefined>(undefined)
   const [dragging, setDragging] = useState(false)
   const [showPathPicker, setShowPathPicker] = useState(false)
   const uploadProgress = useUploadProgress()
@@ -708,37 +714,78 @@ function UploadPanel({
   const applyUploadResult = (result: UploadResult) => {
     onUploaded(result)
   }
-  const submit = async () => {
-    if (picked.length === 0 && !serverPath) return
-    const isLocal = picked.length > 0
+  const submit = async (localFiles = picked, path = serverPath) => {
+    if (uploadingRef.current || (localFiles.length === 0 && !path)) return
+    uploadingRef.current = true
+    window.clearTimeout(resetTimer.current)
+    const isLocal = localFiles.length > 0
     setUploading(true)
     if (isLocal) {
-      uploadProgress.start(picked.reduce((sum, file) => sum + file.size, 0))
+      uploadProgress.start(localFiles.reduce((sum, file) => sum + file.size, 0))
     }
     try {
       const result = isLocal
-        ? await api.uploadProjectFiles(pid, picked, uploadProgress.onProgress)
-        : await api.uploadProjectFileFromPath(pid, serverPath)
+        ? await api.uploadProjectFiles(pid, localFiles, uploadProgress.onProgress)
+        : await api.uploadProjectFileFromPath(pid, path)
       if (isLocal) uploadProgress.finish()
       applyUploadResult(result)
       clearSelection()
       if (isLocal) {
-        window.setTimeout(() => uploadProgress.reset(), 800)
+        resetTimer.current = window.setTimeout(() => uploadProgress.reset(), 800)
       }
     } catch (error) {
       if (isLocal) uploadProgress.fail(error)
       toast(String(error), 'error')
     } finally {
+      uploadingRef.current = false
       setUploading(false)
     }
   }
-  const onDrop = (event: React.DragEvent) => {
-    event.preventDefault()
-    setDragging(false)
-    if (!uploading && event.dataTransfer.files?.length) {
-      chooseLocal(event.dataTransfer.files)
+  // Listen on the window while this dataset page is mounted, including its header
+  // and empty workspace. Only external file drags override browser behavior.
+  useEffect(() => {
+    const isFileDrag = (event: DragEvent) =>
+      Array.from(event.dataTransfer?.types ?? []).includes('Files')
+    const over = (event: DragEvent) => {
+      if (!isFileDrag(event)) return
+      event.preventDefault()
+      if (event.dataTransfer) event.dataTransfer.dropEffect = uploadingRef.current ? 'none' : 'copy'
+      setDragging(!uploadingRef.current)
     }
-  }
+    const leave = (event: DragEvent) => {
+      if (!event.relatedTarget) setDragging(false)
+    }
+    const clear = () => setDragging(false)
+    const drop = (event: DragEvent) => {
+      if (!isFileDrag(event)) return
+      event.preventDefault()
+      clear()
+      if (uploadingRef.current) return
+      const incoming = Array.from(event.dataTransfer?.files ?? [])
+      const supported = incoming.filter((file) => /\.(png|jpe?g|webp|bmp|gif|zip)$/i.test(file.name))
+      if (supported.length !== incoming.length || !supported.length) {
+        toast(t('download.dropUnsupported'), 'error')
+      }
+      if (!supported.length) return
+      setShowPathPicker(false)
+      setServerPath('')
+      setPicked(supported)
+      void submit(supported, '')
+    }
+    window.addEventListener('dragover', over)
+    window.addEventListener('dragleave', leave)
+    window.addEventListener('drop', drop)
+    window.addEventListener('dragend', clear)
+    window.addEventListener('blur', clear)
+    return () => {
+      window.removeEventListener('dragover', over)
+      window.removeEventListener('dragleave', leave)
+      window.removeEventListener('drop', drop)
+      window.removeEventListener('dragend', clear)
+      window.removeEventListener('blur', clear)
+    }
+  })
+  useEffect(() => () => window.clearTimeout(resetTimer.current), [])
   const totalBytes = picked.reduce((sum, file) => sum + file.size, 0)
   const fileNames = picked.map((file) => file.name).join(', ')
   const source = picked.length > 0 ? 'local' : serverPath ? 'server' : null
@@ -760,15 +807,15 @@ function UploadPanel({
       : t('download.importButton')
 
   return (
-    <div
-      className="flex flex-col gap-2"
-      onDragOver={(event) => {
-        event.preventDefault()
-        if (!uploading) setDragging(true)
-      }}
-      onDragLeave={() => setDragging(false)}
-      onDrop={onDrop}
-    >
+    <div className="flex flex-col gap-2">
+      {dragging && (
+        <div className="pointer-events-none fixed inset-3 z-50 flex items-center justify-center rounded-lg border-2 border-dashed border-accent bg-accent-soft/90" role="status">
+          <span className="rounded-lg bg-surface px-6 py-4 text-lg font-semibold text-accent">
+            {t('download.dropToImport')}
+          </span>
+        </div>
+      )}
+      <p className="m-0 text-xs text-fg-tertiary">{t('download.dropHint')}</p>
       <input
         ref={inputRef}
         type="file"
@@ -857,9 +904,21 @@ function UploadResultStrip({
   onDismiss: () => void
 }) {
   const { t } = useTranslation()
+  const [closing, setClosing] = useState(false)
+  useEffect(() => {
+    setClosing(false)
+    const timer = window.setTimeout(() => setClosing(true), 3000)
+    return () => window.clearTimeout(timer)
+  }, [result])
+  useEffect(() => {
+    if (!closing) return
+    const timer = window.setTimeout(onDismiss, 220)
+    return () => window.clearTimeout(timer)
+  }, [closing, onDismiss])
   const skipped = result.skipped.length
   const added = result.added.length
-  return (
+  return createPortal(
+    <div className={`download-result-notice${closing ? " is-closing" : ""}`} data-download-result-notice>
     <Alert
       tone={skipped > 0 ? 'warning' : 'success'}
       size="sm"
@@ -873,7 +932,7 @@ function UploadResultStrip({
           variant="ghost"
           size="xs"
           iconOnly
-          onClick={onDismiss}
+          onClick={() => setClosing(true)}
           aria-label={t('common.close')}
         >
           <svg
@@ -906,5 +965,7 @@ function UploadResultStrip({
         </details>
       ) : null}
     </Alert>
+    </div>,
+    document.body,
   )
 }

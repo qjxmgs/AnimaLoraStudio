@@ -273,9 +273,68 @@ function BannerMeta({ k, v }: { k: string; v: string | number }) {
   )
 }
 
+function VersionNote({ projectId, version }: { projectId: number; version: Version }) {
+  const { t } = useTranslation()
+  const { reload } = useOutletContext<Ctx>()
+  const [note, setNote] = useState(version.note ?? '')
+  const saved = useRef(version.note ?? '')
+  const busy = useRef(false)
+  const [state, setState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
+
+  useEffect(() => {
+    const incoming = version.note ?? ''
+    const previous = saved.current
+    setNote(current => current === previous ? incoming : current)
+    saved.current = incoming
+  }, [version.note])
+
+  const save = async () => {
+    if (busy.current || note === saved.current) return
+    busy.current = true
+    setState('saving')
+    try {
+      await api.updateVersion(projectId, version.id, { note })
+      saved.current = note
+      setState('saved')
+      void reload().catch(() => {})
+    } catch {
+      setState('error')
+    } finally {
+      busy.current = false
+    }
+  }
+
+  return (
+    <div className="min-w-0 flex-1 basis-full sm:basis-64">
+      <textarea
+        aria-label={t('overview.banner.noteLabel')}
+        placeholder={t('overview.banner.notePlaceholder')}
+        className="w-full resize-y rounded-md border border-subtle bg-surface px-3 py-2 text-sm text-fg-primary outline-none focus:border-accent focus:ring-1 focus:ring-accent"
+        style={{ minHeight: 64 }}
+        rows={2}
+        value={note}
+        disabled={state === 'saving'}
+        onChange={event => { setNote(event.target.value); setState('idle') }}
+        onBlur={() => void save()}
+        onKeyDown={event => {
+          if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
+            event.preventDefault()
+            void save()
+          }
+        }}
+      />
+      <div className="flex items-center gap-2 text-xs text-fg-tertiary" aria-live="polite">
+        <span>{t(`overview.banner.note${state === 'saving' ? 'Saving' : state === 'saved' ? 'Saved' : state === 'error' ? 'Error' : 'Hint'}`)}</span>
+        {state === 'error' && <button type="button" className="text-accent underline" onClick={() => void save()}>{t('overview.banner.noteRetry')}</button>}
+      </div>
+    </div>
+  )
+}
+
 function BannerShell({
-  tint, iconChar, iconColor, iconPulse, title, sub, children,
+  tint, iconChar, iconColor, iconPulse, title, sub, children, note,
 }: {
+  note: ReactNode
   tint: 'err' | 'warn' | 'accent' | 'ok'
   iconChar: string
   iconColor: string
@@ -298,7 +357,8 @@ function BannerShell({
       borderRadius: 'var(--r-lg)',
       display: 'flex', flexDirection: 'column', gap: 4,
     }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex min-w-0 items-center gap-3 sm:w-72 sm:flex-none">
         <span className="banner-shell-icon" style={{
           flexShrink: 0,
           borderRadius: '50%',
@@ -312,6 +372,8 @@ function BannerShell({
           <div style={{ fontSize: 'var(--t-md)', fontWeight: 600, color: 'var(--fg-primary)' }}>{title}</div>
           {sub && <div style={{ fontSize: 'var(--t-xs)', color: 'var(--fg-secondary)', marginTop: 1 }}>{sub}</div>}
         </div>
+        </div>
+        {note}
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 4, paddingTop: 6 }}>
         {children}
@@ -433,6 +495,7 @@ function StatusBanner({
     const cancelReason = latestTask?.error_msg || t('overview.banner.canceledReasonDefault')
     return (
       <BannerShell
+        note={<VersionNote key={`${projectId}:${version.id}`} projectId={projectId} version={version} />}
         tint="err" iconChar="⊘" iconColor="var(--fg-tertiary)"
         title={`${version.label} · ${t('versionStatus.canceled')}`}
         sub={cancelReason}
@@ -460,6 +523,7 @@ function StatusBanner({
     const reason = version.last_failure_reason || latestTask?.error_msg || t('overview.banner.failedReasonDefault')
     return (
       <BannerShell
+        note={<VersionNote key={`${projectId}:${version.id}`} projectId={projectId} version={version} />}
         tint="err" iconChar="!" iconColor="var(--err)"
         title={`${version.label} · ${t('overview.banner.failedTitle')}`}
         sub={reason}
@@ -492,6 +556,7 @@ function StatusBanner({
     if (latestTask?.status === 'scheduled') {
       return (
         <BannerShell
+        note={<VersionNote key={`${projectId}:${version.id}`} projectId={projectId} version={version} />}
           tint="accent" iconChar="◷" iconColor="var(--accent)"
           title={`${version.label} · ${t('overview.banner.scheduledTitle')}`}
           sub={latestTask.scheduled_at
@@ -520,6 +585,7 @@ function StatusBanner({
     const startedAt = latestTask?.started_at
     return (
       <BannerShell
+        note={<VersionNote key={`${projectId}:${version.id}`} projectId={projectId} version={version} />}
         tint="accent" iconChar="●" iconColor="var(--accent)" iconPulse
         title={`${version.label} · ${t('versionStatus.training')}`}
         sub={startedAt ? `${t('overview.banner.startedAt')} ${fmtTime(startedAt)}` : undefined}
@@ -559,6 +625,7 @@ function StatusBanner({
       || (taskOutputs?.output_dir && loraFromTask ? `${taskOutputs.output_dir}/${loraFromTask}` : null)
     return (
       <BannerShell
+        note={<VersionNote key={`${projectId}:${version.id}`} projectId={projectId} version={version} />}
         tint="ok" iconChar="✓" iconColor="var(--ok)"
         title={`${version.label} · ${t('versionStatus.completed')}`}
         sub={fmtTime(latestTask?.finished_at)}
@@ -617,6 +684,7 @@ function StatusBanner({
 
   return (
     <BannerShell
+        note={<VersionNote key={`${projectId}:${version.id}`} projectId={projectId} version={version} />}
       tint="warn" iconChar="◐" iconColor="var(--warn)"
       title={`${version.label} · ${t('versionStatus.preparing')}`}
       sub={t('overview.banner.preparingSub')}

@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { useLocalStorageState } from '../lib/useLocalStorageState'
 import { lastVisibleLine } from '../lib/logLines'
 import LogView from './LogView'
 
@@ -63,11 +64,8 @@ function pickActive(sources: LogSource[]): LogSource | null {
  * 最后一行日志 + 耗时）；点击后日志面板从 header 下方升起（200ms 高度动画，
  * overlay 不挤压页面布局），header 骑在面板顶上充当与内容区的分隔条。
  *
- * 开合状态机（手动开合随时生效）：
- * - 进入 live（含挂载即 running 的回放场景）→ 自动展开
- * - 任务结束**不**自动收起 —— 用户要回看结果/错误；只有切页（组件卸载）
- *   或手动点击才收
- * - 挂载即终态（历史回放）→ 默认收起
+ * 开合只由用户操作决定，全局持久化；任务状态、日志更新和切页不改变选择。
+ * 首次使用默认收起，展开后保持展开，直到用户手动收起。
  *
  * 由 StepShell 统一挂载（`logSources` prop），页面只声明 source。
  */
@@ -80,21 +78,12 @@ export default function TaskLogDrawer({
   const list = sources.filter((s): s is LogSource => !!s)
   const active = pickActive(list)
 
-  const [expanded, setExpanded] = useState(false)
-  const prevRef = useRef<{ key: string; status: LogSourceStatus } | null>(null)
+  const [expanded, setExpanded] = useLocalStorageState('studio:task-log:expanded', false)
   // LogView 工具栏 portal 进 header（避免「header + 工具栏」两层）；用 state 存
   // element 保证容器挂载后 portal 才渲染
   const [toolbarEl, setToolbarEl] = useState<HTMLElement | null>(null)
 
-  const activeKey = active?.key ?? null
   const activeStatus = active?.status ?? null
-  useEffect(() => {
-    if (!activeKey || !activeStatus) return
-    const prev = prevRef.current
-    const wasLive = prev?.key === activeKey && isLiveStatus(prev.status)
-    if (isLiveStatus(activeStatus) && !wasLive) setExpanded(true)
-    prevRef.current = { key: activeKey, status: activeStatus }
-  }, [activeKey, activeStatus])
 
   // live 时 1s tick 刷新耗时显示（同原 JobProgress）
   const live = !!activeStatus && isLiveStatus(activeStatus)
@@ -133,7 +122,7 @@ export default function TaskLogDrawer({
           aria-expanded={expanded}
           onClick={() => setExpanded((v) => !v)}
           onKeyDown={(e) => {
-            if (e.key === 'Enter' || e.key === ' ') {
+            if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) {
               e.preventDefault()
               setExpanded((v) => !v)
             }

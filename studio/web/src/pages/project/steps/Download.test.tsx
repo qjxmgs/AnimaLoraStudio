@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Outlet, Route, Routes } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -40,6 +40,7 @@ vi.mock('../../../components/ImageGrid', () => ({
     selected,
     onSelect,
     onActivate,
+    onMarqueeSelect,
     ariaLabel,
     className,
     contentClassName,
@@ -48,6 +49,7 @@ vi.mock('../../../components/ImageGrid', () => ({
     items: { name: string }[]
     selected: Set<string>
     onSelect: (name: string, event: React.MouseEvent) => void
+    onMarqueeSelect?: (selected: Set<string>) => void
     onActivate?: (name: string) => void
     ariaLabel?: string
     className?: string
@@ -55,6 +57,7 @@ vi.mock('../../../components/ImageGrid', () => ({
     emptyHint?: string
   }) => (
     <div role="grid" aria-label={ariaLabel} className={className} data-content-class={contentClassName}>
+      {onMarqueeSelect && <button onClick={() => onMarqueeSelect(new Set(items.map((item) => item.name)))}>模拟框选</button>}
       {items.length === 0 ? <span>{emptyHint}</span> : items.map((item) => (
         <div key={item.name}>
           <button type="button" onClick={(event) => onSelect(item.name, event)} aria-pressed={selected.has(item.name)}>
@@ -145,6 +148,85 @@ beforeEach(() => {
 })
 
 describe('Download workspace', () => {
+  it('connects marquee selection to the dataset selection and delete count', async () => {
+    renderPage()
+    await ready()
+    fireEvent.click(screen.getByRole('button', { name: '模拟框选' }))
+    expect(screen.getByRole('button', { name: '删除 2' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: '选择 a.png' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('button', { name: '选择 b.jpg' })).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it.each(['auto', 'manual'])('retracts the floating import notification on %s dismissal', async (mode) => {
+    renderPage()
+    await ready()
+    vi.useFakeTimers()
+    try {
+      await act(async () => {
+        fireEvent.drop(window, { dataTransfer: { types: ['Files'], files: [new File(['x'], 'notice.png')] } })
+      })
+      const notice = document.querySelector('[data-download-result-notice]')!
+      expect(notice.parentElement).toBe(document.body)
+      expect(notice).not.toHaveClass('is-closing')
+      if (mode === 'manual') {
+        fireEvent.click(notice.querySelector('button')!)
+      } else {
+        act(() => vi.advanceTimersByTime(2999))
+        expect(notice).not.toHaveClass('is-closing')
+        act(() => vi.advanceTimersByTime(1))
+      }
+      expect(notice).toHaveClass('is-closing')
+      expect(notice).toBeInTheDocument()
+      act(() => vi.advanceTimersByTime(220))
+      expect(notice).not.toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('imports files dropped on the workspace immediately and ignores unsupported files', async () => {
+    renderPage()
+    await ready()
+    const file = new File(['image'], 'drop.PNG', { type: 'image/png' })
+    const dataTransfer = { types: ['Files'], files: [file, new File(['text'], 'note.txt')] }
+    const grid = screen.getByRole('grid')
+    fireEvent.dragOver(grid, { dataTransfer })
+    expect(screen.getByText('松手即可导入到当前数据集')).toBeInTheDocument()
+    fireEvent.drop(grid, { dataTransfer })
+    await waitFor(() => expect(api.uploadProjectFiles).toHaveBeenCalledWith(7, [file], expect.any(Function)))
+    expect(await screen.findByText('导入完成：添加 1 张，跳过 0 张')).toBeInTheDocument()
+    expect(screen.queryByText('松手即可导入到当前数据集')).not.toBeInTheDocument()
+    expect(mocks.reload).toHaveBeenCalled()
+    expect(mocks.toast).toHaveBeenCalled()
+  })
+
+  it('blocks repeat drops during upload and retains failed drops for retry', async () => {
+    let rejectUpload: (error: Error) => void = () => {}
+    vi.mocked(api.uploadProjectFiles).mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectUpload = reject }))
+    renderPage()
+    await ready()
+    const file = new File(['image'], 'retry.png', { type: 'image/png' })
+    const dataTransfer = { types: ['Files'], files: [file] }
+    fireEvent.drop(window, { dataTransfer })
+    fireEvent.drop(window, { dataTransfer })
+    expect(api.uploadProjectFiles).toHaveBeenCalledTimes(1)
+    await act(async () => rejectUpload(new Error('offline')))
+    expect(screen.getByRole('button', { name: '从当前设备导入 1 个文件' })).toBeEnabled()
+    fireEvent.click(screen.getByRole('button', { name: '从当前设备导入 1 个文件' }))
+    await waitFor(() => expect(api.uploadProjectFiles).toHaveBeenCalledTimes(2))
+  })
+
+  it('clears drag feedback on leaving and does not import internal image drags', async () => {
+    renderPage()
+    await ready()
+    fireEvent.dragOver(window, { dataTransfer: { types: ['Files'] } })
+    fireEvent.dragLeave(window, { relatedTarget: null })
+    expect(screen.queryByText('松手即可导入到当前数据集')).not.toBeInTheDocument()
+    fireEvent.drop(window, { dataTransfer: { types: ['text/uri-list'], files: [] } })
+    fireEvent.drop(window, { dataTransfer: { types: ['Files'], files: [new File(['x'], 'bad.txt')] } })
+    expect(api.uploadProjectFiles).not.toHaveBeenCalled()
+  })
+
   it('keeps estimate and download as two explicit Booru steps with the existing payloads', async () => {
     const user = userEvent.setup()
     renderPage()
@@ -358,24 +440,18 @@ describe('Download workspace', () => {
     expect(api.uploadProjectFileFromPath).not.toHaveBeenCalled()
   })
 
-  it('keeps the image workspace primary and permanently deletes only after confirmation', async () => {
+  it('deletes selected dataset images immediately without confirmation', async () => {
     const user = userEvent.setup()
     renderPage()
     await ready()
 
-    expect(screen.queryByText('格式分布')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '删除 0' })).toBeDisabled()
     await user.click(screen.getByRole('button', { name: '选择 a.png' }))
-    mocks.confirm.mockResolvedValueOnce(false)
     await user.click(screen.getByRole('button', { name: '删除 1' }))
-    expect(api.deleteProjectFiles).not.toHaveBeenCalled()
-
-    mocks.confirm.mockResolvedValueOnce(true)
-    await user.click(screen.getByRole('button', { name: '删除 1' }))
-    expect(mocks.confirm).toHaveBeenLastCalledWith(
-      expect.stringContaining('操作不可恢复'),
-      { tone: 'danger', okText: '删除' },
-    )
+    expect(mocks.confirm).not.toHaveBeenCalled()
+    expect(api.deleteProjectFiles).toHaveBeenCalledTimes(1)
     expect(api.deleteProjectFiles).toHaveBeenCalledWith(7, ['a.png'])
+    await waitFor(() => expect(screen.getByRole('button', { name: '删除 0' })).toBeDisabled())
   })
 
   it('opens the existing preview flow from an image cell', async () => {

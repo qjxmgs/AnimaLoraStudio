@@ -8,6 +8,8 @@
   zip 包内同样按这套白名单提取。
 - zip 内的子目录结构会被拍平（取 basename）。
 - zip 损坏时整包跳过并报告，不影响其它文件。
+- 保存前按 SHA-256 比较原始/转换后文件内容；已有内容及同批重复项跳过。
+  每批只扫描一次已有图片；并发导入串行处理，防止重复写入。
 
 `convert_to_png` 模式（与 booru 下载共用的 `gelbooru.convert_to_png` 设置）：
 - 所有非 PNG 图片经 PIL 解码后统一重编码为 .png；
@@ -33,9 +35,12 @@
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 import shutil
 import time
+import threading
+from functools import wraps
 import zipfile
 from dataclasses import dataclass, field
 from io import BytesIO
@@ -76,6 +81,37 @@ class UploadResult:
     def merge(self, other: "UploadResult") -> None:
         self.added.extend(other.added)
         self.skipped.extend(other.skipped)
+
+
+# Serialize imports so concurrent requests cannot both pass the duplicate check.
+_import_lock = threading.RLock()
+
+
+def _serialized_import(fn):
+    @wraps(fn)
+    def wrapped(*args, **kwargs):
+        with _import_lock:
+            return fn(*args, **kwargs)
+    return wrapped
+
+
+def _digest(stream: BinaryIO) -> bytes:
+    position = stream.tell()
+    digest = hashlib.sha256()
+    for chunk in iter(lambda: stream.read(1024 * 1024), b''):
+        digest.update(chunk)
+    stream.seek(position)
+    return digest.digest()
+
+
+def _existing_hashes(dest_dir: Path) -> set[bytes]:
+    hashes = set()
+    if dest_dir.exists():
+        for path in dest_dir.iterdir():
+            if path.is_file() and _is_image_ext(path.name):
+                with path.open('rb') as stream:
+                    hashes.add(_digest(stream))
+    return hashes
 
 
 def _safe_basename(name: str) -> str:
@@ -182,9 +218,17 @@ def _write_image_entry(
     remove_alpha_channel: bool,
     report_name: str,
     result: UploadResult,
+    hashes: set[bytes],
 ) -> float:
     """落盘单张图。返回耗时秒数（给上层节流日志判定"慢图"用）。"""
     t0 = time.monotonic()
+
+    def duplicate(digest: bytes) -> bool:
+        if digest in hashes:
+            result.skipped.append({"name": report_name, "reason": "图片内容已存在，跳过"})
+            return True
+        return False
+
     if not convert_to_png:
         target = dest_dir / src_name
         if target.exists():
@@ -192,12 +236,19 @@ def _write_image_entry(
                 {"name": report_name, "reason": "已存在，跳过"}
             )
             return time.monotonic() - t0
+        digest = _digest(src_stream)
+        if duplicate(digest):
+            return time.monotonic() - t0
         with target.open("wb") as fh:
             shutil.copyfileobj(src_stream, fh)
+        hashes.add(digest)
         result.added.append(src_name)
         return time.monotonic() - t0
 
     raw = src_stream.read()
+    raw_digest = hashlib.sha256(raw).digest()
+    if duplicate(raw_digest):
+        return time.monotonic() - t0
 
     # PNG 直通路径：源已是 PNG 且不需要 alpha 处理 → 直接字节拷贝。
     # booru 下来的图绝大多数都走这一支，省掉整段 decode + re-encode。
@@ -207,6 +258,7 @@ def _write_image_entry(
         if verdict is False:
             target = _unique_target(dest_dir, src_name)
             target.write_bytes(raw)
+            hashes.add(raw_digest)
             result.added.append(target.name)
             return time.monotonic() - t0
         # verdict is True or None：fall through 到慢路径
@@ -241,11 +293,19 @@ def _write_image_entry(
     # 不带 optimize=True：原版每条扫描线试 5 种 filter + zlib level 9，4K 图
     # 1.5-2s/张；默认 compress_level=6 + 不试 filter ~200ms/张，体积差 5-15% 但
     # 对临时落盘可忽略（preprocess 还会再裁剪 / 放缩）
-    img.save(target, "PNG")
+    output = BytesIO()
+    img.save(output, "PNG")
+    encoded = output.getvalue()
+    digest = hashlib.sha256(encoded).digest()
+    if duplicate(digest):
+        return time.monotonic() - t0
+    target.write_bytes(encoded)
+    hashes.update((raw_digest, digest))
     result.added.append(target.name)
     return time.monotonic() - t0
 
 
+@_serialized_import
 def accept_one(
     src_name: str,
     src_stream: BinaryIO,
@@ -254,6 +314,7 @@ def accept_one(
     convert_to_png: bool = False,
     remove_alpha_channel: bool = False,
     on_log: Optional[LogFn] = None,
+    _hashes: Optional[set[bytes]] = None,
 ) -> UploadResult:
     """处理单个上传文件。
 
@@ -273,6 +334,7 @@ def accept_one(
         return result
 
     dest_dir.mkdir(parents=True, exist_ok=True)
+    hashes = _existing_hashes(dest_dir) if _hashes is None else _hashes
 
     if suffix in ALLOWED_IMAGE_EXTS:
         _write_image_entry(
@@ -281,6 +343,7 @@ def accept_one(
             remove_alpha_channel=remove_alpha_channel,
             report_name=base,
             result=result,
+            hashes=hashes,
         )
         return result
 
@@ -316,6 +379,7 @@ def accept_one(
                             remove_alpha_channel=remove_alpha_channel,
                             report_name=label,
                             result=result,
+                            hashes=hashes,
                         )
                     processed += 1
                     # 节流：每 N 张 / 每 K 秒 / 慢图 (>1s) 都触发一行
@@ -352,6 +416,7 @@ def accept_one(
     return result
 
 
+@_serialized_import
 def accept_many(
     files: Iterable[tuple[str, BinaryIO]],
     dest_dir: Path,
@@ -367,6 +432,7 @@ def accept_many(
     """
     log = on_log or (lambda _s: None)
     files_list = list(files)
+    hashes = _existing_hashes(dest_dir)
     out = UploadResult()
     t_all = time.monotonic()
     log(f"[upload] starting: {len(files_list)} file(s)")
@@ -377,6 +443,7 @@ def accept_many(
                 convert_to_png=convert_to_png,
                 remove_alpha_channel=remove_alpha_channel,
                 on_log=on_log,
+                _hashes=hashes,
             )
         )
     elapsed = time.monotonic() - t_all
