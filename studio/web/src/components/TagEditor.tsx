@@ -361,27 +361,30 @@ export default function TagEditor({
   }, [mode, selectedTags, tagsJoined])
 
   const addTag = (raw: string) => {
-    const t = raw.trim().replace(/^[,，]+|[,，]+$/g, '')
-    if (!t) return
-    if (tags.includes(t)) {
-      if (inactiveTags.has(t)) {
-        const nextInactive = new Set(inactiveTags)
-        nextInactive.delete(t)
-        onChange(tags, nextInactive)
+    const incoming = parseLine(raw)
+    if (!incoming.length) return
+    const nextTags = [...tags]
+    const seen = new Set(tags)
+    const nextInactive = new Set(inactiveTags)
+    for (const tag of incoming) {
+      if (!seen.has(tag)) {
+        seen.add(tag)
+        nextTags.push(tag)
       }
-      setDraft('')
-      return
+      nextInactive.delete(tag)
     }
-    // 加到末尾：跟 chip 拖拽重排的心智一致（新东西落在底部，用户拖到想要的位置）
-    onChange([...tags, t], inactiveTags)
+    if (!tagsEqual(nextTags, tags) || nextInactive.size !== inactiveTags.size) {
+      onChange(nextTags, nextInactive)
+    }
     setDraft('')
   }
 
-  // chip 模式 input：draft 整体当一个 token；选中候选直接 addTag。
+  // Single-tag drafts use completion; a pasted list is parsed like text mode.
   const draftSuggest = useTagSuggest({
     value: draft,
     inputRef: draftInputRef,
     wholeAsToken: true,
+    disabled: /[,，\n]/.test(draft),
     onPick: ({ suggestion }) => { addTag(suggestion.tag) },
   })
 
@@ -645,6 +648,7 @@ export default function TagEditor({
                       value={draft}
                       onChange={(e) => { setDraft(e.target.value); draftSuggest.notifyChange() }}
                       onKeyDown={(e) => {
+                        if (e.nativeEvent.isComposing || e.keyCode === 229) return
                         if (draftSuggest.handleKeyDown(e)) return
                         if (e.key === 'Enter' || e.key === ',' || e.key === '，') {
                           e.preventDefault(); addTag(draft)

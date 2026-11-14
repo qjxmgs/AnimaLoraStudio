@@ -388,6 +388,40 @@ describe('TagEditor (PP4 chip mode)', () => {
     expect(screen.queryByDisplayValue('stale from image a')).not.toBeInTheDocument()
   })
 
+  it('splits a pasted list immediately, deduplicates, and reactivates existing tags', () => {
+    const onChange = vi.fn()
+    function Harness() {
+      const [tags, setTags] = useState(['existing', 'blue eyes'])
+      const [inactive, setInactive] = useState<ReadonlySet<string>>(new Set(['blue eyes']))
+      return <TagEditor tags={tags} inactiveTags={inactive} onChange={(next, hidden) => {
+        onChange(next, hidden)
+        setTags(next)
+        setInactive(hidden)
+      }} />
+    }
+    const { container } = render(<Harness />)
+    const input = screen.getByPlaceholderText(/添加标签/)
+    fireEvent.change(input, { target: { value: 'existing, blue eyes，long hair, long hair, solo, , ' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(onChange).toHaveBeenCalledTimes(1)
+    expect(onChange).toHaveBeenCalledWith(['existing', 'blue eyes', 'long hair', 'solo'], new Set())
+    expect(Array.from(container.querySelectorAll('[data-tag-chip]'), chip => chip.getAttribute('data-tag-chip')))
+      .toEqual(['existing', 'blue eyes', 'long hair', 'solo'])
+    expect(input).toHaveValue('')
+  })
+
+  it('does not submit tags while confirming IME composition', () => {
+    const onChange = vi.fn()
+    render(<TagEditor tags={[]} onChange={onChange} />)
+    const input = screen.getByPlaceholderText(/添加标签/)
+    fireEvent.change(input, { target: { value: '长发，蓝眼' } })
+    fireEvent.keyDown(input, { key: 'Enter', isComposing: true })
+    expect(onChange).not.toHaveBeenCalled()
+    expect(input).toHaveValue('长发，蓝眼')
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(onChange).toHaveBeenCalledWith(['长发', '蓝眼'], new Set())
+  })
+
   it('Enter adds a tag at the end (chip 拖拽心智 — 新东西落底部)', async () => {
     const user = userEvent.setup()
     const onChange = vi.fn()
