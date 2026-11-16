@@ -2178,6 +2178,9 @@
     "exportBundleAtLeastOne": "至少选择一项导出内容"
   },
   "tagEdit": {
+    "copyAll": "批量复制",
+    "copyAllHint": "复制当前版本全部图片的提示词（包含未保存的编辑）",
+    "copyAllSuccess": "已复制 {{n}} 张图片的提示词",
     "title": "标签编辑",
     "subtitle": "批量编辑标签 · 暂存本地 · 保存后写盘",
     "workspaceLabel": "可调整宽度的图片与标签编辑工作区",

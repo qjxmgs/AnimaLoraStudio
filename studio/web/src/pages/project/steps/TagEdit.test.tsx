@@ -255,8 +255,8 @@ vi.mock('../../../components/TagEditor', async (importOriginal) => {
   }
 })
 vi.mock('../../../components/BulkActionBar', () => ({
-  default: ({ selectedKeys }: { selectedKeys: string[] }) => (
-    <div data-testid="bulk-selection">{selectedKeys.length}</div>
+  default: ({ selectedKeys, onCopyAll }: { selectedKeys: string[]; onCopyAll: () => void }) => (
+    <div data-testid="bulk-selection">{selectedKeys.length}<button onClick={onCopyAll}>批量复制</button></div>
   ),
 }))
 vi.mock('../../../components/TagStatsPanel', async (importOriginal) => {
@@ -355,6 +355,15 @@ beforeEach(() => {
 })
 
 describe('TagEdit workspace', () => {
+  it('copies every image caption with filenames and blank separators without requiring selection', async () => {
+    const user = userEvent.setup()
+    const write = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue()
+    renderPage()
+    await ready()
+    await user.click(screen.getByRole('button', { name: '批量复制' }))
+    expect(write).toHaveBeenCalledWith('a1\ncat\n\na2\ndog\n\nb1\ncat')
+  })
+
   it('remembers the tag distribution view when entering another project', async () => {
     mocks.realTagStats = true
     const user = userEvent.setup()

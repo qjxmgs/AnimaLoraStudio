@@ -2178,6 +2178,9 @@
     "exportBundleAtLeastOne": "Select at least one item to export"
   },
   "tagEdit": {
+    "copyAll": "Copy all",
+    "copyAllHint": "Copy prompts for all images in this version, including unsaved edits",
+    "copyAllSuccess": "Copied prompts for {{n}} images",
     "title": "Tag edit",
     "subtitle": "Batch edit tags · stage locally · write on save",
     "workspaceLabel": "Resizable image and tag editing workspace",

@@ -26,6 +26,9 @@ interface Props {
   onApply: (updates: Map<string, string[]>) => void
   tagSuggestions?: string[]
   /** 用来给"未选时"的 hint 显示总数。 */
+  onCopyAll?: () => void
+  copying?: boolean
+  copyDisabled?: boolean
   totalCount: number
 }
 
@@ -47,6 +50,9 @@ export default function BulkActionBar({
   onApply,
   tagSuggestions = [],
   totalCount,
+  onCopyAll,
+  copying = false,
+  copyDisabled = false,
 }: Props) {
   const { t } = useTranslation()
   const { toast } = useToast()
@@ -178,6 +184,12 @@ export default function BulkActionBar({
           {t('bulkAction.selectedTotal', { n: selectedKeys.length, total: totalCount })}
         </span>
         <span className="flex-1" />
+        {onCopyAll && (
+          <Button variant="ghost" size="sm" onClick={onCopyAll} loading={copying}
+            disabled={copyDisabled || copying} title={t('tagEdit.copyAllHint')}>
+            {t('tagEdit.copyAll')}
+          </Button>
+        )}
         <Button
           variant="ghost"
           size="sm"

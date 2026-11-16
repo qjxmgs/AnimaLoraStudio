@@ -190,6 +190,7 @@ export default function TagEditPage() {
   const versionId = activeVersion?.id ?? null
   const revealImage = useTrainImageReveal(project.id, versionId)
 
+  const [copying, setCopying] = useState(false)
   const [cache, setCache] = useState<Map<string, string[]>>(new Map())
   const [pendingTagDrafts, setPendingTagDrafts] = useState<Map<string, PendingTagDraft>>(new Map())
   const dirtyRef = useRef(false)
@@ -261,6 +262,24 @@ export default function TagEditPage() {
     if (gridPct !== boundedGridPct) setGridPct(boundedGridPct)
     if (sidePct !== boundedSidePct) setSidePct(boundedSidePct)
   }, [boundedGridPct, boundedSidePct, gridPct, setGridPct, setSidePct, sidePct])
+
+  const copyAllCaptions = async () => {
+    if (copying || isLoading || !keys.length) return
+    setCopying(true)
+    try {
+      const text = keys.map((key) => {
+        const name = (meta.get(key)?.name ?? key).replace(/\.[^.]+$/, '')
+        const prompt = (cache.get(key) ?? []).join(', ')
+        return `${name}\n${prompt}`
+      }).join('\n\n')
+      await navigator.clipboard.writeText(text)
+      toast(t('tagEdit.copyAllSuccess', { n: keys.length }), 'success')
+    } catch {
+      toast(t('logView.copyFailed'), 'error')
+    } finally {
+      setCopying(false)
+    }
+  }
 
   const gridMax = 100 - boundedSidePct - TAG_EDIT_PREVIEW_MIN
   const sideMax = 100 - boundedGridPct - TAG_EDIT_PREVIEW_MIN
@@ -1544,6 +1563,9 @@ export default function TagEditPage() {
             // 兼快捷单 tag 操作区。两者共享"操作 = 给当前选中图做"的语义。
             <Card as="section" radius="compact" className="flex-1 min-h-0 flex flex-col overflow-hidden">
               <BulkActionBar
+                onCopyAll={() => void copyAllCaptions()}
+                copying={copying}
+                copyDisabled={isLoading || !keys.length}
                 cache={cache}
                 selectedKeys={selectedKeys}
                 onApply={applyBulkUpdates}
