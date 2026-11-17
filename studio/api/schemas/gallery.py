@@ -16,6 +16,8 @@ class GalleryItem(BaseModel):
     width: int = Field(gt=0)
     height: int = Field(gt=0)
     tags: list[str]
+    tag_groups: dict[str, list[str]] = Field(default_factory=dict)
+    created_at: str = ""
     thumbnail_url: str
     image_url: str
 

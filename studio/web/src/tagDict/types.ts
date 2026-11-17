@@ -14,7 +14,7 @@ export interface TagDictMeta {
 
 export interface TagDictPayload {
   entries: Record<string, string[]>
-  /** Optional source metadata: 3 = copyright, 4 = character. */
+  /** Optional Booru categories: 0 general, 1 artist, 3 copyright, 4 character, 5 meta. */
   categories?: Record<string, number>
   /** tag 的文件原始行序（默认源 = post_count 降序）。JS 对象会把整数型 key
    * （"69"、年份等）重排到最前，entries 自身的 key 序不可靠。旧后端可能缺省。 */
@@ -29,6 +29,7 @@ export interface TagDictMetaResponse {
 
 /** 单条 autocomplete 候选；UI 渲染 `${tag}  ${zh.join(' ')}`。 */
 export interface TagSuggestion {
+  query?: string
   tag: string
   zh: string[]
   matchType: 'prefix' | 'substring' | 'fuzzy'

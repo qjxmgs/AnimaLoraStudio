@@ -179,12 +179,12 @@ def _identity_categories(path: str, mtime_ns: int, size: int) -> dict[str, int]:
     """Read identity metadata from the retained source, including older installs.
 
     File stat arguments invalidate the cache when the dictionary is replaced.
-    General tags need separate semantic rules; only copyright/character are used.
+    Expose all known Booru categories for autocomplete styling.
     """
     conn = sqlite3.connect(f"{Path(path).as_uri()}?mode=ro", uri=True)
     try:
         rows = conn.execute(
-            "SELECT name, category FROM tags WHERE category IN (3, 4)"
+            "SELECT name, category FROM tags WHERE category IN (0, 1, 3, 4, 5)"
         ).fetchall()
     finally:
         conn.close()

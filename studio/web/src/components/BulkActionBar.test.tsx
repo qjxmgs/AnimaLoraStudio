@@ -166,7 +166,7 @@ describe('BulkActionBar (with confirm modal)', () => {
 
     await user.type(screen.getByLabelText('要添加的 tag'), 'ho')
     const listbox = await screen.findByRole('listbox')
-    const options = Array.from(listbox.querySelectorAll('li')).map((item) => item.textContent)
+    const options = Array.from(listbox.querySelectorAll('li')).map((item) => item.getAttribute('aria-label')?.trim())
 
     expect(options).toHaveLength(50)
     expect(options.slice(0, 30)).toEqual(prefix.slice(0, 30))
@@ -179,13 +179,13 @@ describe('BulkActionBar (with confirm modal)', () => {
 
     const input = screen.getByLabelText('要添加的 tag')
     await user.type(input, 'ho')
-    await user.click(await screen.findByText('hair ornament'))
+    await user.click(await screen.findByRole('option', { name: /hair ornament/ }))
 
     expect(input).toHaveValue('hair ornament')
     expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
   })
 
-  it('debounces dataset matching for 40 ms and hides stale candidates immediately', () => {
+  it('debounces dataset matching for 40 ms and disables stale candidates immediately', () => {
     vi.useFakeTimers()
     try {
       renderBar({ tagSuggestions: ['holding hands', 'hair ornament'] })
@@ -198,7 +198,8 @@ describe('BulkActionBar (with confirm modal)', () => {
       expect(screen.getByRole('listbox')).toBeInTheDocument()
 
       fireEvent.change(input, { target: { value: 'hx' } })
-      expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
+      expect(screen.getByRole('listbox')).toHaveAttribute('aria-busy', 'true')
+      for (const option of screen.getAllByRole('option')) expect(option).toHaveAttribute('aria-disabled', 'true')
     } finally {
       vi.clearAllTimers()
       vi.useRealTimers()

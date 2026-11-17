@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import './Download.css'
+import { useTagSuggest } from '../../../components/tagSuggest/useTagSuggest'
+import { TagSuggestList } from '../../../components/tagSuggest/TagSuggestList'
+import { TranslatedTag } from '../../../components/tagDisplay/TranslatedTag'
+import { tagChipStyle } from '../../../components/tagDisplay/tagChipStyle'
 import { useTranslation } from 'react-i18next'
 import { useOutletContext } from 'react-router-dom'
 import {
@@ -65,6 +69,8 @@ export default function DownloadPage() {
   const [remotePreview, setRemotePreview] = useState<number | null>(null)
   const [activeTab, setActiveTab] = useState<'query' | 'local'>('query')
   const [queryError, setQueryError] = useState<string | null>(null)
+  const [hoverInfo, setHoverInfo] = useState<{ item: Preview['items'][number]; rect: DOMRect } | null>(null)
+  const hideHover = () => setHoverInfo(null)
   const queryEpoch = useRef(0)
   const remoteScroll = useRef<HTMLDivElement>(null)
   const loadSentinel = useRef<HTMLDivElement>(null)
@@ -155,6 +161,7 @@ export default function DownloadPage() {
   useEffect(() => {
     queryEpoch.current += 1
     setEstimate(null)
+    setHoverInfo(null)
     setRemoteSelected(new Set())
     setRemoteAnchor(null)
     setRemotePreview(null)
@@ -352,12 +359,17 @@ export default function DownloadPage() {
 
             </div>
             {queryError && <Alert tone="danger" size="sm" role="alert">{queryError}</Alert>}
-            <div className="download-remote-scroll" ref={remoteScroll}>
+            <div className="download-remote-scroll" ref={remoteScroll} onScroll={() => setHoverInfo(null)}>
               {!estimate && <div className="download-query-empty">{booruAction === 'estimate' ? t('download.querying') : t('download.previewHint')}</div>}
               {estimate && !estimate.items.length && <div className="download-query-empty">{t('download.noPreviewResults')}</div>}
               <div className="download-remote-grid">
                 {estimate?.items.map((item, index) => (
-                  <article key={item.post_id} className={`download-remote-card${remoteSelected.has(item.post_id) ? ' is-selected' : ''}`}>
+                  <article key={item.post_id}
+                    onMouseEnter={event => { setHoverInfo({ item, rect: event.currentTarget.getBoundingClientRect() }) }}
+                    onMouseLeave={hideHover}
+                    onFocus={event => { setHoverInfo({ item, rect: event.currentTarget.getBoundingClientRect() }) }}
+                    onBlur={hideHover}
+                    className={`download-remote-card${remoteSelected.has(item.post_id) ? ' is-selected' : ''}`}>
                     <button type="button" className="download-remote-select" aria-pressed={remoteSelected.has(item.post_id)}
                       aria-label={t('download.selectImage', { id: item.post_id })} disabled={booruAction !== null}
                       onClick={(event) => {
@@ -486,6 +498,8 @@ export default function DownloadPage() {
       </div>
     </div>
 
+    {hoverInfo && <DownloadTagPopover item={hoverInfo.item} rect={hoverInfo.rect}
+      onClose={() => setHoverInfo(null)} />}
     {remotePreview !== null && estimate?.items[remotePreview] && (
       <ImagePreviewModal
         src={"/api/gallery/image?" + new URLSearchParams({ source: estimate.api_source, post_id: estimate.items[remotePreview].post_id, url: estimate.items[remotePreview].image_url })}
@@ -654,6 +668,21 @@ function BooruPanel({ tag, setTag, apiSource, setApiSource, estimate, action, is
   onEstimate, useOriginalTags, setUseOriginalTags, tagCategories, setTagCategories }: BooruPanelProps) {
   const { t } = useTranslation()
   const disabled = action !== null || isLive
+  const queryInput = useRef<HTMLInputElement>(null)
+  const suggest = useTagSuggest({
+    value: tag, inputRef: queryInput, tokenMode: 'whitespace', disabled,
+    onPick: ({ suggestion, range }) => {
+      const before = tag.slice(0, range.start)
+      const modifier = tag.slice(range.start, range.end).match(/^[-~]/)?.[0] ?? ''
+      const picked = modifier + suggestion.tag.replace(/\s+/g, '_')
+      const after = tag.slice(range.end).replace(/^\s+/, '')
+      setTag(`${before}${picked} ${after}`)
+      requestAnimationFrame(() => {
+        queryInput.current?.focus()
+        queryInput.current?.setSelectionRange(before.length + picked.length + 1, before.length + picked.length + 1)
+      })
+    },
+  })
   return (
     <form className="download-query-form" aria-label={t('download.booruFormLabel')}
       onSubmit={(event) => { event.preventDefault(); if (tag.trim() && !disabled) onEstimate() }}>
@@ -664,7 +693,16 @@ function BooruPanel({ tag, setTag, apiSource, setApiSource, estimate, action, is
         <option value="gelbooru">Gelbooru</option>
       </Select>
       <label htmlFor="download-query">{t('download.tagLabel')}</label>
-      <Input id="download-query" value={tag} disabled={disabled} onChange={(event) => setTag(event.target.value)} placeholder={t('download.tagPlaceholder')} />
+      <Input id="download-query" ref={queryInput} value={tag} disabled={disabled}
+        autoComplete="off" aria-autocomplete="list" aria-controls={suggest.open ? 'download-query-suggestions' : undefined}
+        onChange={(event) => { setTag(event.target.value); suggest.notifyChange() }}
+        onKeyDown={(event) => { if (!event.nativeEvent.isComposing) suggest.handleKeyDown(event) }}
+        onClick={suggest.notifyClick} onBlur={suggest.notifyBlur}
+        placeholder={t('download.tagPlaceholder')} />
+      <TagSuggestList compactStacked id="download-query-suggestions" inputRef={queryInput}
+        open={suggest.open} pending={suggest.pending} suggestions={suggest.suggestions}
+        activeIdx={suggest.activeIdx} onHover={suggest.setActiveIdx}
+        onPick={item => suggest.pickAt(suggest.suggestions.indexOf(item))} />
       <Button type="submit" variant="primary" loading={action === 'estimate'} disabled={disabled || !tag.trim()}>
         {action === 'estimate' ? t('download.querying') : t('download.query')}
       </Button>
@@ -993,3 +1031,43 @@ function UploadResultStrip({
   )
 }
 
+
+function DownloadTagPopover({ item, rect, onClose }: {
+  item: Preview['items'][number]; rect: DOMRect; onClose: () => void
+}) {
+  const { t } = useTranslation()
+  const panel = useRef<HTMLDivElement>(null)
+  const [position, setPosition] = useState({ left: 0, top: 0, ready: false })
+  useEffect(() => {
+    const update = () => {
+      const width = panel.current?.offsetWidth ?? 500
+      const height = panel.current?.offsetHeight ?? 400
+      const right = rect.right + 10
+      const left = right + width <= window.innerWidth - 10 ? right : rect.left - width - 10
+      setPosition({ left: Math.max(10, Math.min(left, window.innerWidth - width - 10)),
+        top: Math.max(10, Math.min(rect.top, window.innerHeight - height - 10)), ready: true })
+    }
+    const observer = new ResizeObserver(update)
+    if (panel.current) observer.observe(panel.current)
+    update()
+    window.addEventListener('resize', onClose)
+    const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose() }
+    window.addEventListener('keydown', escape)
+    return () => { observer.disconnect(); window.removeEventListener('resize', onClose); window.removeEventListener('keydown', escape) }
+  }, [rect, onClose])
+  const groups = item.tag_groups ?? { general: item.tags }
+  return createPortal(<div ref={panel} className="download-tag-popover" role="tooltip"
+    style={{ left: position.left, top: position.top, visibility: position.ready ? 'visible' : 'hidden' }}
+    >
+    <strong>{t('download.imageDetails')}</strong>
+    {item.created_at && <p>{t('download.uploadedAt')} {item.created_at}</p>}
+    <p>{t('download.imageResolution')} {item.width} × {item.height}</p>
+    {Object.entries(groups).map(([category, tags]) => tags.length > 0 && <section key={category}>
+      <h3>{t(`download.tagCategory.${category}`)}</h3>
+      <div className="download-hover-tags">{tags.map((tag, index) => <span key={`${tag}-${index}`} style={tagChipStyle(index % 8, false)}>
+        <TranslatedTag tag={tag} layout="stacked" missingTranslation="-" translationClassName="text-current opacity-70" />
+      </span>)}</div>
+    </section>)}
+    {!Object.values(groups).some(tags => tags.length) && <p>{t('download.noImageTags')}</p>}
+  </div>, document.body)
+}

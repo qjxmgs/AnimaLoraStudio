@@ -2263,6 +2263,10 @@
     "customTagsSaveFailed": "常驻标签保存失败：{{error}}"
   },
   "download": {
+    "imageDetails": "详细信息",
+    "uploadedAt": "上传时间：",
+    "imageResolution": "分辨率：",
+    "noImageTags": "暂无标签",
     "allLoaded": "已加载全部结果",
     "workspaceTabs": "素材工作区",
     "queryResults": "查询结果",
@@ -2280,7 +2284,7 @@
     "downloadSelected": "下载选中 {{n}} 张",
     "pageLoaded": "已加载 {{n}} 张图片",
     "noTagsHint": "关闭后仅下载图片，不写入标签",
-    "tagCategory": {"artist": "画师", "copyright": "版权", "character": "角色", "general": "普通", "meta": "元数据"},
+    "tagCategory": {"regular": "常规", "artist": "画师", "copyright": "版权", "character": "角色", "general": "普通", "meta": "元数据"},
     "useOriginalTags": "使用原图标签",
     "useOriginalTagsHint": "每次下载覆盖对应图片的本地提示词，包括已下载的图片",
     "dropHint": "将图片或 ZIP 拖入此窗口，松手即可导入",

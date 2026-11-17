@@ -2263,6 +2263,10 @@
     "customTagsSaveFailed": "Could not save project quick tags: {{error}}"
   },
   "download": {
+    "imageDetails": "Image details",
+    "uploadedAt": "Uploaded:",
+    "imageResolution": "Resolution:",
+    "noImageTags": "No tags available",
     "allLoaded": "All results loaded",
     "workspaceTabs": "Dataset workspace",
     "queryResults": "Query results",
@@ -2280,7 +2284,7 @@
     "downloadSelected": "Download {{n}} selected",
     "pageLoaded": "{{n}} images loaded",
     "noTagsHint": "When off, download images without writing tags",
-    "tagCategory": {"artist": "Artist", "copyright": "Copyright", "character": "Character", "general": "General", "meta": "Metadata"},
+    "tagCategory": {"regular": "General", "artist": "Artist", "copyright": "Copyright", "character": "Character", "general": "General", "meta": "Metadata"},
     "useOriginalTags": "Use original tags",
     "useOriginalTagsHint": "Overwrite local captions with website tags, including already downloaded images",
     "dropHint": "Drop images or ZIP files anywhere in this window to import automatically",

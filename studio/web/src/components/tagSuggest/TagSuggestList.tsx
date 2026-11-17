@@ -7,6 +7,9 @@ import { useLayoutEffect, useRef, useState } from 'react'
 import type { RefObject } from 'react'
 import { createPortal } from 'react-dom'
 
+import { useTranslation } from 'react-i18next'
+import { useTagDict } from '../../tagDict/store'
+import { extractWhitespaceToken } from '../../tagDict/suggest'
 import type { TagSuggestion } from '../../tagDict/types'
 
 const VIEWPORT_MARGIN = 8
@@ -24,6 +27,7 @@ interface Props {
   inputRef: RefObject<HTMLInputElement | HTMLTextAreaElement | null>
   /** 可选 DOM id，供输入框 aria-controls 关联。 */
   id?: string
+  compactStacked?: boolean
 }
 
 interface Position {
@@ -34,8 +38,12 @@ interface Position {
 }
 
 export function TagSuggestList({
-  open, pending, suggestions, activeIdx, onPick, onHover, inputRef, id,
+  open, pending, suggestions, activeIdx, onPick, onHover, inputRef, id, compactStacked = true,
 }: Props) {
+  const { t } = useTranslation()
+  const dict = useTagDict()
+  const query = compactStacked && inputRef.current
+    ? extractWhitespaceToken(inputRef.current.value, inputRef.current.selectionStart ?? inputRef.current.value.length).token : ''
   const [pos, setPos] = useState<Position | null>(null)
   const listRef = useRef<HTMLUListElement>(null)
   const lastSuggestionsRef = useRef<readonly TagSuggestion[]>([])
@@ -67,7 +75,7 @@ export function TagSuggestList({
       )
       const next: Position = {
         left: Math.max(VIEWPORT_MARGIN, Math.min(rect.left, maxLeft)),
-        maxHeight: Math.max(1, Math.min(MAX_POPOVER_HEIGHT, availableHeight)),
+        maxHeight: Math.max(1, availableHeight),
         ...(flipUp
           ? { bottom: window.innerHeight - rect.top + ANCHOR_GAP }
           : { top: rect.bottom + ANCHOR_GAP }),
@@ -111,7 +119,7 @@ export function TagSuggestList({
     <ul
       ref={listRef}
       id={id}
-      className="bg-elevated border border-subtle rounded-sm shadow-lg max-h-[260px] overflow-y-auto min-w-[220px] list-none p-1 m-0"
+      className="bg-elevated border border-subtle shadow-lg overflow-y-auto list-none p-1 m-0"
       role="listbox"
       aria-busy={pending || undefined}
       style={{
@@ -120,7 +128,10 @@ export function TagSuggestList({
         bottom: pos.bottom,
         left: pos.left,
         maxHeight: pos.maxHeight,
-        maxWidth: 'calc(100vw - 16px)',
+        height: pos.maxHeight,
+        borderRadius: 10,
+        maxWidth: `calc(100vw - ${pos.left + VIEWPORT_MARGIN}px)`,
+        ...(compactStacked ? { width: 'max-content', minWidth: 0, right: 'auto' } : {}),
         zIndex: 1000,
       }}
     >
@@ -129,6 +140,7 @@ export function TagSuggestList({
           id={id ? `${id}-option-${i}` : undefined}
           key={s.tag}
           role="option"
+          aria-label={`${s.tag} ${s.zh.join(" ")}`}
           aria-selected={i === activeIdx}
           aria-disabled={pending || undefined}
           onMouseEnter={() => { if (!pending) onHover(i) }}
@@ -138,17 +150,66 @@ export function TagSuggestList({
             if (!pending) onPick(s)
           }}
           className={
-            'px-2.5 py-1 text-xs font-mono cursor-pointer rounded-sm flex items-center gap-2 ' +
+            'px-2.5 py-1 font-mono cursor-pointer rounded-sm flex ' +
+            (compactStacked ? 'items-start justify-between gap-5 text-sm ' : 'items-center gap-2 text-xs ') +
             (i === activeIdx ? 'bg-overlay text-fg-primary' : 'text-fg-secondary hover:bg-overlay')
           }
         >
-          <span>{s.tag}</span>
-          {s.zh.length > 0 && (
-            <span className="text-fg-tertiary truncate">{s.zh.join(' ')}</span>
-          )}
+          <span style={{ minWidth: 0, maxWidth: '100%' }}>
+            <span style={compactStacked ? { display: 'block', overflowWrap: 'anywhere', fontWeight: 600,
+              color: categoryStyle(dict.categories?.get(s.tag)).color } : undefined}>
+              {compactStacked ? highlightMatch(s.tag, s.query ?? query) : s.tag}
+            </span>
+            {s.zh.length > 0 && <span className={compactStacked ? "text-xs font-sans" : "text-fg-tertiary truncate"}
+              style={compactStacked ? { display: 'block', marginTop: 2, color: '#8b929e', overflowWrap: 'anywhere' } : undefined}>
+              {compactStacked ? highlightMatch(s.zh.join(' '), s.query ?? query) : s.zh.join(' ')}
+            </span>}
+          </span>
+          {compactStacked && <span className="text-xs font-sans" style={{ color: categoryStyle(dict.categories?.get(s.tag)).color, whiteSpace: 'nowrap', alignSelf: 'center' }}>
+            ● {t(`download.tagCategory.${categoryStyle(dict.categories?.get(s.tag)).key}`, { defaultValue: '常规' })}
+          </span>}
+
         </li>
       ))}
     </ul>,
     document.body,
   )
+}
+
+function categoryStyle(category?: number) {
+  switch (category) {
+    case 0: return { color: '#589bea', key: 'regular' }
+    case 1: return { color: '#e6818c', key: 'artist' }
+    case 3: return { color: '#b68ae5', key: 'copyright' }
+    case 4: return { color: '#58b989', key: 'character' }
+    case 5: return { color: '#d59d49', key: 'meta' }
+    default: return { color: '#589bea', key: 'regular' }
+  }
+}
+
+/** Match compact English tokens while preserving the displayed spacing. */
+function highlightMatch(text: string, query: string) {
+  const needle = query.toLowerCase().replace(/[\s_]/g, '')
+  if (!needle) return text
+  const indices: number[] = []
+  let normalized = ''
+  for (let i = 0; i < text.length; i++) {
+    if (!/[\s_]/.test(text[i])) { normalized += text[i].toLowerCase(); indices.push(i) }
+  }
+  const matched = new Set<number>()
+  let start = normalized.indexOf(needle)
+  if (start >= 0) {
+    while (start >= 0) {
+      for (let j = start; j < start + needle.length; j++) matched.add(indices[j])
+      start = normalized.indexOf(needle, start + needle.length)
+    }
+  } else {
+    let j = 0
+    for (let i = 0; i < normalized.length && j < needle.length; i++) {
+      if (normalized[i] === needle[j]) { matched.add(indices[i]); j++ }
+    }
+    if (j !== needle.length) return text
+  }
+  return Array.from(text).map((char, i) => matched.has(i)
+    ? <span key={i} style={{ color: '#ef4444', fontWeight: 700 }}>{char}</span> : char)
 }

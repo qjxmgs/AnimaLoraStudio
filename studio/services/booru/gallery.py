@@ -223,7 +223,11 @@ def _normalize_post(post: dict[str, Any], source: GallerySource) -> dict[str, An
         "post_id": post_id,
         "width": width,
         "height": height,
-        "tags": booru_api.post_tag_list(post, source)[:200],
+        "tags": booru_api.post_tag_list(post, source),
+        "tag_groups": ({category: str(post.get(f"tag_string_{category}") or "").split()
+                        for category in ("artist", "copyright", "character", "general", "meta")}
+                       if source == "danbooru" else {"general": booru_api.post_tag_list(post, source)}),
+        "created_at": str(_post_value(post, source, "created_at") or ""),
         "thumbnail_url": f"/api/gallery/image?{proxy_query}",
         "image_url": tag_url,
     }

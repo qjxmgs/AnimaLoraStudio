@@ -63,7 +63,7 @@ describe('TagSuggestList input anchoring', () => {
   it('stays aligned to the input while pending and replaces candidates in place', () => {
     const { rerender, inputRef, getRect, onPick, onHover } = renderSuggestList()
     const list = screen.getByRole('listbox')
-    expect(list).toHaveStyle({ left: '120px', top: '136px', maxHeight: '260px' })
+    expect(list).toHaveStyle({ left: '120px', top: '136px', maxHeight: '624px' })
 
     rerender(
       <TagSuggestList
@@ -113,7 +113,7 @@ describe('TagSuggestList input anchoring', () => {
     expect(screen.getByRole('listbox')).toHaveStyle({
       left: '772px',
       bottom: '72px',
-      maxHeight: '260px',
+      maxHeight: '688px',
     })
   })
 
@@ -169,4 +169,21 @@ describe('TagSuggestList input anchoring', () => {
     )
     expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
   })
+})
+
+
+it('highlights matched text and retains compact two-line suggestions', () => {
+  const input = document.createElement('input')
+  input.value = 'hair'
+  input.setSelectionRange(4, 4)
+  input.getBoundingClientRect = () => rect(120, 100)
+  document.body.appendChild(input)
+  render(<TagSuggestList compactStacked open pending={false} suggestions={[LONG_HAIR]}
+    activeIdx={0} onPick={() => {}} onHover={() => {}} inputRef={{ current: input }} />)
+  const option = screen.getByRole('option')
+  const highlighted = Array.from(option.querySelectorAll('span')).filter(el => el.style.color === 'rgb(239, 68, 68)')
+  expect(highlighted.map(el => el.textContent).join('')).toBe('hair')
+  expect(screen.getByText('长发')).toHaveClass('text-xs')
+  expect(screen.getByRole('listbox')).toHaveStyle({ width: 'max-content', left: '120px' })
+  input.remove()
 })

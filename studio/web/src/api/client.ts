@@ -2369,6 +2369,8 @@ export type GalleryRating = 'general' | 'sensitive' | 'questionable' | 'explicit
 export type GalleryTagger = 'wd14' | 'cltagger' | 'llm'
 
 export interface GalleryItem {
+  tag_groups?: Record<string, string[]>
+  created_at?: string
   source: GallerySource
   post_id: string
   width: number

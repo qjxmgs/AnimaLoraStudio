@@ -1,3 +1,4 @@
+import { TagSuggestList } from './tagSuggest/TagSuggestList'
 import { useTagTopics } from '../tagDict/topics'
 import TopicLibraryLink from './TopicLibraryLink'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
@@ -7,7 +8,6 @@ import { Input } from './FormControl'
 import { SegmentedControl } from './SelectionGroup'
 import { useDialog } from './Dialog'
 import { useToast } from './Toast'
-import { TranslatedTag } from './tagDisplay/TranslatedTag'
 import { organizeTags } from '../tagDict/organize'
 import { useTagDict } from '../tagDict/store'
 import {
@@ -433,6 +433,9 @@ interface TagsFieldProps {
 function TagsField({ value, onChange, placeholder, suggestions, ariaLabel }: TagsFieldProps) {
   const [open, setOpen] = useState(false)
   const [debouncedTail, setDebouncedTail] = useState('')
+  const inputRef = useRef<HTMLInputElement>(null)
+  const dict = useTagDict()
+  const [activeIdx, setActiveIdx] = useState(0)
   const ref = useRef<HTMLDivElement>(null)
   const searchIndex = useMemo(() => buildTagSearchIndex(suggestions), [suggestions])
 
@@ -471,7 +474,15 @@ function TagsField({ value, onChange, placeholder, suggestions, ariaLabel }: Tag
     <div className="relative flex-1 min-w-24" ref={ref}>
       <Input
         value={value}
-        onChange={(e) => { onChange(e.target.value); setOpen(true) }}
+        onChange={(e) => { onChange(e.target.value); setActiveIdx(0); setOpen(true) }}
+        ref={inputRef}
+        onKeyDown={event => {
+          if (event.nativeEvent.isComposing || !open) return
+          if (event.key === "Escape") { event.preventDefault(); setOpen(false) }
+          if (!matches.length) return
+          if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); setActiveIdx((activeIdx + (event.key === "ArrowDown" ? 1 : matches.length - 1)) % matches.length) }
+          if (event.key === "Enter" || event.key === "Tab") { event.preventDefault(); pick(matches[Math.min(activeIdx, matches.length - 1)]) }
+        }}
         onFocus={() => setOpen(true)}
         onBlur={() => setOpen(false)}
         placeholder={placeholder}
@@ -480,22 +491,10 @@ function TagsField({ value, onChange, placeholder, suggestions, ariaLabel }: Tag
         mono
         className="w-full"
       />
-      {open && matches.length > 0 && (
-        <ul
-          className="absolute left-0 top-full mt-0.5 z-30 bg-elevated border border-subtle rounded-sm shadow-lg max-h-[180px] overflow-y-auto min-w-[200px] list-none p-1 m-0"
-          role="listbox"
-        >
-          {matches.map((s) => (
-            <li
-              key={s}
-              onMouseDown={(e) => { e.preventDefault(); pick(s) }}
-              className="px-2.5 py-1 text-xs font-mono text-fg-primary cursor-pointer hover:bg-overlay rounded-sm"
-            >
-              <TranslatedTag tag={s} />
-            </li>
-          ))}
-        </ul>
-      )}
+      <TagSuggestList open={open} pending={debouncedTail !== tail}
+        suggestions={matches.map(tag => ({ tag, zh: dict.entries.get(tag) ?? [], matchType: 'substring' as const, query: tail }))}
+        activeIdx={Math.min(activeIdx, Math.max(0, matches.length - 1))} onHover={setActiveIdx}
+        onPick={suggestion => pick(suggestion.tag)} inputRef={inputRef} />
     </div>
   )
 }

@@ -110,3 +110,20 @@
 .download-check > svg, .download-image-preview > svg { display: block; }
 
 .download-load-sentinel { min-height: 36px; display: flex; align-items: center; justify-content: center; padding: 12px; color: var(--fg-tertiary); font-size: 12px; }
+
+.download-tag-popover { position: fixed; z-index: 80; width: min(520px, calc(100vw - 20px)); max-height: calc(100vh - 20px); overflow-y: auto; background: var(--bg-surface); color: var(--fg-secondary); border: 1px solid var(--border-default); border-radius: 9px; box-shadow: 0 8px 30px #0004; padding: 12px; font-size: 12px; }
+.download-tag-popover p { margin: 5px 0; color: var(--fg-tertiary); }
+.download-tag-popover h3 { margin: 12px 0 5px; font-size: 12px; font-weight: 600; }
+.download-hover-tags { display: flex; flex-wrap: wrap; gap: 5px; }
+.download-hover-tags > span { border: 1px solid; border-radius: 5px; padding: 4px 8px; max-width: 100%; overflow-wrap: anywhere; }
+
+/* Static frosted overlay: no live backdrop sampling or blur compositing. */
+.download-tag-popover {
+  pointer-events: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  background-color: color-mix(in srgb, var(--bg-surface) 92%, transparent);
+  background-image: repeating-linear-gradient(135deg, #ffffff08 0, #ffffff08 1px, transparent 1px, transparent 3px),
+    linear-gradient(145deg, #ffffff14, #ffffff03 55%, #00000008);
+  box-shadow: inset 0 1px 0 #ffffff26, 0 8px 30px #0004;
+}

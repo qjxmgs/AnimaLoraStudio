@@ -113,7 +113,7 @@ export function useTagSuggest({
       entries: dict.entries,
       searchIndex: dict.searchIndex,
       reverse: dict.reverse,
-    })
+    }).map(suggestion => ({ ...suggestion, query: readyQuery.token }))
   }, [
     off, open, readyQuery, value,
     dict.status, dict.entries, dict.searchIndex, dict.reverse,

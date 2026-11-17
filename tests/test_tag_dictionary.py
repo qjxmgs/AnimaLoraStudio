@@ -369,7 +369,7 @@ def test_identity_categories_work_with_existing_dictionary_and_reload(
     # Older active.json has translations only; no re-download is needed.
     td._write_active(entries, {"kind": "default"})
     assert client.get("/api/tag-dictionary/data").json()["categories"] == {
-        "some work": 3, "some character": 4,
+        "some work": 3, "some character": 4, "blue eyes": 0,
     }
     td.SOURCE_SQLITE.write_bytes(_sqlite_bytes(tmp_path, [("blue_eyes", 4, "角色", 10)]))
     # Make cache invalidation deterministic even on coarse file systems.

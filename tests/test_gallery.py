@@ -134,6 +134,8 @@ def test_search_gallery_uses_credentials_and_normalizes(monkeypatch) -> None:
         "width": 1200,
         "height": 1800,
         "tags": ["1girl", "blue_hair", "alice"],
+        "created_at": "",
+        "tag_groups": {"artist": [], "copyright": [], "character": ["alice"], "general": ["1girl", "blue_hair"], "meta": []},
         "thumbnail_url": "/api/gallery/image?source=danbooru&post_id=42&url=https%3A%2F%2Fcdn.donmai.us%2Fpreview.jpg",
         "image_url": "https://cdn.donmai.us/sample.jpg",
     }

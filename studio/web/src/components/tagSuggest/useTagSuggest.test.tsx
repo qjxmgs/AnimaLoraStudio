@@ -93,7 +93,7 @@ describe('useTagSuggest 弹出规则', () => {
     render(<Harness />)
     await user.type(screen.getByRole('textbox'), 'sol')
     expect(await screen.findByRole('listbox')).toBeInTheDocument()
-    expect(screen.getByText('solo')).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: /solo/ })).toBeInTheDocument()
   })
 
   it('候选弹出后鼠标点击输入框（挪光标）→ 候选消失', async () => {
@@ -118,7 +118,7 @@ describe('useTagSuggest 弹出规则', () => {
     const user = userEvent.setup()
     render(<Harness />)
     await user.type(screen.getByRole('textbox'), 'sol')
-    const option = await screen.findByText('solo')
+    const option = await screen.findByRole('option', { name: /solo/ })
     await user.click(option)
     expect(screen.getByRole('textbox')).toHaveValue('solo')
     expect(screen.queryByRole('listbox')).toBeNull()
