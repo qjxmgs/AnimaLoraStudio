@@ -40,6 +40,8 @@ class DownloadOptions:
     tag: str
     count: int = 20
     api_source: str = "gelbooru"  # "gelbooru" | "danbooru"
+    use_original_tags: bool = True
+    tag_categories: list[str] | None = None
     save_tags: bool = False
     convert_to_png: bool = True
     remove_alpha_channel: bool = False
@@ -52,10 +54,19 @@ class DownloadOptions:
     api_key: str = ""
     # 全局排除 tag（搜索时自动追加 -tag）；来自 secrets.download.exclude_tags
     exclude_tags: list[str] = None  # type: ignore[assignment]
+    post_ids: list[str] | None = None
 
     def __post_init__(self) -> None:
         if self.exclude_tags is None:
             self.exclude_tags = []
+        if self.post_ids is not None:
+            if not self.post_ids or any(
+                not isinstance(value, str) or not value.isascii() or not value.isdigit()
+                for value in self.post_ids
+            ):
+                raise ValueError("post_ids must contain numeric post IDs")
+            self.post_ids = list(dict.fromkeys(self.post_ids))
+            self.count = len(self.post_ids)
 
     def base_url(self) -> str:
         return booru_api.default_base_url(self.api_source)
@@ -73,6 +84,16 @@ class DownloadOptions:
 # ---------------------------------------------------------------------------
 # main API
 # ---------------------------------------------------------------------------
+
+
+def _save_original_caption(image: Path, tags: Optional[str]) -> None:
+    """Replace the effective local caption with the complete website tags."""
+    from ..dataset.tagedit import write_tags
+
+    if tags is None:
+        return
+    values = list(dict.fromkeys(tag.replace('_', ' ') for tag in tags.split()))
+    write_tags(image, values)
 
 
 def download(
@@ -168,6 +189,11 @@ def _download_with_client(
     emit_state = {"n": 0}
 
     while saved < opts.count:
+        selected_id = None
+        if opts.post_ids is not None:
+            if page > len(opts.post_ids):
+                break
+            selected_id = opts.post_ids[page - 1]
         if cancel_event and cancel_event.is_set():
             on_progress(msg("booru.canceled"))
             return saved
@@ -175,20 +201,28 @@ def _download_with_client(
         try:
             posts = client.search_posts(
                 opts.api_source,
-                opts.effective_tag_query(),
-                page=page,
+                f"id:{selected_id}" if selected_id else opts.effective_tag_query(),
+                page=1 if selected_id else page,
                 limit=api_limit,
                 user_id=opts.user_id,
                 api_key=opts.api_key,
                 username=opts.username,
             )
         except requests.RequestException as exc:
+            if selected_id:
+                raise
             on_progress.warning(
                 "booru search failed: page=%d err=%s; stopping with %d images "
                 "saved", page, exc, saved,
             )
             return saved
-        if not posts:
+        if selected_id:
+            posts = [post for post in posts if booru_api.post_fields(post, opts.api_source)[0] == selected_id][:1]
+            if not posts or not booru_api.post_fields(posts[0], opts.api_source)[1]:
+                failed += 1
+                first_error = first_error or f"Post {selected_id} is unavailable"
+                on_progress.warning("Selected post %s is no longer downloadable; no replacement will be fetched", selected_id)
+        if not posts and selected_id is None:
             on_progress(msg("booru.no_more_posts"))
             break
 
@@ -201,12 +235,19 @@ def _download_with_client(
             post_id, file_url, file_ext, tags_str = booru_api.post_fields(
                 post, opts.api_source
             )
+            if opts.api_source == "danbooru" and opts.tag_categories is not None:
+                tags_str = " ".join(
+                    str(post.get(f"tag_string_{category}") or "")
+                    for category in opts.tag_categories
+                )
             if not post_id or not file_url:
                 continue
             page_valid += 1
             ext = "png" if opts.convert_to_png else file_ext
             target = dest_dir / f"{post_id}.{ext}"
             if opts.skip_existing and target.exists():
+                if opts.use_original_tags:
+                    _save_original_caption(target, tags_str)
                 skipped += 1
                 on_progress.debug(
                     "booru skip: file already exists name=%s", target.name,
@@ -279,7 +320,9 @@ def _download_with_client(
                     )
                 continue
             assert isinstance(final, Path)
-            if opts.save_tags and tags_str:
+            if opts.use_original_tags:
+                _save_original_caption(final, tags_str)
+            if opts.use_original_tags and opts.save_tags and tags_str:
                 final.with_suffix(".booru.txt").write_text(
                     str(tags_str), encoding="utf-8"
                 )
@@ -290,6 +333,9 @@ def _download_with_client(
             if saved >= opts.count:
                 break
 
+        if selected_id:
+            page += 1
+            continue
         if len(posts) < api_limit:
             on_progress(msg(
                 "booru.page_short_end", n=len(posts), limit=api_limit,

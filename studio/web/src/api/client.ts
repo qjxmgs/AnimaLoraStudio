@@ -2792,6 +2792,10 @@ export const api = {
     ),
 
   // Download / jobs (PP2) ------------------------------------------------
+  previewDownload: (pid: number, body: { tag: string; api_source: GallerySource; page: number }) =>
+    req<GallerySearchResponse & { tag: string; api_source: GallerySource; effective_query: string; exclude_tags: string[] }>(`/api/projects/${pid}/download/preview`, {
+      method: 'POST', body: JSON.stringify(body),
+    }),
   estimateDownload: (
     pid: number,
     body: { tag: string; api_source?: 'gelbooru' | 'danbooru' }
@@ -2808,7 +2812,7 @@ export const api = {
     }),
   startDownload: (
     pid: number,
-    body: { tag: string; count: number; api_source?: 'gelbooru' | 'danbooru' }
+    body: { tag: string; count: number; post_ids?: string[]; api_source?: 'gelbooru' | 'danbooru'; use_original_tags?: boolean; tag_categories?: string[] }
   ) =>
     req<Job>(`/api/projects/${pid}/download`, {
       method: 'POST',

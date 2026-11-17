@@ -178,7 +178,7 @@ def _credentials(source: GallerySource) -> dict[str, str]:
 
 
 def _post_value(post: dict[str, Any], source: GallerySource, *names: str) -> Any:
-    values = post.get("@attributes", {}) if source == "gelbooru" else post
+    values = post.get("@attributes", post) if source == "gelbooru" else post
     if not isinstance(values, dict):
         return None
     for name in names:
@@ -264,6 +264,24 @@ def search_gallery(
         "page_size": PAGE_SIZE,
         "has_more": len(posts) >= PAGE_SIZE,
     }
+
+
+def preview_dataset(source: GallerySource, query: str, page: int) -> dict[str, Any]:
+    """Dataset previews use the exact download query, without invoking a tagger."""
+    try:
+        posts = _shared_client().search_posts(
+            source, query, page=page, limit=PAGE_SIZE, **_credentials(source),
+        )
+    except requests.RequestException as exc:
+        raise DomainError(
+            "Gallery provider request failed", code="gallery.upstream_failed",
+            details={"source": source}, http_status=502,
+        ) from exc
+    items = [item for post in posts
+             if booru_api.post_fields(post, source)[1]
+             and (item := _normalize_post(post, source)) is not None]
+    return {"items": items, "page": page, "page_size": PAGE_SIZE,
+            "has_more": len(posts) >= PAGE_SIZE}
 
 
 def validate_remote_url(source: GallerySource, raw_url: str) -> str:

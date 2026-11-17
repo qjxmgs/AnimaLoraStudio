@@ -1,7 +1,7 @@
 {
   "version": 1,
   "generated_from": "studio.server.app",
-  "count": 261,
+  "count": 262,
   "routes": [
     {
       "path": "/",
@@ -751,6 +751,14 @@
         "POST"
       ],
       "name": "estimate_download",
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/projects/{pid}/download/preview",
+      "methods": [
+        "POST"
+      ],
+      "name": "preview_download",
       "type": "APIRoute"
     },
     {

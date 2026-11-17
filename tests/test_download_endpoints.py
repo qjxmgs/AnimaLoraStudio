@@ -551,3 +551,44 @@ def test_cancel_terminal_job_400(client: TestClient) -> None:
         project_jobs.mark_done(conn, job["id"])
     r = client.post(f"/api/queue/{job['id']}/cancel")
     assert r.status_code == 400
+
+
+@pytest.mark.parametrize("source", ["danbooru", "gelbooru"])
+def test_preview_is_independent_of_tagging_and_uses_exclusions(client, monkeypatch, source):
+    from studio.services.booru import gallery
+    secrets.update({"danbooru": {"username": "u", "api_key": "k"},
+                    "download": {"exclude_tags": ["comic"]}})
+    calls = []
+    def preview(source, query, page):
+        calls.append((source, query, page))
+        return {"items": [], "page": page, "page_size": 30, "has_more": False}
+    monkeypatch.setattr(gallery, "preview_dataset", preview)
+    p = _make_project(client)
+    resp = client.post(f"/api/projects/{p['id']}/download/preview",
+        json={"tag": "x", "api_source": source, "page": 2})
+    assert resp.status_code == 200, resp.text
+    assert calls == [(source, "x -comic", 2)]
+    assert resp.json()["exclude_tags"] == ["comic"]
+    assert client.post(f"/api/projects/{p['id']}/download/preview",
+        json={"tag": "x", "page": 0}).status_code == 422
+
+
+def test_selected_download_job_keeps_ids_and_tags_off(client):
+    p = _make_project(client)
+    resp = client.post(f"/api/projects/{p['id']}/download", json={
+        "tag": "x", "count": 999, "post_ids": ["42", "43", "42"], "use_original_tags": False,
+    })
+    assert resp.status_code == 200, resp.text
+    with db.connection_for() as conn:
+        job = project_jobs.get_job(conn, resp.json()["id"])
+    params = job["params_decoded"]
+    assert params["post_ids"] == ["42", "43"]
+    assert params["count"] == 2
+    assert params["use_original_tags"] is False
+
+
+@pytest.mark.parametrize("ids", [[], ["../42"], ["42 OR 43"], ["１"]])
+def test_selected_download_rejects_invalid_ids(client, ids):
+    p = _make_project(client)
+    resp = client.post(f"/api/projects/{p['id']}/download", json={"tag": "x", "post_ids": ids})
+    assert resp.status_code == 422

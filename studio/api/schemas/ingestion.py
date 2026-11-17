@@ -1,7 +1,7 @@
 """download / upload / preprocess BaseModel（PR-6.5 commit 3 从 server.py 抽出）。"""
 from __future__ import annotations
 
-from typing import Literal, Optional
+from typing import Annotated, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -9,6 +9,9 @@ from ...services.preprocess import core as preprocess_svc
 
 
 class DownloadRequest(BaseModel):
+    post_ids: list[Annotated[str, Field(pattern=r"^[0-9]{1,20}$")]] | None = Field(default=None, min_length=1, max_length=1000)
+    use_original_tags: bool = True
+    tag_categories: list[Literal["artist", "copyright", "character", "general", "meta"]] | None = None
     tag: str
     count: int = 20
     api_source: str = "gelbooru"
@@ -17,6 +20,10 @@ class DownloadRequest(BaseModel):
 class EstimateRequest(BaseModel):
     tag: str
     api_source: str = "gelbooru"
+
+
+class PreviewRequest(EstimateRequest):
+    page: int = Field(default=1, ge=1, le=1000)
 
 
 class UploadFromPathBody(BaseModel):

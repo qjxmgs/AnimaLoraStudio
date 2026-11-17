@@ -36,15 +36,9 @@ interface Ctx {
   reload: () => Promise<void>
 }
 
-interface Estimate {
-  tag: string
-  api_source: 'gelbooru' | 'danbooru'
-  exclude_tags: string[]
-  effective_query: string
-  count: number // -1 表示未知
-}
+type Preview = Awaited<ReturnType<typeof api.previewDownload>>
 
-// 信息密度优先：两种获取入口并列，图片检查区占主区域。
+// 左侧获取与标签设置；右侧区分远程查询结果和已经入库的素材。
 export default function DownloadPage() {
   const { t } = useTranslation()
   const { project, reload } = useOutletContext<Ctx>()
@@ -59,12 +53,22 @@ export default function DownloadPage() {
   const [anchor, setAnchor] = useState<string | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [previewIdx, setPreviewIdx] = useState<number | null>(null)
+  const [tagCategories, setTagCategories] = useState<string[]>(['copyright', 'character', 'general'])
+  const [useOriginalTags, setUseOriginalTags] = useState(true)
   const [tag, setTag] = useState('')
   const [apiSource, setApiSource] = useState<'gelbooru' | 'danbooru'>(
-    'gelbooru'
+    'danbooru'
   )
-  const [estimate, setEstimate] = useState<Estimate | null>(null)
-  const [count, setCount] = useState('20')
+  const [estimate, setEstimate] = useState<Preview | null>(null)
+  const [remoteSelected, setRemoteSelected] = useState<Set<string>>(new Set())
+  const [remoteAnchor, setRemoteAnchor] = useState<string | null>(null)
+  const [remotePreview, setRemotePreview] = useState<number | null>(null)
+  const [activeTab, setActiveTab] = useState<'query' | 'local'>('query')
+  const [queryError, setQueryError] = useState<string | null>(null)
+  const queryEpoch = useRef(0)
+  const remoteScroll = useRef<HTMLDivElement>(null)
+  const loadSentinel = useRef<HTMLDivElement>(null)
+  const queryPending = useRef(false)
   const [booruAction, setBooruAction] = useState<'estimate' | 'start' | null>(null)
   const [lastUpload, setLastUpload] = useState<UploadResult | null>(null)
   const dismissUpload = useCallback(() => setLastUpload(null), [])
@@ -149,45 +153,70 @@ export default function DownloadPage() {
   }, { onOpen: () => void refreshStatus() })
 
   useEffect(() => {
+    queryEpoch.current += 1
     setEstimate(null)
-  }, [tag, apiSource])
+    setRemoteSelected(new Set())
+    setRemoteAnchor(null)
+    setRemotePreview(null)
+    setQueryError(null)
+    setBooruAction(null)
+  }, [tag, apiSource, project.id])
 
-  const doEstimate = async () => {
-    if (!tag.trim()) {
-      toast(t('download.tagEmpty'), 'error')
-      return
-    }
+  useEffect(() => () => { queryEpoch.current += 1 }, [])
+
+  const doEstimate = async (page = 1, resetSelection = true) => {
+    if (!tag.trim() || booruAction !== null || queryPending.current) return
+    queryPending.current = true
+    const epoch = ++queryEpoch.current
     setBooruAction('estimate')
+    setQueryError(null)
+    setActiveTab('query')
     try {
-      const r = await api.estimateDownload(project.id, {
-        tag,
-        api_source: apiSource,
+      const result = await api.previewDownload(project.id, { tag, api_source: apiSource, page })
+      if (epoch !== queryEpoch.current) return
+      setEstimate(previous => {
+        if (resetSelection || !previous) return result
+        const seen = new Set(previous.items.map(item => item.post_id))
+        return { ...result, items: [...previous.items, ...result.items.filter(item => !seen.has(item.post_id))] }
       })
-      setEstimate(r)
-      if (r.count > 0) setCount(String(Math.min(r.count, 200)))
-      else if (r.count === 0) setCount('0')
-      else setCount('20')
+      if (resetSelection) {
+        setRemoteAnchor(null)
+        setRemotePreview(null)
+        setRemoteSelected(new Set())
+        if (remoteScroll.current) remoteScroll.current.scrollTop = 0
+      }
     } catch (e) {
-      toast(String(e), 'error')
+      if (epoch === queryEpoch.current) setQueryError(String(e))
     } finally {
-      setBooruAction(null)
+      queryPending.current = false
+      if (epoch === queryEpoch.current) setBooruAction(null)
     }
   }
 
+  useEffect(() => {
+    const root = remoteScroll.current
+    const target = loadSentinel.current
+    if (!root || !target || !estimate?.has_more || booruAction || queryError || activeTab !== 'query') return
+    const observer = new IntersectionObserver(entries => {
+      if (entries.some(entry => entry.isIntersecting)) void doEstimate(estimate.page + 1, false)
+    }, { root, rootMargin: '0px 0px 120px 0px' })
+    observer.observe(target)
+    return () => observer.disconnect()
+  // doEstimate reads the current query; a query edit resets estimate above.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [estimate, booruAction, queryError, activeTab])
+
   const start = async () => {
-    if (!estimate) return
-    if (estimate.count === 0)
-      return toast(t('download.noResults'), 'error')
-    const requestedCount = Number(count)
-    if (!Number.isInteger(requestedCount) || requestedCount < 1) {
-      return toast(t('download.countMin'), 'error')
-    }
+    if (!estimate || remoteSelected.size === 0 || booruAction !== null || isLive) return
     setBooruAction('start')
     try {
       const j = await api.startDownload(project.id, {
-        tag,
-        count: requestedCount,
-        api_source: apiSource,
+        tag: estimate.tag,
+        count: remoteSelected.size,
+        post_ids: Array.from(remoteSelected),
+        use_original_tags: useOriginalTags,
+        ...(apiSource === 'danbooru' ? { tag_categories: tagCategories } : {}),
+        api_source: estimate.api_source,
       })
       setJob(j)
       setLogs([])
@@ -210,7 +239,6 @@ export default function DownloadPage() {
   }
 
   const isLive = job?.status === 'running' || job?.status === 'pending'
-  const maxCount = estimate && estimate.count > 0 ? estimate.count : 5000
   const totalBytes = files.reduce((sum, file) => sum + file.size, 0)
 
   return (
@@ -237,9 +265,9 @@ export default function DownloadPage() {
         },
       ]}
     >
-    <div className="flex flex-col h-full gap-3 min-h-0">
+    <div className="download-workbench">
       <div
-        className="grid shrink-0 gap-3 xl:grid-cols-2"
+        className="download-sidebar"
         data-download-acquisition-grid
       >
         <Card
@@ -260,13 +288,13 @@ export default function DownloadPage() {
               apiSource={apiSource}
               setApiSource={setApiSource}
               estimate={estimate}
-              count={count}
-              setCount={setCount}
-              maxCount={maxCount}
               action={booruAction}
               isLive={!!isLive}
-              onEstimate={doEstimate}
-              onStart={start}
+              onEstimate={() => void doEstimate()}
+              tagCategories={tagCategories}
+              setTagCategories={setTagCategories}
+              useOriginalTags={useOriginalTags}
+              setUseOriginalTags={setUseOriginalTags}
             />
           </div>
         </Card>
@@ -287,6 +315,7 @@ export default function DownloadPage() {
               pid={project.id}
               onUploaded={(result) => {
                 setLastUpload(result)
+                setActiveTab('local')
                 void refreshFiles()
                 void reload()
               }}
@@ -295,6 +324,79 @@ export default function DownloadPage() {
         </Card>
       </div>
 
+      <div className="download-browser">
+        <div className="download-tabs" role="tablist" aria-label={t('download.workspaceTabs')}>
+          <button type="button" role="tab" aria-selected={activeTab === 'query'} onClick={() => setActiveTab('query')}>
+            {t('download.queryResults')}
+          </button>
+          <button type="button" role="tab" aria-selected={activeTab === 'local'} onClick={() => setActiveTab('local')}>
+            {t('download.sectionTitle')} <span>{files.length} · {formatBytes(totalBytes)}</span>
+          </button>
+        </div>
+        {activeTab === 'query' && (
+          <section className="download-query-panel" aria-label={t('download.queryResults')} aria-busy={booruAction === 'estimate'}>
+            <div className="download-query-toolbar">
+              <Button variant="secondary" size="sm" disabled={!estimate?.items.length || booruAction !== null}
+                onClick={() => {
+                  const next = new Set([...remoteSelected, ...estimate!.items.map(item => item.post_id)])
+                  if (next.size > 1000) { toast(t('download.selectionLimit'), 'error'); return }
+                  setRemoteSelected(next)
+                }}>
+                {t('download.selectPage')}
+              </Button>
+              <Button variant="ghost" size="sm" disabled={!remoteSelected.size || booruAction !== null}
+                onClick={() => { setRemoteSelected(new Set()); setRemoteAnchor(null) }}>
+                {t('common.deselect')}
+              </Button>
+              <span className="download-selection-hint">{t('download.selectionHint')}</span>
+
+            </div>
+            {queryError && <Alert tone="danger" size="sm" role="alert">{queryError}</Alert>}
+            <div className="download-remote-scroll" ref={remoteScroll}>
+              {!estimate && <div className="download-query-empty">{booruAction === 'estimate' ? t('download.querying') : t('download.previewHint')}</div>}
+              {estimate && !estimate.items.length && <div className="download-query-empty">{t('download.noPreviewResults')}</div>}
+              <div className="download-remote-grid">
+                {estimate?.items.map((item, index) => (
+                  <article key={item.post_id} className={`download-remote-card${remoteSelected.has(item.post_id) ? ' is-selected' : ''}`}>
+                    <button type="button" className="download-remote-select" aria-pressed={remoteSelected.has(item.post_id)}
+                      aria-label={t('download.selectImage', { id: item.post_id })} disabled={booruAction !== null}
+                      onClick={(event) => {
+                        const result = applySelection(remoteSelected, item.post_id, event, estimate.items.map(value => value.post_id), remoteAnchor)
+                        if (result.next.size > 1000) { toast(t('download.selectionLimit'), 'error'); return }
+                        setRemoteSelected(result.next); setRemoteAnchor(result.anchor)
+                      }}>
+                      <img src={item.thumbnail_url} alt={`#${item.post_id}`} loading="lazy" draggable={false} />
+                      <span className="download-check" aria-hidden="true">{remoteSelected.has(item.post_id) && (
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="m5 12 4 4L19 6" />
+                        </svg>
+                      )}</span>
+                      <span className="download-image-caption"><strong>#{item.post_id}</strong><span>{item.width} × {item.height}</span></span>
+                    </button>
+                    <button className="download-image-preview" type="button" aria-label={`${t('common.preview')} ${item.post_id}`}
+                      onClick={() => setRemotePreview(index)}>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <path d="M14 4h6v6M20 4l-7 7M10 20H4v-6M4 20l7-7" />
+                      </svg>
+                    </button>
+                  </article>
+                ))}
+              </div>
+              <div ref={loadSentinel} className="download-load-sentinel" role="status">
+                {booruAction === 'estimate' ? t('download.querying') : estimate && !estimate.has_more ? t('download.allLoaded') : ''}
+                {queryError && estimate?.has_more && <Button variant="secondary" size="sm" onClick={() => void doEstimate(estimate.page + 1, false)}>{t('common.retry')}</Button>}
+              </div>
+            </div>
+            <footer className="download-selection-footer">
+              <div><strong>{t('download.selectedCount', { n: remoteSelected.size })}</strong><span>{t(useOriginalTags ? 'download.onlySelectedHint' : 'download.imagesOnlyHint')}</span></div>
+              <Button variant="primary" onClick={() => void start()} loading={booruAction === 'start'}
+                disabled={!estimate || !remoteSelected.size || remoteSelected.size > 1000 || booruAction !== null || !!isLive}>
+                {isLive ? t('download.downloading') : t('download.downloadSelected', { n: remoteSelected.size })}
+              </Button>
+            </footer>
+          </section>
+        )}
+        <div className="download-local-panel" hidden={activeTab !== 'local'}>
       {lastUpload && (
         <UploadResultStrip
           result={lastUpload}
@@ -380,8 +482,21 @@ export default function DownloadPage() {
           }
         }}
       />
+        </div>
+      </div>
     </div>
 
+    {remotePreview !== null && estimate?.items[remotePreview] && (
+      <ImagePreviewModal
+        src={"/api/gallery/image?" + new URLSearchParams({ source: estimate.api_source, post_id: estimate.items[remotePreview].post_id, url: estimate.items[remotePreview].image_url })}
+        caption={`#${estimate.items[remotePreview].post_id}`}
+        index={remotePreview} total={estimate.items.length}
+        hasPrev={remotePreview > 0} hasNext={remotePreview < estimate.items.length - 1}
+        onClose={() => setRemotePreview(null)}
+        onPrev={() => setRemotePreview(Math.max(0, remotePreview - 1))}
+        onNext={() => setRemotePreview(Math.min(estimate.items.length - 1, remotePreview + 1))}
+      />
+    )}
     {previewIdx !== null && files[previewIdx] && (
       <ImagePreviewModal
         src={api.projectThumbUrl(project.id, files[previewIdx].name, 'download', 1600)}
@@ -525,146 +640,54 @@ interface BooruPanelProps {
   setTag: (v: string) => void
   apiSource: 'gelbooru' | 'danbooru'
   setApiSource: (v: 'gelbooru' | 'danbooru') => void
-  estimate: Estimate | null
-  count: string
-  setCount: (n: string) => void
-  maxCount: number
+  estimate: Preview | null
   action: 'estimate' | 'start' | null
   isLive: boolean
   onEstimate: () => void
-  onStart: () => void
+  tagCategories: string[]
+  setTagCategories: (value: string[]) => void
+  useOriginalTags: boolean
+  setUseOriginalTags: (value: boolean) => void
 }
 
-function BooruPanel({
-  tag,
-  setTag,
-  apiSource,
-  setApiSource,
-  estimate,
-  count,
-  setCount,
-  maxCount,
-  action,
-  isLive,
-  onEstimate,
-  onStart,
-}: BooruPanelProps) {
+function BooruPanel({ tag, setTag, apiSource, setApiSource, estimate, action, isLive,
+  onEstimate, useOriginalTags, setUseOriginalTags, tagCategories, setTagCategories }: BooruPanelProps) {
   const { t } = useTranslation()
   const disabled = action !== null || isLive
   return (
-    <form
-      className="flex flex-col gap-2"
-      aria-label={t('download.booruFormLabel')}
-      onSubmit={(event) => {
-        event.preventDefault()
-        if (!tag.trim() || disabled) return
-        if (estimate && estimate.count !== 0) onStart()
-        else onEstimate()
-      }}
-    >
-      <div className="flex flex-wrap items-center gap-related">
-        <Select
-          aria-label={t('download.sourceLabel')}
-          controlSize="sm"
-          value={apiSource}
-          onChange={(event) => {
-            setApiSource(event.target.value as 'gelbooru' | 'danbooru')
-          }}
-          disabled={disabled}
-          className="w-auto"
-        >
-          <option value="gelbooru">Gelbooru</option>
-          <option value="danbooru">Danbooru</option>
-        </Select>
-        <Input
-          aria-label={t('download.tagLabel')}
-          controlSize="sm"
-          value={tag}
-          onChange={(event) => setTag(event.target.value)}
-          disabled={disabled}
-          placeholder={t('download.tagPlaceholder')}
-          className="min-w-[16rem] flex-1"
-        />
-        <Button
-          type={estimate && estimate.count !== 0 ? 'button' : 'submit'}
-          variant="secondary"
-          size="sm"
-          onClick={estimate && estimate.count !== 0 ? onEstimate : undefined}
-          loading={action === 'estimate'}
-          disabled={disabled || !tag.trim()}
-        >
-          {action === 'estimate' ? t('download.querying') : t('download.query')}
-        </Button>
-      </div>
-
-      <div className="flex flex-wrap items-center gap-related border-t border-subtle pt-2 text-sm text-fg-secondary">
-        {!estimate ? (
-          <span role="status" aria-live="polite" aria-atomic="true">
-            {t('download.notQueried')}
-          </span>
-        ) : (
-          <>
-            <span role="status" aria-live="polite" aria-atomic="true">
-              {t('download.matches')}{' '}
-              <strong className={estimate.count === -1 ? 'text-warn' : 'text-accent'}>
-                {estimate.count >= 0
-                  ? estimate.count.toLocaleString()
-                  : t('download.matchesUnknown')}
-              </strong>
-              {estimate.exclude_tags.length > 0 && (
-                <span
-                  className="ml-1 text-xs text-fg-tertiary"
-                  title={estimate.effective_query}
-                  aria-label={`${t('download.exclusionsApplied', { n: estimate.exclude_tags.length })}: ${estimate.effective_query}`}
-                >
-                  · {t('download.exclusionsApplied', { n: estimate.exclude_tags.length })}
-                </span>
-              )}
-            </span>
-            {estimate.count !== 0 && (
-              <>
-                <label htmlFor="download-count" className="text-xs text-fg-tertiary">
-                  {t('download.countLabel')}
-                </label>
-                <Input
-                  id="download-count"
-                  type="number"
-                  controlSize="sm"
-                  mono
-                  min={1}
-                  max={maxCount}
-                  value={count}
-                  onChange={(event) => {
-                    const next = event.target.value
-                    if (next === '') {
-                      setCount('')
-                      return
-                    }
-                    setCount(String(Math.min(Number(next) || 1, maxCount)))
-                  }}
-                  disabled={disabled}
-                  className="w-24"
-                />
-              </>
-            )}
-          </>
-        )}
-        <Button
-          type="submit"
-          variant="primary"
-          size="sm"
-          loading={action === 'start'}
-          disabled={
-            disabled ||
-            !estimate ||
-            estimate.count === 0 ||
-            !Number.isInteger(Number(count)) ||
-            Number(count) < 1
-          }
-          className="md:ml-auto"
-        >
-          {isLive ? t('download.downloading') : t('download.startDownload')}
-        </Button>
+    <form className="download-query-form" aria-label={t('download.booruFormLabel')}
+      onSubmit={(event) => { event.preventDefault(); if (tag.trim() && !disabled) onEstimate() }}>
+      <label htmlFor="download-source">{t('download.sourceLabel')}</label>
+      <Select id="download-source" value={apiSource} disabled={disabled}
+        onChange={(event) => setApiSource(event.target.value as 'danbooru' | 'gelbooru')}>
+        <option value="danbooru">Danbooru</option>
+        <option value="gelbooru">Gelbooru</option>
+      </Select>
+      <label htmlFor="download-query">{t('download.tagLabel')}</label>
+      <Input id="download-query" value={tag} disabled={disabled} onChange={(event) => setTag(event.target.value)} placeholder={t('download.tagPlaceholder')} />
+      <Button type="submit" variant="primary" loading={action === 'estimate'} disabled={disabled || !tag.trim()}>
+        {action === 'estimate' ? t('download.querying') : t('download.query')}
+      </Button>
+      <p className="download-query-summary" role="status">
+        {estimate ? t('download.pageLoaded', { n: estimate.items.length }) : t('download.notQueried')}
+        {!!estimate?.exclude_tags.length && <span title={estimate.effective_query}> · {t('download.exclusionsApplied', { n: estimate.exclude_tags.length })}</span>}
+      </p>
+      <div className="download-tag-settings">
+        <label className="download-toggle-row">
+          <span>{t('download.useOriginalTags')}</span>
+          <input className="download-switch" type="checkbox" checked={useOriginalTags} disabled={disabled}
+            onChange={(event) => setUseOriginalTags(event.target.checked)} />
+        </label>
+        <p>{t(useOriginalTags ? 'download.useOriginalTagsHint' : 'download.noTagsHint')}</p>
+        {apiSource === 'danbooru' && <div className="download-tag-chips">
+          {(['artist', 'copyright', 'character', 'general', 'meta'] as const).map(category => (
+            <label key={category} className="download-tag-chip">
+              <input type="checkbox" checked={tagCategories.includes(category)} disabled={disabled || !useOriginalTags}
+                onChange={event => setTagCategories(event.target.checked ? [...tagCategories, category] : tagCategories.filter(value => value !== category))} />
+              <span>{t(`download.tagCategory.${category}`)}</span>
+            </label>
+          ))}
+        </div>}
       </div>
     </form>
   )
@@ -827,7 +850,7 @@ function UploadPanel({
         aria-label={t('download.localFilesLabel')}
       />
 
-      <div className="grid grid-cols-2 gap-related">
+      <div className="download-import-buttons">
         <Button
           variant="secondary"
           size="sm"
@@ -969,3 +992,4 @@ function UploadResultStrip({
     document.body,
   )
 }
+

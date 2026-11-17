@@ -323,3 +323,20 @@ def test_tag_gallery_image_falls_back_to_tags(monkeypatch, tmp_path: Path) -> No
         image_url="https://img3.gelbooru.com/sample.png",
         tagger_name="wd14",
     ) == "1girl, blue_hair"
+
+
+@pytest.mark.parametrize("source,nested", [("danbooru", False), ("gelbooru", False), ("gelbooru", True)])
+def test_dataset_preview_normalizes_thumbnails_without_tagging(monkeypatch, source, nested):
+    monkeypatch.setattr(gallery.secrets, "load", _settings)
+    host = "cdn.donmai.us" if source == "danbooru" else "img.gelbooru.com"
+    post = {"id": 42, "file_url": f"https://{host}/42.jpg", "file_ext": "jpg",
+            "width": 1024, "height": 1536, "preview_url": f"https://{host}/thumb.jpg",
+            "preview_file_url": f"https://{host}/thumb.jpg"}
+    client = SearchClient([{"@attributes": post} if nested else post])
+    monkeypatch.setattr(gallery, "_shared_client", lambda: client)
+    monkeypatch.setattr(gallery, "get_tagger", lambda *_: pytest.fail("Preview must not load taggers"))
+    result = gallery.preview_dataset(source, "x -comic", 2)
+    assert result["items"][0]["post_id"] == "42"
+    assert result["items"][0]["thumbnail_url"].startswith("/api/gallery/image?")
+    assert client.calls[0][1] == "x -comic"
+    assert client.calls[0][2]["page"] == 2

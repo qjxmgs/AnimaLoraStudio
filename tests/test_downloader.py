@@ -352,3 +352,109 @@ def test_convert_to_png_renames_to_png(tmp_path: Path) -> None:
     )
     assert (tmp_path / "11.png").exists()
     assert not (tmp_path / "11.jpg").exists()
+
+
+@pytest.mark.parametrize("existing_image", [False, True])
+@pytest.mark.parametrize("use_original_tags", [False, True])
+def test_danbooru_download_imports_full_caption(tmp_path: Path, existing_image: bool, use_original_tags: bool) -> None:
+    from studio.services.dataset.tagedit import read_tags
+    image = tmp_path / '42.png'
+    if existing_image:
+        image.write_bytes(_png_bytes())
+    client = MagicMock()
+    client.search_posts.return_value = [{
+        'id': 42, 'file_url': 'https://example.test/42.png', 'file_ext': 'png',
+        'tag_string': '1girl blue_eyes artist_name character_name series_name highres',
+    }]
+    def fetch(url, target, **kwargs):
+        target.write_bytes(_png_bytes())
+        return target
+    client.download_image.side_effect = fetch
+    client.parallel_download.side_effect = lambda items, fn, **kwargs: [(item, fn(item), None) for item in items]
+    opts = downloader.DownloadOptions(tag='1girl', count=1, api_source='danbooru',
+                                      username='tester', api_key='test', save_tags=False, use_original_tags=use_original_tags)
+    downloader.download(opts, tmp_path, client=client, page_delay=0)
+    if not use_original_tags:
+        assert not image.with_suffix('.txt').exists()
+        return
+    assert image.with_suffix('.txt').read_text(encoding='utf-8') == (
+        '1girl, blue eyes, artist name, character name, series name, highres'
+    )
+    assert read_tags(image) == ['1girl', 'blue eyes', 'artist name', 'character name', 'series name', 'highres']
+
+
+@pytest.mark.parametrize('suffix', ['.txt', '.json'])
+def test_original_caption_overwrites_existing_edits(tmp_path: Path, suffix: str) -> None:
+    from studio.services.dataset.tagedit import read_tags
+    image = tmp_path / '42.png'
+    image.with_suffix(suffix).write_text('user content', encoding='utf-8')
+    downloader._save_original_caption(image, '1girl blue_eyes')
+    assert read_tags(image) == ['1girl', 'blue eyes']
+
+
+@pytest.mark.parametrize('categories,expected', [
+    (['copyright', 'character', 'general'], ['series name', 'character name', 'blue eyes']),
+    (['artist', 'meta'], ['artist name', 'highres']),
+    ([], []),
+])
+def test_selected_categories_replace_caption(tmp_path: Path, categories: list[str], expected: list[str]) -> None:
+    from studio.services.dataset.tagedit import read_tags
+    image = tmp_path / '42.png'
+    image.write_bytes(_png_bytes())
+    image.with_suffix('.txt').write_text('old caption', encoding='utf-8')
+    client = MagicMock()
+    client.search_posts.return_value = [{
+        'id': 42, 'file_url': 'https://example.test/42.png', 'file_ext': 'png',
+        'tag_string': 'artist_name series_name character_name blue_eyes highres',
+        'tag_string_artist': 'artist_name', 'tag_string_copyright': 'series_name',
+        'tag_string_character': 'character_name', 'tag_string_general': 'blue_eyes',
+        'tag_string_meta': 'highres',
+    }]
+    client.parallel_download.return_value = []
+    opts = downloader.DownloadOptions(tag='blue_eyes', count=1, api_source='danbooru',
+        username='tester', api_key='test', tag_categories=categories)
+    downloader.download(opts, tmp_path, client=client, page_delay=0)
+    assert read_tags(image) == expected
+
+
+@pytest.mark.parametrize("source", ["danbooru", "gelbooru"])
+@pytest.mark.parametrize("original_tags", [True, False])
+def test_selected_ids_never_download_unselected_posts(tmp_path, source, original_tags):
+    client = MagicMock()
+    def search(_source, query, **kwargs):
+        requested = query.removeprefix("id:")
+        return [{"id": int(value), "file_url": f"https://example.test/{value}.png",
+                 "file_ext": "png", "tag_string": "blue_eyes", "tags": "blue_eyes"}
+                for value in [requested, "999"]]
+    client.search_posts.side_effect = search
+    def fetch(url, target, **kwargs):
+        target.write_bytes(_png_bytes())
+        return target
+    client.download_image.side_effect = fetch
+    client.parallel_download.side_effect = lambda items, fn, **kwargs: [(item, fn(item), None) for item in items]
+    opts = downloader.DownloadOptions(tag="x", count=99, post_ids=["42", "43", "42"],
+        api_source=source, username="tester", user_id="tester", api_key="test",
+        save_tags=True, use_original_tags=original_tags)
+    assert downloader.download(opts, tmp_path, client=client, page_delay=0) == 2
+    assert sorted(p.name for p in tmp_path.glob("*.png")) == ["42.png", "43.png"]
+    assert [c.args[1] for c in client.search_posts.call_args_list] == ["id:42", "id:43"]
+    assert (tmp_path / "42.txt").exists() is original_tags
+    assert (tmp_path / "42.booru.txt").exists() is original_tags
+
+
+def test_missing_or_existing_selection_does_not_backfill(tmp_path):
+    client = MagicMock()
+    client.search_posts.side_effect = [[], [{"id": 43, "file_url": "https://example.test/43.png"}]]
+    client.parallel_download.return_value = []
+    (tmp_path / "43.png").write_bytes(_png_bytes())
+    opts = downloader.DownloadOptions(tag="x", post_ids=["42", "43"], api_source="danbooru",
+        username="tester", api_key="test", use_original_tags=False)
+    assert downloader.download(opts, tmp_path, client=client, page_delay=0) == 0
+    assert client.search_posts.call_count == 2
+    client.download_image.assert_not_called()
+
+
+@pytest.mark.parametrize("ids", [[], ["id:1"], ["../1"], ["１"]])
+def test_selected_ids_validation(ids):
+    with pytest.raises(ValueError):
+        downloader.DownloadOptions(tag="x", post_ids=ids)

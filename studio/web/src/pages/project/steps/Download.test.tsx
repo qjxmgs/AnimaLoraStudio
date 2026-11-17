@@ -11,6 +11,7 @@ import {
 import DownloadPage from './Download'
 
 const mocks = vi.hoisted(() => ({
+  intersect: undefined as undefined | (() => void),
   toast: vi.fn(),
   confirm: vi.fn(async () => true),
   reload: vi.fn(async () => undefined),
@@ -123,23 +124,33 @@ function renderPage() {
 }
 
 async function ready() {
+  fireEvent.click(screen.getByRole('tab', { name: /原始素材/ }))
   await screen.findByRole('grid', { name: '已加入项目的原始素材' })
   await screen.findByText('2 张 · 3.0 KB')
 }
 
+const preview = {
+  tag: 'character_x', api_source: 'danbooru' as const,
+  effective_query: 'character_x -rating:explicit', exclude_tags: ['rating:explicit'],
+  page: 1, page_size: 30, has_more: true,
+  items: ['101', '102', '103'].map(post_id => ({
+    source: 'danbooru' as const, post_id, width: 1024, height: 1536, tags: [],
+    thumbnail_url: `/thumb/${post_id}`, image_url: `https://cdn.donmai.us/${post_id}.jpg`,
+  })),
+}
+
 beforeEach(() => {
+  vi.stubGlobal('IntersectionObserver', class {
+    constructor(callback: (entries: { isIntersecting: boolean }[]) => void) { mocks.intersect = () => callback([{ isIntersecting: true }]) }
+    observe() {}
+    disconnect() {}
+  })
   vi.restoreAllMocks()
   vi.clearAllMocks()
   mocks.onEvent = undefined
   vi.spyOn(api, 'listFiles').mockResolvedValue({ items: files, count: files.length })
   vi.spyOn(api, 'getDownloadStatus').mockResolvedValue({ job: null, log_tail: '' })
-  vi.spyOn(api, 'estimateDownload').mockResolvedValue({
-    tag: 'character_x',
-    api_source: 'gelbooru',
-    exclude_tags: ['rating:explicit'],
-    effective_query: 'character_x -rating:explicit',
-    count: 42,
-  })
+  vi.spyOn(api, 'previewDownload').mockResolvedValue(preview)
   vi.spyOn(api, 'startDownload').mockResolvedValue(runningJob)
   vi.spyOn(api, 'uploadProjectFiles').mockResolvedValue({ added: ['local.png'], skipped: [] })
   vi.spyOn(api, 'uploadProjectFileFromPath').mockResolvedValue({ added: ['server.png'], skipped: [] })
@@ -182,6 +193,26 @@ describe('Download workspace', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('sends only checked Danbooru tag categories and keeps choices when original tags are disabled', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await ready()
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Booru 来源' }), 'danbooru')
+    expect(screen.getByRole('checkbox', { name: '画师' })).not.toBeChecked()
+    expect(screen.getByRole('checkbox', { name: '普通' })).toBeChecked()
+    await user.click(screen.getByRole('checkbox', { name: '角色' }))
+    await user.click(screen.getByRole('checkbox', { name: '使用原图标签' }))
+    expect(screen.getByRole('checkbox', { name: '普通' })).toBeDisabled()
+    await user.click(screen.getByRole('checkbox', { name: '使用原图标签' }))
+    await user.type(screen.getByRole('textbox', { name: '查询标签' }), 'test')
+    await user.click(screen.getByRole('button', { name: '查询' }))
+    await user.click(screen.getByRole('button', { name: '选择图片 101' }))
+    await user.click(screen.getByRole('button', { name: '下载选中 1 张' }))
+    expect(api.startDownload).toHaveBeenCalledWith(7, expect.objectContaining({
+      api_source: 'danbooru', use_original_tags: true, tag_categories: ['copyright', 'general'],
+    }))
   })
 
   it('imports files dropped on the workspace immediately and ignores unsupported files', async () => {
@@ -227,119 +258,80 @@ describe('Download workspace', () => {
     expect(api.uploadProjectFiles).not.toHaveBeenCalled()
   })
 
-  it('keeps estimate and download as two explicit Booru steps with the existing payloads', async () => {
+  it('defaults to Danbooru first and downloads exactly the selection with tags off', async () => {
     const user = userEvent.setup()
     renderPage()
-    await ready()
-
-    expect(screen.queryByRole('tablist')).not.toBeInTheDocument()
-    const acquisitionGrid = document.querySelector('[data-download-acquisition-grid]')
-    expect(acquisitionGrid).toHaveClass('xl:grid-cols-2')
-    expect(screen.getByRole('region', { name: 'Booru 抓取' })).toBeInTheDocument()
-    expect(screen.getByRole('region', { name: '文件导入' })).toBeInTheDocument()
-    expect(screen.getByText('尚未查询')).toBeInTheDocument()
-    expect(screen.queryByText('—')).not.toBeInTheDocument()
-    expect(screen.queryByRole('spinbutton', { name: '本次下载' })).not.toBeInTheDocument()
-    const initialStart = screen.getByRole('button', { name: '开始下载' })
-    expect(initialStart).toBeDisabled()
-    expect(initialStart.closest('[role="status"]')).toBeNull()
+    const source = screen.getByRole('combobox', { name: 'Booru 来源' })
+    expect(source).toHaveValue('danbooru')
+    expect(Array.from(source.querySelectorAll('option')).map(option => option.value)).toEqual(['danbooru', 'gelbooru'])
+    expect(screen.getByRole('button', { name: '下载选中 0 张' })).toBeDisabled()
+    await user.click(screen.getByRole('checkbox', { name: '使用原图标签' }))
     await user.type(screen.getByRole('textbox', { name: '查询标签' }), 'character_x')
     await user.click(screen.getByRole('button', { name: '查询' }))
-
-    expect(api.estimateDownload).toHaveBeenCalledWith(7, {
-      tag: 'character_x',
-      api_source: 'gelbooru',
+    expect(api.previewDownload).toHaveBeenCalledWith(7, { tag: 'character_x', api_source: 'danbooru', page: 1 })
+    expect(screen.getByRole('img', { name: '#101' })).toHaveAttribute('src', '/thumb/101')
+    await user.click(screen.getByRole('button', { name: '选择图片 101' }))
+    await user.click(screen.getByRole('button', { name: '选择图片 103' }))
+    await user.click(screen.getByRole('button', { name: '下载选中 2 张' }))
+    expect(api.startDownload).toHaveBeenCalledWith(7, {
+      tag: 'character_x', count: 2, post_ids: ['101', '103'], api_source: 'danbooru',
+      use_original_tags: false, tag_categories: ['copyright', 'character', 'general'],
     })
-    const count = await screen.findByRole('spinbutton', { name: '本次下载' })
-    expect(count).toHaveValue(42)
-    expect(screen.getAllByText('42')).toHaveLength(1)
-    expect(screen.queryByRole('button', { name: '全部 42' })).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '开始下载' })).toBeInTheDocument()
-    const exclusionHint = screen.getByText('· 已应用 1 个排除标签')
-    expect(exclusionHint).toHaveAttribute('title', 'character_x -rating:explicit')
-    await user.clear(count)
-    await user.type(count, '12{Enter}')
-    await waitFor(() => expect(api.startDownload).toHaveBeenCalledWith(7, {
-      tag: 'character_x',
-      count: 12,
-      api_source: 'gelbooru',
-    }))
   })
 
-  it('keeps estimate and start loading states on their owning buttons', async () => {
+  it('preserves selection across pages including returning to page one and clears on source change', async () => {
     const user = userEvent.setup()
     renderPage()
-    await ready()
-
     await user.type(screen.getByRole('textbox', { name: '查询标签' }), 'character_x')
     await user.click(screen.getByRole('button', { name: '查询' }))
-    const startButton = screen.getByRole('button', { name: '开始下载' })
-
-    let resolveEstimate: ((value: {
-      tag: string
-      api_source: 'gelbooru' | 'danbooru'
-      exclude_tags: string[]
-      effective_query: string
-      count: number
-    }) => void) | undefined
-    vi.mocked(api.estimateDownload).mockImplementationOnce(() => new Promise((resolve) => {
-      resolveEstimate = resolve
-    }))
-    const queryButton = screen.getByRole('button', { name: '查询' })
-    await user.click(queryButton)
-
-    expect(queryButton).toHaveAttribute('aria-busy', 'true')
-    expect(startButton).not.toHaveAttribute('aria-busy')
-    await act(async () => {
-      resolveEstimate?.({
-        tag: 'character_x',
-        api_source: 'gelbooru',
-        exclude_tags: [],
-        effective_query: 'character_x',
-        count: 42,
-      })
-    })
-    expect(queryButton).not.toHaveAttribute('aria-busy')
-    expect(screen.queryByText(/已应用 .* 个排除标签/)).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '选择图片 101' }))
+    vi.mocked(api.previewDownload).mockResolvedValueOnce({ ...preview, page: 2, has_more: false, items: [{ ...preview.items[0], post_id: '201' }] })
+    await act(async () => mocks.intersect?.())
+    await user.click(screen.getByRole('button', { name: '全选已加载' }))
+    expect(screen.getByRole('button', { name: '下载选中 4 张' })).toBeEnabled()
+    expect(screen.queryByRole('button', { name: '上一页' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '选择图片 101' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('button', { name: '下载选中 4 张' })).toBeEnabled()
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Booru 来源' }), 'gelbooru')
+    expect(screen.queryByRole('button', { name: '选择图片 101' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '下载选中 0 张' })).toBeDisabled()
+    expect(screen.queryByRole('checkbox', { name: '角色' })).not.toBeInTheDocument()
   })
 
-  it('handles zero and unknown estimate counts without skipping confirmation', async () => {
+  it('shows query failures, allows retry, and does not download from an empty page', async () => {
     const user = userEvent.setup()
-    vi.mocked(api.estimateDownload)
-      .mockResolvedValueOnce({
-        tag: 'none',
-        api_source: 'gelbooru',
-        exclude_tags: [],
-        effective_query: 'none',
-        count: 0,
-      })
-      .mockResolvedValueOnce({
-        tag: 'unknown',
-        api_source: 'gelbooru',
-        exclude_tags: [],
-        effective_query: 'unknown',
-        count: -1,
-      })
+    vi.mocked(api.previewDownload).mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce({ ...preview, items: [], has_more: false })
     renderPage()
-    await ready()
-
-    const tag = screen.getByRole('textbox', { name: '查询标签' })
-    await user.type(tag, 'none')
+    await user.type(screen.getByRole('textbox', { name: '查询标签' }), 'none')
     await user.click(screen.getByRole('button', { name: '查询' }))
-    expect(screen.queryByRole('spinbutton', { name: '本次下载' })).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '开始下载' })).toBeDisabled()
-
-    await user.clear(tag)
-    await user.type(tag, 'unknown')
+    expect(await screen.findByRole('alert')).toHaveTextContent('offline')
     await user.click(screen.getByRole('button', { name: '查询' }))
-    const count = await screen.findByRole('spinbutton', { name: '本次下载' })
-    expect(count).toHaveValue(20)
-    await user.type(count, '{Enter}')
-    await waitFor(() => expect(api.startDownload).toHaveBeenCalledWith(7, {
-      tag: 'unknown',
-      count: 20,
-      api_source: 'gelbooru',
-    }))
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '下载选中 0 张' })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: '下一页' })).not.toBeInTheDocument()
+    expect(api.startDownload).not.toHaveBeenCalled()
+  })
+
+  it('pressing Enter always queries and never starts a download', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    const query = screen.getByRole('textbox', { name: '查询标签' })
+    await user.type(query, 'character_x{Enter}')
+    await user.click(screen.getByRole('button', { name: '选择图片 101' }))
+    await user.type(query, '{Enter}')
+    expect(api.previewDownload).toHaveBeenCalledTimes(2)
+    expect(api.startDownload).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: '下载选中 0 张' })).toBeDisabled()
+  })
+
+  it('opens a remote preview without selecting or downloading it', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await user.type(screen.getByRole('textbox', { name: '查询标签' }), 'character_x{Enter}')
+    await user.click(screen.getByRole('button', { name: '预览 101' }))
+    expect(screen.getByRole('dialog', { name: '图片预览' })).toHaveTextContent('#101')
+    expect(api.startDownload).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: '下载选中 0 张' })).toBeDisabled()
   })
 
   it('keeps both acquisition cards visible and imports local files through the shared confirmation', async () => {
@@ -496,6 +488,7 @@ describe('Download workspace', () => {
     const user = userEvent.setup()
     renderPage()
 
+    fireEvent.click(screen.getByRole('tab', { name: /原始素材/ }))
     expect(await screen.findByText('图片列表加载失败')).toBeInTheDocument()
     expect(screen.getByText('图片列表暂时不可用。重试后再检查已有素材。')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '重试' }))

@@ -45,6 +45,7 @@ from ....domain.errors import (
 from ...schemas.ingestion import (
     DownloadRequest,
     EstimateRequest,
+    PreviewRequest,
     HeadMaskApplyRequest,
     HeadMaskDetectRequest,
     HeadMaskUndoRequest,
@@ -60,7 +61,7 @@ from ....services.projects import jobs as project_jobs, projects, versions
 from ....paths import REPO_ROOT
 from ....services.preprocess import core as preprocess_svc
 from ....services import model_downloader
-from ....services.booru import downloader
+from ....services.booru import downloader, gallery
 from ....services.preprocess import manifest as preprocess_manifest
 from ....services.preprocess import head_mask as head_mask_svc
 from ....services.preprocess import head_apply, face_contour
@@ -82,6 +83,24 @@ def estimate_download(pid: int, body: EstimateRequest) -> dict[str, Any]:
 
     返回 -1 表示未知（API 不支持精确计数）；前端按「下载全部」处理。
     """
+    opts = _download_query_options(pid, body)
+    return {
+        "tag": opts.tag, "api_source": opts.api_source,
+        "exclude_tags": opts.exclude_tags,
+        "effective_query": opts.effective_tag_query(),
+        "count": downloader.estimate(opts),
+    }
+
+
+@router.post("/api/projects/{pid}/download/preview")
+def preview_download(pid: int, body: PreviewRequest) -> dict[str, Any]:
+    opts = _download_query_options(pid, body)
+    result = gallery.preview_dataset(opts.api_source, opts.effective_tag_query(), body.page)
+    return {**result, "tag": opts.tag, "api_source": opts.api_source,
+            "effective_query": opts.effective_tag_query(), "exclude_tags": opts.exclude_tags}
+
+
+def _download_query_options(pid: int, body: EstimateRequest) -> downloader.DownloadOptions:
     if body.api_source not in {"gelbooru", "danbooru"}:
         raise ValidationError(
             f"Unsupported image source: {body.api_source}",
@@ -122,14 +141,7 @@ def estimate_download(pid: int, body: EstimateRequest) -> dict[str, Any]:
             api_key=sec.gelbooru.api_key,
             exclude_tags=list(sec.download.exclude_tags),
         )
-    count = downloader.estimate(opts)
-    return {
-        "tag": body.tag.strip(),
-        "api_source": body.api_source,
-        "exclude_tags": list(sec.download.exclude_tags),
-        "effective_query": opts.effective_tag_query(),
-        "count": count,
-    }
+    return opts
 
 
 @router.post("/api/projects/{pid}/download")
@@ -167,7 +179,10 @@ def start_download(pid: int, body: DownloadRequest) -> dict[str, Any]:
             kind="download",
             params={
                 "tag": body.tag.strip(),
-                "count": body.count,
+                "count": len(set(body.post_ids)) if body.post_ids is not None else body.count,
+                "post_ids": list(dict.fromkeys(body.post_ids)) if body.post_ids is not None else None,
+                "use_original_tags": body.use_original_tags,
+                "tag_categories": body.tag_categories,
                 "api_source": body.api_source,
             },
         )
